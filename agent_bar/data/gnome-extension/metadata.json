@@ -1,0 +1,7 @@
+{
+  "uuid": "agent-bar@nikvetr.github.io",
+  "name": "Conversation Tracker",
+  "description": "Your open AI coding agent chats in the top bar: which need review, which are working, their queues, repositories and messages.",
+  "shell-version": ["42"],
+  "version": 1
+}

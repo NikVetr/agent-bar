@@ -1,0 +1,136 @@
+"""Install, remove or check agent-bar for this user: its background service and daily inventory scan, the provider
+hooks, the VS Code bridge and the GNOME Shell extension. Nothing here needs root or restarts the desktop."""
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+from . import bridge, hooks
+from .state import ROOT
+
+UUID = 'agent-bar@nikvetr.github.io'
+EXTENSION = Path(__file__).with_name('data') / 'gnome-extension'
+UNITS = Path.home() / '.config/systemd/user'
+SERVICE, INVENTORY = 'agent-bar.service', 'agent-bar-inventory'
+GNOME = ['42']  # Shell versions the extension supports.
+
+
+def units():
+    python = sys.executable
+    return {SERVICE: f'''[Unit]
+Description=Agent Bar: tracks open AI agent chats for the top bar
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart={python} -m agent_bar serve
+Restart=on-failure
+RestartSec=3
+Nice=10
+CPUQuota=20%
+MemoryMax=256M
+UMask=0077
+
+[Install]
+WantedBy=graphical-session.target
+''',
+            # The inventory rescans only appended transcript data, at idle priority.
+            f'{INVENTORY}.service': f'''[Unit]
+Description=Agent Bar: inventory saved Claude and Codex conversations
+
+[Service]
+Type=oneshot
+ExecStart={python} -m agent_bar inventory
+Nice=19
+IOSchedulingClass=idle
+CPUQuota=50%
+MemoryMax=512M
+UMask=0077
+''',
+            f'{INVENTORY}.timer': '''[Unit]
+Description=Agent Bar: refresh the conversation inventory daily
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+'''}
+
+
+def run(command, check=True):
+    return subprocess.run(command, check=check, capture_output=True, text=True)
+
+
+def providers():
+    """The agent tools this user has: hooks go only where their settings live."""
+    return [name for name, folder in [('claude', '.claude'), ('codex', '.codex')] if (Path.home() / folder).is_dir()]
+
+
+def install():
+    UNITS.mkdir(parents=True, exist_ok=True)
+    for name, text in units().items(): (UNITS / name).write_text(text)
+    run(['systemctl', '--user', 'daemon-reload'])
+    run(['systemctl', '--user', 'enable', '--now', SERVICE, f'{INVENTORY}.timer'])
+    run(['systemctl', '--user', 'restart', SERVICE])
+    run(['systemctl', '--user', 'start', '--no-block', f'{INVENTORY}.service'])
+    print(f'Service: {SERVICE} running; inventory refreshed daily')
+    for provider in providers(): hooks.install(provider)
+    if shutil.which('code'):
+        run(['code', '--install-extension', str(bridge.build()), '--force'])
+        print('VS Code bridge installed; each open VS Code window picks it up when reloaded (Developer: Reload Window)')
+    else:
+        print('VS Code not found: skipped the bridge, so chats in VS Code will not be listed')
+    if shutil.which('gnome-shell'):
+        target = Path.home() / '.local/share/gnome-shell/extensions' / UUID
+        if target.exists(): shutil.rmtree(target)
+        shutil.copytree(EXTENSION, target)
+        enabled = run(['gnome-extensions', 'enable', UUID], check=False).returncode == 0
+        print(f'GNOME Shell extension installed in {target}' + ('' if enabled else
+              '; log out and back in (or press Alt+F2, type r, Enter on X11) so GNOME Shell finds it, then run agent-bar install again'))
+    else:
+        print('GNOME Shell not found: the service and CLI work, but there is no top bar on this desktop yet')
+
+
+def uninstall(purge=False):
+    run(['systemctl', '--user', 'disable', '--now', SERVICE, f'{INVENTORY}.timer'], check=False)
+    for name in units(): (UNITS / name).unlink(missing_ok=True)
+    run(['systemctl', '--user', 'daemon-reload'], check=False)
+    for provider in ['claude', 'codex']: hooks.remove(provider)
+    if shutil.which('code'): run(['code', '--uninstall-extension', bridge.ID], check=False)
+    if shutil.which('gnome-extensions'): run(['gnome-extensions', 'uninstall', UUID], check=False)
+    if purge:
+        for folder in [ROOT, Path.home() / '.config/agent-bar', Path.home() / '.cache/agent-bar']:
+            shutil.rmtree(folder, ignore_errors=True)
+    print('Removed agent-bar' + ('' if purge else f'; its history and settings remain in {ROOT} and ~/.config/agent-bar'))
+
+
+def doctor():
+    """Each part's state, as JSON, with a hint for anything missing."""
+    checks = []
+    def check(name, ok, hint=''):
+        checks.append({'check': name, 'ok': bool(ok), **({'hint': hint} if not ok and hint else {})})
+    check('service running', run(['systemctl', '--user', 'is-active', SERVICE], check=False).stdout.strip() == 'active',
+          'agent-bar install')
+    try: snapshot_age = time.time() - json.loads((ROOT / 'snapshot.json').read_text())['updated']
+    except (OSError, ValueError, KeyError): snapshot_age = None
+    check('service updating', snapshot_age is not None and snapshot_age < 20, f'journalctl --user -u {SERVICE}')
+    for provider in providers():
+        found = hooks.installed(provider)
+        check(f'{provider} hooks', found and all(found.values()), 'agent-bar install')
+    if shutil.which('code'):
+        listed = run(['code', '--list-extensions'], check=False).stdout.lower().split()
+        check('VS Code bridge', bridge.ID in listed, 'agent-bar install')
+    if shutil.which('gnome-shell'):
+        version = run(['gnome-shell', '--version'], check=False).stdout.split()[-1:]
+        check('GNOME Shell version supported', version and version[0].split('.')[0] in GNOME,
+              f'the extension supports GNOME {", ".join(GNOME)} so far')
+        state = run(['gnome-extensions', 'info', UUID], check=False).stdout
+        check('GNOME extension enabled', 'State: ENABLED' in state, 'agent-bar install, then log out and in')
+    check('agent-bar on PATH', shutil.which('agent-bar'), 'install with pipx (or uv tool) so ~/.local/bin/agent-bar exists')
+    return {'ok': all(c['ok'] for c in checks), 'checks': checks}
