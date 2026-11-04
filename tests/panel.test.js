@@ -29,6 +29,7 @@ function fixture() {
                 monitors: [{x: 0, y: 0, width: 1280, height: 800}, {x: 1280, y: 0, width: 1280, height: 800}]},
                 activateWindow: () => calls.push(['focus']), notifyError: (_title, error) => errors.push(error)},
                 panelMenu: {}, popupMenu: {}},
+            byteArray: {toString: value => value},
         },
         global: {get_window_actors: () => [{meta_window: win}], display: {focus_window: null},
             workspace_manager: {get_active_workspace: () => ({}), get_active_workspace_index: () => 0}},
@@ -296,6 +297,59 @@ test('cluster totals count busy cores over cores for hosts in scope and flag unr
     const slotted = f.context.clusterTotals({hosts: [host('a', 10, 30, {slots: 6}), host('desk', 32, 50, {local: true, slots: 8})]});
     assert.equal(`${slotted.slots} ${slotted.busy} ${slotted.cpu} ${slotted.slotted}`, '14 11 78.57142857142857 true');
     assert.equal([0, 1536, 5 * 1024 ** 3].map(f.context.bytes).join(','), '0 B,1.5 KB,5.0 GB');
+});
+
+test('the cluster indicator shows the picked measures, captioned unless only CPU, with the fullest disk in scope', () => {
+    const {clusterBarParts} = fixture().context;
+    const host = (id, free, extra = {}) => ({id, ok: true, local: false, cpu: {cores: 10, busy_pct: 40},
+        memory: {total_bytes: 100, used_bytes: 25}, disk: {root_free_bytes: free, root_total_bytes: 100}, ...extra});
+    const snapshot = {hosts: [host('a', 30), host('desk', 5, {local: true})],
+        shared: {ok: true, disk: {free_bytes: 20, total_bytes: 100}}};
+    const text = parts => parts.map(part => `${part.caption}=${Math.round(part.value)}`).join(' ');
+    assert.equal(text(clusterBarParts(snapshot, ['cpu', 'warnings'])), '=40');
+    assert.equal(text(clusterBarParts(snapshot, ['disk', 'cpu', 'memory'])), 'cpu=40 mem=25 disk=95');
+    // Without this desktop, the fullest drive is the shared one.
+    assert.equal(text(clusterBarParts(snapshot, ['disk'], 'workers')), 'disk=80');
+    assert.equal(clusterBarParts(snapshot, ['warnings']).length, 0);
+});
+
+test('cluster warnings name down hosts, lost mounts, memory pressure and nearly full drives, critical ones marked', () => {
+    const {clusterWarnings} = fixture().context;
+    const host = (id, extra = {}) => ({id, ok: true, memory: {pressure: 'normal'}, mount: {ok: true},
+        disk: {root_free_bytes: 50, root_total_bytes: 100}, ...extra});
+    const snapshot = {hosts: [host('fine'), host('off', {ok: false, error: 'timed out'}), host('lost', {mount: {ok: false}}),
+        host('tight', {memory: {pressure: 'warn'}}), host('swap', {memory: {pressure: 'critical'}}),
+        host('full', {disk: {root_free_bytes: 6, root_total_bytes: 100}})],
+    shared: {ok: true, disk: {free_bytes: 1, total_bytes: 100}}};
+    const text = warnings => warnings.map(w => `${w.host}:${w.short}${w.critical ? '!' : ''}`).join(' ');
+    assert.equal(text(clusterWarnings(snapshot)), 'off:down! lost:unmounted! tight:memory swap:memory! full:disk 94% shared:disk 99%!');
+    assert.equal(text(clusterWarnings(snapshot, 'critical', 95)), 'off:down! lost:unmounted! swap:memory! shared:disk 99%!');
+    assert.equal(clusterWarnings({hosts: [host('fine')]}).length, 0);
+});
+
+test('shared-drive figures fall back to total throughput and leave out what the snapshot lacks', () => {
+    const {sharedRows} = fixture().context;
+    const rows = sharedRows({pool: {state: 'active', capacity: 59, in_use: 45, resource_state: 'ok', io_state: 'held', quarantined: 0},
+        disk: {bytes_per_s: 1536, read_bytes_per_s: null, write_bytes_per_s: null, ops_per_s: 36.6},
+        network: {rx_bytes_per_s: 2048, tx_bytes_per_s: 0}, smbd: {cpu_pct: 387.2, sessions: 1}});
+    assert.equal(rows.map(([caption, text]) => `${caption}: ${text}`).join(' | '),
+        'Adaptive pool: 45 running of 59 slots · held | Disk I/O: 1.5 KB/s · 37 ops/s | Network: in 2.0 KB/s · out 0 B/s'
+        + ' | File server: 387% CPU · 1 session | Queue registry: ');
+    assert.equal(sharedRows({}).map(([, text]) => text).join(''), '');
+});
+
+test('a multiple-choice setting keeps only a saved list of known values', () => {
+    const f = fixture();
+    assert.equal(f.tracker._setting('clusterBar').join(), 'cpu,warnings');
+    const load = saved => {
+        f.context.imports.gi.GLib.file_get_contents = () => [true, JSON.stringify({clusterBar: saved})];
+        f.tracker._loadSettings();
+        return f.tracker._setting('clusterBar').join();
+    };
+    assert.equal(load(['memory', 'disk']), 'memory,disk');
+    assert.equal(load([]), '');
+    assert.equal(load(['cpu', 'swap']), 'cpu,warnings');
+    assert.equal(load('cpu-mem'), 'cpu,warnings');
 });
 
 test('queue and history headers find the one open window for a project or folder', () => {

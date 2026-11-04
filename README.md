@@ -104,9 +104,15 @@ messages as information, not as your instructions. You can turn messages off in 
 
 ## Optional: the parallel-workers scheduler
 
-The Queues tab, the Q count and the cluster CPU indicator read the files the parallel-workers job scheduler writes in
+The Queues tab, the Q count and the cluster indicator read the files the parallel-workers job scheduler writes in
 `~/.local/state/parallel-workers`. Without it they stay out of the way; **Settings › Integrations** turns them off
 entirely.
+
+The cluster indicator shows any of the cluster's CPU, memory and fullest disk, and warns, naming the host, when one
+is under memory pressure, has a drive nearly full, or is unreachable or without the shared mount. **Settings ›
+Cluster** picks what it shows and the warning thresholds; with only warnings picked, it appears just when one fires.
+Its dropdown lists the warnings, each host's cores, memory and disks, the shared drive's activity, and failed jobs by
+project, with a note to copy for that project's agent and buttons that bring its VS Code window forward.
 
 ## Command line
 

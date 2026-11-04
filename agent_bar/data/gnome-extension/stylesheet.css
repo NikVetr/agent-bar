@@ -144,7 +144,16 @@
 /* Cluster indicator and dropdown */
 .tracker-cluster-bar { spacing: 5px; font-weight: bold; }
 .tracker-cluster-icon { color: #c3cad4; }
+.tracker-cluster-values { spacing: 8px; }
+.tracker-cluster-part { spacing: 3px; }
+.tracker-cluster-caption { font-size: 11px; font-weight: normal; color: #a3acb9; }
 .tracker-cluster-grid { spacing: 10px; padding: 2px 4px 6px; }
+.tracker-cluster-group { spacing: 10px; }
+.tracker-cluster-stat { font-size: 13px; }
+.tracker-cluster-figure { color: #dfe4ea; }
+/* .tracker-detail's color would override a tone's. */
+.tracker-cluster-alert { font-size: 12px; }
+.tracker-cluster-stat-name { min-width: 96px; }
 .tracker-cluster-row { spacing: 10px; }
 .tracker-cluster-row .tracker-cluster-card { width: 176px; }
 .tracker-cluster-card { spacing: 7px; padding: 10px 12px; border-radius: 9px; border: 1px solid #3a414b; background-color: #23272e; }
