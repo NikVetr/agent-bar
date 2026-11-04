@@ -64,6 +64,10 @@ WantedBy=timers.target
 
 
 def run(command, check=True):
+    """A command's result; a missing program fails like a command that returned 127."""
+    if not shutil.which(command[0]):
+        if check: raise SystemExit(f'agent-bar needs {command[0]}, which is not installed here')
+        return subprocess.CompletedProcess(command, 127, '', f'{command[0]} not found')
     return subprocess.run(command, check=check, capture_output=True, text=True)
 
 
@@ -73,6 +77,8 @@ def providers():
 
 
 def install():
+    if not shutil.which('systemctl'):
+        raise SystemExit('agent-bar runs as a systemd user service on Linux, and this system has no systemctl')
     UNITS.mkdir(parents=True, exist_ok=True)
     for name, text in units().items(): (UNITS / name).write_text(text)
     run(['systemctl', '--user', 'daemon-reload'])
@@ -116,7 +122,7 @@ def doctor():
     def check(name, ok, hint=''):
         checks.append({'check': name, 'ok': bool(ok), **({'hint': hint} if not ok and hint else {})})
     check('service running', run(['systemctl', '--user', 'is-active', SERVICE], check=False).stdout.strip() == 'active',
-          'agent-bar install')
+          'agent-bar install' if shutil.which('systemctl') else 'needs a systemd user session')
     try: snapshot_age = time.time() - json.loads((ROOT / 'snapshot.json').read_text())['updated']
     except (OSError, ValueError, KeyError): snapshot_age = None
     check('service updating', snapshot_age is not None and snapshot_age < 20, f'journalctl --user -u {SERVICE}')
