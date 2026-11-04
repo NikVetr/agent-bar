@@ -1,7 +1,9 @@
 # Architecture
 
-Agent Bar has four parts: a Python service and CLI (`agent_bar/`), provider hooks, a VS Code bridge and a GNOME Shell
-extension. They share state through owner-only files in `~/.local/state/agent-bar`.
+Agent Bar has four parts: a Python service and CLI (`agent_bar/`), provider hooks, a VS Code bridge and a menu-bar
+front end for each platform (today, a GNOME Shell extension on Linux). They share state through owner-only files in
+`~/.local/state/agent-bar`. The service, CLI, hooks and bridge are meant to be shared by every platform; the parts that
+read Linux's process tables and X11 windows are the ones a macOS or Windows edition replaces.
 
 ```mermaid
 flowchart LR

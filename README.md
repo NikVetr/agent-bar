@@ -1,6 +1,6 @@
 # Agent Bar
 
-Agent Bar puts your open AI coding agent chats in the GNOME top bar. You can see at a glance which ones have
+Agent Bar puts your open AI coding agent chats in your desktop's menu bar. You can see at a glance which ones have
 finished and need your review, which are still working, and which are waiting on you, and one click brings a chat's
 window forward. It also shows your projects' git status, lets agents in different chats leave each other notes, and
 can follow job queues from the optional parallel-workers scheduler.
@@ -17,9 +17,20 @@ ends. Nothing leaves your computer.
 | GitHub Copilot CLI | the terminal |
 | Antigravity | its IDE, App and CLI (`agy`) |
 
+## Platforms
+
+| Platform | Where it appears | Status |
+| --- | --- | --- |
+| Linux, GNOME Shell 42 (Ubuntu 22.04), X11 | the top bar | available |
+| Linux, GNOME Shell 45 and later | the top bar | in progress |
+| macOS | the menu bar | in progress |
+| Windows | the system tray | in progress |
+
+The service, command line, hooks and VS Code bridge are shared by every platform; each platform has its own small
+menu-bar front end.
+
 ## Requirements
 
-- Linux with GNOME Shell 42 (Ubuntu 22.04), on X11. Newer GNOME releases, macOS and Windows are planned.
 - Python 3.10 or later, and [pipx](https://pipx.pypa.io) or [uv](https://docs.astral.sh/uv/) to install it.
 - VS Code, for chats in VS Code. The CLI and app surfaces work without it.
 
@@ -36,8 +47,8 @@ agent-bar install
 - hooks in Claude Code's and Codex's settings, if you use them (your existing hooks are kept, and the old settings
   file is backed up first);
 - the VS Code bridge, a small extension that tells Agent Bar which chats each window has open;
-- the GNOME Shell extension. The first time, log out and back in (or on X11 press Alt+F2, type `r`, press Enter) so
-  GNOME finds it, then run `agent-bar install` again to enable it.
+- the menu-bar front end: on Linux, the GNOME Shell extension. The first time, log out and back in (or on X11 press
+  Alt+F2, type `r`, press Enter) so GNOME finds it, then run `agent-bar install` again to enable it.
 
 Open VS Code windows pick up the bridge when reloaded (Developer: Reload Window). Codex asks you to review new hooks
 once with `/hooks`.
@@ -45,7 +56,7 @@ once with `/hooks`.
 `agent-bar doctor` checks each part and says how to fix anything missing. `agent-bar uninstall` takes it all out
 again, leaving your history and settings (`--purge` deletes those too).
 
-## The top bar
+## The menu bar
 
 - **✳ 2 / 14** and **⌘ 0 / 9**: Claude and Codex chats needing review / open. Copilot (◆) and Antigravity (▲) counts
   appear while one of their chats is open. A chat needs review when a reply finishes, a turn fails, it asks you a
@@ -58,8 +69,8 @@ again, leaving your history and settings (`--purge` deletes those too).
 
 Clicking the counts opens the dropdown, with these tabs:
 
-- **Chats**: open chats grouped by project and window, with sort and filter. Clicking a chat selects it and shows its
-  window maximized on your main display; clicking again sends the window back.
+- **Chats**: open chats grouped by project and window, with sort and filter. Clicking a chat selects it and brings its
+  window forward; clicking again sends the window back.
 - **Queues**: job queues from parallel-workers, by project, with progress, ETA and failed jobs.
 - **Git**: each repository holding an open project, with its branch, uncommitted files, and commits ahead of or
   behind its upstream (as of the last fetch; Agent Bar never fetches or takes git's lock). Clicking one opens VS
@@ -70,6 +81,7 @@ Clicking the counts opens the dropdown, with these tabs:
   health of Agent Bar's own hooks and bridges, and the AGENTS.md or CLAUDE.md files each project uses.
 
 **?** opens a guide to every symbol and color; the gear opens settings, including a color-blind-safe palette.
+Clicking a chat shows its window maximized on your main display.
 
 ## Messages between agents
 
@@ -98,7 +110,7 @@ entirely.
 
 ## Command line
 
-Everything the top bar shows is available as JSON:
+Everything the menu bar shows is available as JSON:
 
 ```
 agent-bar status        # open chats, their states and counts
@@ -111,8 +123,8 @@ agent-bar resume <key>  # reopen a saved chat in VS Code
 
 ## Privacy
 
-Agent Bar keeps its state in `~/.local/state/agent-bar` and its settings in `~/.config/agent-bar`, readable only by
-you. Its hooks record when turns start and end, never prompt or reply text. It contacts no server.
+On Linux, Agent Bar keeps its state in `~/.local/state/agent-bar` and its settings in `~/.config/agent-bar`, readable
+only by you. Its hooks record when turns start and end, never prompt or reply text. It contacts no server.
 
 ## Development
 
