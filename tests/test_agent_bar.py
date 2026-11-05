@@ -6,6 +6,7 @@ import unittest.mock
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from agent_bar.state import Ledger, project_names
@@ -247,6 +248,30 @@ class TrackerTests(unittest.TestCase):
                 messages.send('claude:a', 'claude:s', 'again', root)
                 with unittest.mock.patch('sys.stderr', new_callable=io.StringIO), self.assertRaises(SystemExit):
                     hook.wait(data, every=0.05)
+
+    def test_unread_messages_strand_in_chats_nothing_will_wake(self):
+        from agent_bar import messages
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            row = lambda key, state='finished': {'key': key, 'provider': key.split(':')[0], 'state': state}
+            rows = [row('codex:c'), row('codex:c'), row('claude:idle'), row('claude:busy', 'working'),
+                    row('claude:live'), row('claude:used'), row('claude:none')]
+            unread = {key: 1 for key in ['codex:c', 'claude:idle', 'claude:busy', 'claude:live', 'claude:used', 'claude:gone']}
+            # A live waiter (this test's own pid) watches live and used; only live has a message newer than its wake.
+            for key, latest, woken in [('claude:live', 5, 4), ('claude:used', 5, 5), ('claude:idle', 5, 4)]:
+                newest, done, waiter, _ = messages.wake_files(key, root)
+                newest.write_text(str(latest))
+                done.write_text(str(woken))
+                waiter.write_text(str(os.getpid() if key != 'claude:idle' else 2 ** 22 + 1))
+            settings = root / 'settings.json'
+            with unittest.mock.patch.object(messages, 'SETTINGS', settings):
+                self.assertEqual(messages.stranded(unread, rows, root), ['codex:c', 'claude:idle', 'claude:busy', 'claude:live', 'claude:used'])
+                settings.write_text(json.dumps({'wake': True}))
+                self.assertEqual(messages.stranded(unread, rows, root), ['codex:c', 'claude:idle', 'claude:used'])
+                # A waiter past the hook's lifetime is gone, even if its pid is reused.
+                old = time.time() - 3 * 3600
+                os.utime(messages.wake_files('claude:live', root)[2], (old, old))
+                self.assertEqual(messages.stranded(unread, rows, root), ['codex:c', 'claude:idle', 'claude:live', 'claude:used'])
 
     def test_a_busy_chat_gets_messages_mid_turn_only_as_the_user_allows(self):
         from agent_bar import hook, messages

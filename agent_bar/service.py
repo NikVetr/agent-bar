@@ -189,12 +189,15 @@ class Tracker:
                 'queues': queues, 'queue_counts': projects, 'queue_updated': self.queue_mtime,
                 'scheduler': self.scheduler_status,
                 'git': self.git if self.git_enabled else None,
-                'messages': self.message_summary() if self.messages_enabled else None,
+                'messages': self.message_summary(rows) if self.messages_enabled else None,
                 'returns': self.ledger.data.get('returns', {})}
 
-    def message_summary(self):
+    def message_summary(self, rows):
+        """Messages for the panel, with the open chats whose unread ones wait for the user to start a turn."""
         human = {key: row.get('human_at', 0) for key, row in self.ledger.data['conversations'].items()}
-        try: return messages.summary(self.root, human)
+        try:
+            summary = messages.summary(self.root, human)
+            return {**summary, 'stranded': messages.stranded(summary['unread'], rows, self.root)}
         except (OSError, sqlite3.Error) as error:
             self.warnings.append(f'Agent messages unreadable: {error}')
             return None

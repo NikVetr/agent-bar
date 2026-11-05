@@ -130,6 +130,8 @@
 .tracker-thread-agent { padding: 2px 8px; border-radius: 9px; font-size: 12px; font-weight: bold; background-color: rgba(255, 255, 255, 0.07); }
 .tracker-thread-agent:hover { background-color: rgba(255, 255, 255, 0.16); }
 .tracker-thread-closed { color: #8b929c; font-weight: normal; }
+.tracker-thread-agent-content { spacing: 6px; }
+.tracker-mail { spacing: 3px; }
 .tracker-message-button { border-radius: 6px; }
 .tracker-message-button:hover { background-color: rgba(255, 255, 255, 0.05); }
 .tracker-info-limit { spacing: 2px; padding: 0 14px 0 4px; }

@@ -66,6 +66,26 @@ def number(path):
     except (OSError, ValueError): return 0
 
 
+def stranded(unread, rows, root=ROOT, now=None):
+    """Open chats whose unread messages wait for the user to start a turn there: Codex chats, which nothing can
+    wake, and Claude chats no waiter will wake: waking off, or idle with no live waiter left to wake them for
+    their newest message. A Claude chat in a turn gets a waiter when the turn ends."""
+    from .hook import WAIT
+    now, keys = now or time.time(), []
+    for row in rows:
+        key = row['key']
+        if not unread.get(key) or key in keys or row['provider'] not in RECEIVERS: continue
+        if row['provider'] == 'claude' and waking():
+            if row['state'] in BUSY: continue
+            latest, woken, waiter, _ = wake_files(key, root)
+            try:
+                live = now - waiter.stat().st_mtime < WAIT + 60 and os.kill(int(waiter.read_text()), 0) is None
+            except (OSError, ValueError): live = False
+            if live and number(latest) > number(woken): continue
+        keys.append(key)
+    return keys
+
+
 def connect(root=ROOT):
     connection = sqlite3.connect(Path(root) / 'messages.sqlite', timeout=2)
     connection.row_factory = sqlite3.Row

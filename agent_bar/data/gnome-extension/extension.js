@@ -518,7 +518,8 @@ function paintSlots(cr, width, height, inUse, capacity) {
 
 // A cluster warning's kind drawn in `rgba`, its widget's text color: a drive filled as far as it is full
 // (`used`, 0-1), a memory module, a crossed-out circle for a host that is down, the eject sign for a lost shared
-// mount, a clock for a host gone quiet, and a warning sign for anything else.
+// mount, a clock for a host gone quiet, and a warning sign for anything else. Also a sealed envelope for agent
+// mail not yet read (`mail`) and an opened one for mail read (`mail-open`).
 function paintGlyph(cr, size, kind, used, rgba) {
     const c = size / 2, r = size / 2 - 1.5;
     cr.setSourceRGBA(...rgba);
@@ -581,6 +582,29 @@ function paintGlyph(cr, size, kind, used, rgba) {
         cr.moveTo(c, c - r * 0.65);
         cr.lineTo(c, c);
         cr.lineTo(c + r * 0.55, c);
+        cr.stroke();
+    } else if (kind === 'mail') {
+        const top = size * 0.2, bottom = size * 0.82;
+        cr.rectangle(0.5, top, size - 1, bottom - top);
+        cr.fill();
+        cr.setSourceRGBA(0, 0, 0, 0.85);
+        cr.setLineWidth(1.3);
+        cr.moveTo(1, top + 0.8);
+        cr.lineTo(c, top + (bottom - top) * 0.6);
+        cr.lineTo(size - 1, top + 0.8);
+        cr.stroke();
+    } else if (kind === 'mail-open') {
+        const fold = size * 0.45, bottom = size - 1.5;
+        cr.setLineJoin(1);  // round
+        cr.moveTo(1, fold);
+        cr.lineTo(c, 1.5);
+        cr.lineTo(size - 1, fold);
+        cr.lineTo(size - 1, bottom);
+        cr.lineTo(1, bottom);
+        cr.closePath();
+        cr.moveTo(1, fold);
+        cr.lineTo(c, fold + (bottom - fold) * 0.6);
+        cr.lineTo(size - 1, fold);
         cr.stroke();
     } else {
         cr.moveTo(c, 1);
@@ -727,6 +751,18 @@ class Tracker {
             }
         }
         this._labels.waiting.visible = false;
+        // Chats whose agent mail waits for you to start a turn there; clicking it opens the dropdown on Messages.
+        this._mail = new St.BoxLayout({style_class: 'tracker-mail', reactive: true, visible: false, y_align: Clutter.ActorAlign.CENTER});
+        this._mail.add_child(this._glyph('mail'));
+        this._mailCount = new St.Label({style_class: 'tracker-attention', y_align: Clutter.ActorAlign.CENTER});
+        this._mail.add_child(this._mailCount);
+        this._bar.insert_child_above(this._mail, this._labels.waiting);
+        // The press reaches the envelope before the button that opens the menu. An open menu's grab takes the
+        // press first and only closes it, as on any top-bar button.
+        this._mail.connect('button-press-event', () => {
+            this._openOn = 'messages';
+            return Clutter.EVENT_PROPAGATE;
+        });
         this._button.add_child(this._bar);
         Main.panel.addToStatusArea('agent-bar', this._button, 2, 'left');
         this._nav = new PanelMenu.Button(0.0, 'Project windows');
@@ -767,11 +803,14 @@ class Tracker {
         this._button.menu.box.add_style_class_name('tracker-menu');
         this._button.menu.addMenuItem(this._item('Loading conversations…'));
         this._button.menu.connect('open-state-changed', (_menu, open) => {
+            const tab = this._openOn;
+            this._openOn = null;
             if (open) {
                 // Each opening starts on a list, the last tab used unless settings say Conversations.
                 this._page = null;
                 this._picker = null;
                 if (this._setting('openTab') === 'conversations') this._view = 'conversations';
+                if (tab) this._view = tab;
                 this._menuFocus = global.display.focus_window;
                 this._menuSnapshot = this._snapshot;
                 this._buildMenu();
@@ -999,6 +1038,9 @@ class Tracker {
             this._glyph('unmounted', null, 'failed'), text('+1', 'tracker-failed')],
             'A cluster warning, by kind: a drive nearly full (filled as far as it is), memory pressure, a host unreachable, '
             + 'or the shared drive unmounted. Red when critical; +1 counts the others. The dropdown names the hosts.');
+        if (this._setting('messages')) row(top, [this._glyph('mail', null, 'attention'), text('2', 'tracker-attention')],
+            'Messages from other agents wait in 2 chats until you start a turn there: Codex chats, which nothing can wake, and '
+            + 'Claude chats a wake-up will not reach (waking off, or idle over 2 h). Clicking it opens Messages.');
         row(top, [text('▾', 'tracker-nav-arrow'), ...dots(['attention', 'working', 'waiting', 'failed', 'finished'])],
             'Every VS Code window, terminal session, Codex app and Antigravity window, with a dot for its most urgent chat: '
             + 'needs review, working, waiting, failed, finished.');
@@ -1055,6 +1097,9 @@ class Tracker {
             const letters = card('Messages');
             row(letters, [text('✉ 2 unread', 'tracker-detail')], 'Messages from other chats wait for this one. It sees their count when '
                 + 'its next turn starts, from you or an automatic wake-up, and reads them with `agent-bar inbox`; nothing wakes an idle chat.');
+            row(letters, [this._glyph('mail', null, 'attention'), this._glyph('mail', null, 'help-bright'), this._glyph('mail-open', null, 'muted')],
+                'On a thread\'s chats: messages to it unread, waiting for you to start a turn there (amber) or for a wake-up; '
+                + 'opened once it has read them all.');
             row(letters, [chip('Unread', 'attention'), chip('Read', 'muted')], 'In Messages, by pair of chats. A chat can send at most 3 '
                 + 'to another between your prompts to it, and 10 an hour; agents are told to treat them as information, not instructions.');
             const reset = new St.Label({text: 'Reset limit', style_class: 'tracker-filter tracker-reset-limit', y_align: Clutter.ActorAlign.CENTER});
@@ -1128,6 +1173,9 @@ class Tracker {
         cluster.add_child(new St.Icon({icon_name: 'utilities-system-monitor-symbolic', icon_size: 14, style_class: 'tracker-cluster-icon'}));
         cluster.add_child(text('58%', 'tracker-working'));
         cluster.add_child(this._glyph('disk', 0.92));
+        const mail = new St.BoxLayout({style_class: 'tracker-mail'});
+        mail.add_child(this._glyph('mail', null, 'attention'));
+        mail.add_child(text('1', 'tracker-attention'));
         // [part, label title, title style, label detail]; a part without a title is not labelled.
         const parts = [
             [ratio('✳', 'claude', '2 / 14', 'tracker-help-bright'), 'Claude chats', 'tracker-claude', 'needing review / open'],
@@ -1135,12 +1183,16 @@ class Tracker {
             [text('│', 'tracker-bar-divider')],
             [text('● 3', 'tracker-working'), '● Working', 'tracker-working', 'replying or running tools'],
             [text('◌ 1', 'tracker-waiting'), '◌ Waiting', 'tracker-waiting', 'quiet, or background work pending'],
+            ...this._setting('messages') ? [[mail, 'Mail', 'tracker-attention', 'waits for you to start a turn']] : [],
             ...this._setting('scheduler') ? [
                 [text('Q 4 / 9', 'tracker-help-bright'), 'Q Queues', 'tracker-help-bright', 'finished / outstanding since last turn'],
                 [cluster, 'Cluster', 'tracker-working', 'with a sign when a host needs a look']] : [],
             [text('▾', 'tracker-nav-arrow'), '▾ Windows', 'tracker-help-bright', 'every chat window'],
             [text('✳ my-project…', 'tracker-quick-button tracker-claude'), 'Review shortcut', 'tracker-claude', 'jumps to a chat with a new reply'],
         ];
+        // Callouts alternate above and below the bar; each row's narrow to sit side by side in the width.
+        const across = Math.ceil(parts.filter(([, title]) => title).length / 2);
+        const labelWidth = Math.min(callout, Math.floor((width - 10 * (across - 1)) / across));
         const sizes = parts.map(([actor]) => {
             actor.add_style_class_name('tracker-help-part');
             diagram.add_child(actor);
@@ -1154,7 +1206,7 @@ class Tracker {
         const labels = [];
         parts.forEach(([, title, style, detail], index) => {
             if (!title) return;
-            const box = new St.BoxLayout({vertical: true, style_class: 'tracker-help-callout', width: callout});
+            const box = new St.BoxLayout({vertical: true, style_class: 'tracker-help-callout', width: labelWidth});
             for (const [value, classes] of [[title, `tracker-help-callout-title ${style}`], [detail, 'tracker-help-callout-detail']]) {
                 // Centred as a whole: text alignment alone leaves a line that fits unwrapped at the left.
                 const label = text(value, classes);
@@ -1164,7 +1216,7 @@ class Tracker {
                 box.add_child(label);
             }
             diagram.add_child(box);
-            labels.push({box, index, above: labels.length % 2 === 0, height: box.get_preferred_height(callout)[1]});
+            labels.push({box, index, above: labels.length % 2 === 0, height: box.get_preferred_height(labelWidth)[1]});
         });
         const tier = above => labels.filter(label => label.above === above);
         const tallest = above => Math.max(0, ...tier(above).map(label => label.height));
@@ -1180,9 +1232,9 @@ class Tracker {
         });
         for (const above of [true, false]) {
             const row = tier(above);
-            spread(row.map(label => anchors[label.index]), row.map(() => callout), width, 10).forEach((left, i) => {
+            spread(row.map(label => anchors[label.index]), row.map(() => labelWidth), width, 10).forEach((left, i) => {
                 row[i].box.set_position(Math.round(left), above ? barY - rise - row[i].height : belowY);
-                Object.assign(row[i], {from: anchors[row[i].index], to: left + callout / 2});
+                Object.assign(row[i], {from: anchors[row[i].index], to: left + labelWidth / 2});
             });
         }
         const height = belowY + tallest(false);
@@ -1865,17 +1917,22 @@ class Tracker {
                 this._labels.working.text = `● ${c.working}`;
                 this._labels.waiting.text = `◌ ${c.waiting}`;
                 this._labels.waiting.visible = c.waiting > 0;
+                const stranded = snapshot.messages?.stranded || [];
+                this._mail.visible = stranded.length > 0;
+                this._mailCount.text = `${stranded.length}`;
                 this._labels.queues.visible = this._queuesShown(snapshot);
                 this._labels.queues.text = `Q ${c.done} / ${c.queues}${Date.now() / 1000 - snapshot.queue_updated > 120 ? ' ?' : ''}`;
                 this._labels.queues.set_style(c.done ? 'color: #f1f3f5; font-weight: bold;' : 'color: #9ca3ad;');
                 this._renderQuick(snapshot.rows);
                 this._button.accessible_name = `${Object.entries(PROVIDERS).filter(([key]) => c[key])
-                    .map(([key, [, name]]) => `${name} ${c[key]}`).join(', ') || 'No chats'}, ${c.working} working, ${c.waiting} waiting, ${c.review} need review, ${c.done} of ${c.queues} queues finished since the last turn`;
+                    .map(([key, [, name]]) => `${name} ${c[key]}`).join(', ') || 'No chats'}, ${c.working} working, ${c.waiting} waiting, ${c.review} need review, ${c.done} of ${c.queues} queues finished since the last turn`
+                    + (stranded.length ? `, agent mail waits for your turn in ${stranded.length} chat${stranded.length === 1 ? '' : 's'}` : '');
                 this._error = null;
             } catch (error) {
                 this._error = error.message;
                 this._labels.working.text = '● ?';
                 this._labels.waiting.visible = false;
+                this._mail.visible = false;
                 for (const provider of PINNED) this._labels[provider].text = '? / ?';
                 this._labels.queues.text = 'Q ?';
                 this._renderQuick([]);
@@ -2326,8 +2383,19 @@ class Tracker {
                 if (index) agents.add_child(new St.Label({text: '⇄', style_class: 'tracker-muted', y_align: Clutter.ActorAlign.CENTER}));
                 const row = snapshot.rows.find(r => r.key === key && r.target);
                 const title = titles[key] || key;
-                const button = new St.Button({label: `${symbol(key)} ${title.length > 34 ? `${title.slice(0, 33)}…` : title}`,
-                    reactive: !!row, can_focus: !!row, accessible_name: row ? `Open ${title}` : `${title} is closed`,
+                // A chat sent messages here has an envelope: sealed while it has not read them (amber when they wait
+                // for you to start a turn there, white when a wake-up will bring them), open once it has read them all.
+                const sent = items.filter(m => m.recipient === key);
+                const waiting = sent.filter(m => !m.read_at).length;
+                const stranded = waiting > 0 && (snapshot.messages?.stranded || []).includes(key);
+                const content = new St.BoxLayout({style_class: 'tracker-thread-agent-content'});
+                content.add_child(new St.Label({text: `${symbol(key)} ${title.length > 34 ? `${title.slice(0, 33)}…` : title}`,
+                    y_align: Clutter.ActorAlign.CENTER}));
+                if (sent.length) content.add_child(this._glyph(waiting ? 'mail' : 'mail-open', null,
+                    stranded ? 'attention' : waiting ? 'help-bright' : 'muted'));
+                const mail = !sent.length ? '' : waiting ? `, ${waiting} unread${stranded ? ' until you start a turn there' : ''}` : ', read its messages';
+                const button = new St.Button({child: content,
+                    reactive: !!row, can_focus: !!row, accessible_name: (row ? `Open ${title}` : `${title} is closed`) + mail,
                     style_class: `tracker-thread-agent tracker-${key.split(':')[0]}${row ? '' : ' tracker-thread-closed'}`});
                 if (row) button.connect('clicked', () => this._activate(row, snapshot));
                 agents.add_child(button);
