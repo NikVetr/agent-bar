@@ -164,6 +164,7 @@
 .tracker-cluster-section { font-size: 12px; font-weight: bold; color: #a3acb9; padding: 4px 0 0 4px; }
 .tracker-cluster-measure-row { spacing: 10px; }
 .tracker-cluster-measure-host { width: 74px; }
+.tracker-cluster-snooze { spacing: 6px; }
 .tracker-cluster-strip { height: 18px; }
 .tracker-cluster-line { height: 8px; }
 .tracker-cluster-slots { width: 180px; height: 10px; }

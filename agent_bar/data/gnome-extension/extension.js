@@ -413,6 +413,19 @@ function clusterWarnings(snapshot, memoryLevel = 'warn', diskPct = 90) {
     return warnings;
 }
 
+// How long Snooze can keep a warning off the top bar, in seconds; null lasts until the warning clears.
+const SNOOZE = [[3600, '1 hour'], [86400, '1 day'], [5 * 86400, '5 days'], [null, 'until it clears']];
+
+// `warnings` with the snoozed ones marked, and `snoozes` (`host:kind` to the second a snooze ends, or
+// null) without those that ended: by time, or by their warning clearing.
+function applySnoozes(warnings, snoozes, now) {
+    const key = warning => `${warning.host}:${warning.kind}`;
+    const kept = Object.fromEntries(Object.entries(snoozes || {}).filter(([name, until]) =>
+        until === null ? warnings.some(warning => key(warning) === name) : until > now));
+    return {snoozes: kept, warnings: warnings.map(warning => key(warning) in kept
+        ? {...warning, snoozed: true, until: kept[key(warning)]} : warning)};
+}
+
 // The shared-drive sampler's figures, one row each: its caption, the current reading, and a note: what
 // the adaptive pool is holding back for (`held`), or a graph's peak over `history`. Text is empty for
 // a figure this snapshot lacks.
@@ -858,6 +871,10 @@ class Tracker {
                 if (Array.isArray(fallback) ? Array.isArray(saved[key]) && saved[key].every(valid) : valid(saved[key]))
                     this._settings[key] = saved[key];
             }
+            // Set from the cluster dropdown's Snooze buttons, not from Settings.
+            const snoozes = saved.clusterSnoozed;
+            if (snoozes && typeof snoozes === 'object' && Object.values(snoozes).every(until => until === null || Number.isFinite(until)))
+                this._settings.clusterSnoozed = snoozes;
         } catch (error) {
             if (!error.matches?.(GLib.FileError, GLib.FileError.NOENT)) this._settingsError = `Settings unreadable: ${error.message}`;
         }
@@ -1064,7 +1081,8 @@ class Tracker {
         const cluster = card('Cluster dropdown');
         row(cluster, dots(['finished', 'attention', 'failed']),
             'A host is fine, has a warning, or is unreachable. Warnings are listed first, each with its sign from the top bar; '
-            + 'a clock marks a host that stopped updating.');
+            + 'a clock marks a host that stopped updating. Snooze keeps one off the top bar for an hour, a day, 5 days, '
+            + 'or until it clears; snoozed ones follow, gray.');
         row(cluster, [this._drawing((cr, width, height) => paintCores(cr, width, height, [18, 42, 63, 78, 91, 97, 55, 30]),
             {width: 120, height: 24})], 'One bar per core, colored like the CPU percentage.');
         row(cluster, [this._drawing((cr, width, height) => paintMemory(cr, width, height, 0.55, 0.2), {width: 120, height: 6})],
@@ -1242,6 +1260,12 @@ class Tracker {
                 this._cluster = cluster;
                 this._clusterError = null;
                 this._sharedHistory = recordShared(this._sharedHistory, cluster.shared);
+                // Forget ended snoozes, judging a cleared warning only from a current, populated snapshot.
+                const saved = this._settings.clusterSnoozed || {};
+                const {snoozes} = this._clusterAlerts(cluster);
+                if (cluster.hosts.length && Date.now() / 1000 - cluster.updated <= CLUSTER_STALE
+                    && Object.keys(snoozes).length < Object.keys(saved).length)
+                    this._saveSetting('clusterSnoozed', snoozes);
             } catch (error) {
                 // No snapshot means no collector yet: stay hidden rather than show an error.
                 this._cluster = null;
@@ -1252,6 +1276,22 @@ class Tracker {
         });
     }
 
+    // The cluster's warnings at the set thresholds, snoozed ones marked, and the snoozes still in force.
+    _clusterAlerts(cluster) {
+        const warnings = clusterWarnings(cluster, this._setting('clusterMemoryWarn'), this._setting('clusterDiskWarn'));
+        return applySnoozes(warnings, this._settings.clusterSnoozed, Date.now() / 1000);
+    }
+
+    // Snoozes a `host:kind` warning for `seconds`, until it clears (null), or no longer (undefined).
+    _setSnooze(key, seconds) {
+        const snoozes = {...this._settings.clusterSnoozed};
+        if (seconds === undefined) delete snoozes[key];
+        else snoozes[key] = seconds === null ? null : Math.round(Date.now() / 1000 + seconds);
+        if (this._clusterCards) this._clusterCards.choosing = null;
+        this._saveSetting('clusterSnoozed', snoozes);
+        if (this._clusterButton.menu.isOpen) this._updateCluster();
+    }
+
     // The picked measures, each colored by its load, then the most serious warning and how many more.
     // An unreadable snapshot shows ? and a warning; a stale one shows its last values gray with a ?.
     _renderClusterBar() {
@@ -1260,7 +1300,7 @@ class Tracker {
         const parts = cluster ? clusterBarParts(cluster, show, this._setting('clusterHosts'))
             : show.length && this._clusterError ? [{key: 'cpu', value: null, caption: ''}] : [];
         const warnings = cluster && show.includes('warnings')
-            ? clusterWarnings(cluster, this._setting('clusterMemoryWarn'), this._setting('clusterDiskWarn'))
+            ? this._clusterAlerts(cluster).warnings.filter(warning => !warning.snoozed)
                 .sort((a, b) => Number(b.critical) - Number(a.critical)) : [];
         const stale = !!cluster && Date.now() / 1000 - cluster.updated > CLUSTER_STALE;
         this._clusterButton.visible = this._setting('scheduler') && (parts.length > 0 || warnings.length > 0);
@@ -1601,14 +1641,17 @@ class Tracker {
         const now = Date.now() / 1000;
         const totals = clusterTotals(cluster, this._setting('clusterHosts'));
         const pct = value => (value === null || value === undefined ? '?' : `${Math.round(value)}%`);
+        // Host cards state every warning; snoozed ones leave the call to check a host and sink in the list.
+        const {warnings} = this._clusterAlerts(cluster);
+        const check = totals.down.filter(id => warnings.some(warning => warning.host === id && !warning.snoozed
+            && ['down', 'unmounted'].includes(warning.kind)));
         view.subtitle.text = `${cluster.hosts.length} hosts · updated ${age(cluster.updated)}`
-            + (totals.down.length ? ` · check ${totals.down.join(', ')}` : '');
+            + (check.length ? ` · check ${check.join(', ')}` : '');
         view.stats.cpu.text = pct(totals.cpu);
         view.stats.cpu.style_class = `tracker-summary-value tracker-${loadStyle(totals.cpu)}`;
         view.stats.cores.text = `${Math.round(totals.busy)} / ${totals.slots}`;
         view.captions.cores.text = totals.slotted ? 'busy / job slots' : 'busy cores';
         view.stats.memory.text = pct(totals.memory);
-        const warnings = clusterWarnings(cluster, this._setting('clusterMemoryWarn'), this._setting('clusterDiskWarn'));
         const issues = [];
         for (const host of cluster.hosts) {
             const card = view.cards.get(host.id);
@@ -1654,8 +1697,7 @@ class Tracker {
         }
         const sharedWarnings = warnings.filter(warning => warning.host === 'shared');
         issues.push(...sharedWarnings);
-        // Host cards show their own problems, so by host only the shared drive's are listed.
-        this._clusterWarningList(view, this._setting('clusterLayout') === 'host' ? sharedWarnings : issues);
+        this._clusterWarningList(view, issues);
         for (const queue of cluster.queues || [])
             view.failures.get(queue.id)?.set_text(failureDetail(queue));
         const shared = cluster.shared;
@@ -1687,23 +1729,59 @@ class Tracker {
             : 'job slots, or cores where none are set'}, ${this._setting('clusterHosts') === 'all' ? 'all hosts' : 'without this desktop'}`;
     }
 
-    // The dropdown's warning list, rebuilt only when what it lists changes.
+    // The dropdown's warning list, rebuilt only when what it lists or the open Snooze choice changes.
+    // Snooze keeps a warning off the top bar; snoozed ones follow the rest, muted, with when they return.
     _clusterWarningList(view, issues) {
-        const signature = JSON.stringify(issues.map(issue => [issue.host, issue.text, issue.critical]));
-        view.problems.visible = issues.length > 0;
+        const ordered = [...issues.filter(issue => !issue.snoozed), ...issues.filter(issue => issue.snoozed)];
+        const signature = JSON.stringify([view.choosing,
+            ordered.map(issue => [issue.host, issue.kind, issue.text, issue.critical, issue.until])]);
+        view.problems.visible = ordered.length > 0;
         if (signature === view.problemsSignature) return;
         view.problemsSignature = signature;
+        this._releaseFocus(this._clusterButton.menu, view.problemList);
         view.problemList.destroy_all_children();
-        for (const issue of issues) {
+        const button = (label, name, action) => {
+            const actor = new St.Button({label, can_focus: true, style_class: 'tracker-copy', accessible_name: name,
+                y_align: Clutter.ActorAlign.CENTER});
+            actor.connect('clicked', action);
+            return actor;
+        };
+        for (const issue of ordered) {
+            const key = `${issue.host}:${issue.kind}`;
+            const tone = issue.snoozed ? 'muted' : issue.critical ? 'failed' : 'attention';
             const line = new St.BoxLayout({style_class: 'tracker-cluster-measure-row'});
-            line.add_child(this._glyph(issue.kind, issue.used, issue.critical ? 'failed' : 'attention'));
+            line.add_child(this._glyph(issue.kind, issue.used, tone));
             line.add_child(new St.Label({text: issue.host, style_class: 'tracker-cluster-host tracker-cluster-measure-host',
                 y_align: Clutter.ActorAlign.CENTER}));
             const text = new St.Label({text: issue.text, x_expand: true, y_align: Clutter.ActorAlign.CENTER,
-                style_class: `tracker-cluster-stat tracker-${issue.critical ? 'failed' : 'attention'}`});
+                style_class: `tracker-cluster-stat tracker-${tone}`});
             text.clutter_text.ellipsize = Pango.EllipsizeMode.END;
             line.add_child(text);
             view.problemList.add_child(line);
+            // A host that stopped updating is not on the top bar, so there is nothing to snooze.
+            if (issue.kind === 'stale') continue;
+            if (issue.snoozed) {
+                const until = issue.until === null ? 'until it clears' : `until ${new Date(issue.until * 1000).toLocaleString('en-US',
+                    {weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23'})}`;
+                line.add_child(new St.Label({text: `snoozed ${until}`, style_class: 'tracker-detail', y_align: Clutter.ActorAlign.CENTER}));
+                line.add_child(button('Unsnooze', `Show ${issue.host}'s warning on the top bar again`, () => this._setSnooze(key, undefined)));
+                continue;
+            }
+            const choose = open => () => {
+                view.choosing = open ? key : null;
+                this._updateCluster();
+            };
+            if (view.choosing !== key) {
+                line.add_child(button('Snooze', `Keep ${issue.host}'s warning off the top bar for a while`, choose(true)));
+                continue;
+            }
+            const choices = new St.BoxLayout({style_class: 'tracker-cluster-snooze', x_align: Clutter.ActorAlign.END});
+            choices.add_child(new St.Label({text: 'Off the top bar for', style_class: 'tracker-detail', y_align: Clutter.ActorAlign.CENTER}));
+            for (const [seconds, caption] of SNOOZE)
+                choices.add_child(button(caption, `Snooze ${issue.host}'s warning ${seconds === null ? caption : `for ${caption}`}`,
+                    () => this._setSnooze(key, seconds)));
+            choices.add_child(button('Cancel', 'Keep this warning on the top bar', choose(false)));
+            view.problemList.add_child(choices);
         }
     }
 

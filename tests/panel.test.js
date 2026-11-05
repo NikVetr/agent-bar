@@ -327,6 +327,18 @@ test('cluster warnings name down hosts, lost mounts, memory pressure and nearly 
     assert.equal(clusterWarnings({hosts: [host('fine')]}).length, 0);
 });
 
+test('a snooze marks its warning until its time or, without one, until the warning clears', () => {
+    const {applySnoozes} = fixture().context;
+    const warnings = [{host: 'off', kind: 'down'}, {host: 'full', kind: 'disk'}, {host: 'tight', kind: 'memory'}];
+    const snoozes = {'off:down': 200, 'full:disk': null, 'tight:memory': 50, 'gone:down': null};
+    const result = applySnoozes(warnings, snoozes, 100);
+    assert.equal(result.warnings.map(w => `${w.host}${w.snoozed ? `@${w.until}` : ''}`).join(), 'off@200,full@null,tight');
+    // The ended time and the cleared warning are dropped; the rest stay saved.
+    assert.equal(Object.entries(result.snoozes).join(' '), 'off:down,200 full:disk,');
+    assert.equal(Object.keys(applySnoozes([], snoozes, 300).snoozes).length, 0);
+    assert.equal(applySnoozes(warnings, undefined, 100).warnings.filter(w => w.snoozed).length, 0);
+});
+
 test('shared-drive figures name what the pool holds back for, give graph peaks, and leave out what the snapshot lacks', () => {
     const {sharedRows} = fixture().context;
     const shared = {pool: {state: 'active', capacity: 44, in_use: 46, resource_state: 'degraded', io_state: 'ok', quarantined: 0},
