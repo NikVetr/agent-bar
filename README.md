@@ -50,8 +50,8 @@ agent-bar install
 - the menu-bar front end: on Linux, the GNOME Shell extension. The first time, log out and back in (or on X11 press
   Alt+F2, type `r`, press Enter) so GNOME finds it, then run `agent-bar install` again to enable it.
 
-Open VS Code windows pick up the bridge when reloaded (Developer: Reload Window). Codex asks you to review new hooks
-once with `/hooks`.
+Open VS Code windows start the bridge on their own; after an update, reload each one (Developer: Reload Window) to
+run the new version. Codex asks you to review new hooks once with `/hooks`.
 
 `agent-bar doctor` checks each part and says how to fix anything missing. `agent-bar uninstall` takes it all out
 again, leaving your history and settings (`--purge` deletes those too).

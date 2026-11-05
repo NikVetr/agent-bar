@@ -89,7 +89,8 @@ def install():
     for provider in providers(): hooks.install(provider)
     if shutil.which('code'):
         run(['code', '--install-extension', str(bridge.build()), '--force'])
-        print('VS Code bridge installed; each open VS Code window picks it up when reloaded (Developer: Reload Window)')
+        print('VS Code bridge installed; open windows start a new bridge on their own, '
+              'but run an updated one only once reloaded (Developer: Reload Window)')
     else:
         print('VS Code not found: skipped the bridge, so chats in VS Code will not be listed')
     if shutil.which('gnome-shell'):
