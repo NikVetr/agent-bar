@@ -165,6 +165,8 @@
 .tracker-cluster-measure-row { spacing: 10px; }
 .tracker-cluster-measure-host { width: 74px; }
 .tracker-cluster-snooze { spacing: 6px; }
+.tracker-cluster-snooze-entry { margin: 0; padding: 3px 8px; width: 120px; font-size: 12px; }
+.tracker-entry-invalid { border-color: #f28b82; }
 .tracker-cluster-strip { height: 18px; }
 .tracker-cluster-line { height: 8px; }
 .tracker-cluster-slots { width: 180px; height: 10px; }

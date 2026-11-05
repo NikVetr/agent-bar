@@ -112,11 +112,11 @@ The cluster indicator shows any of the cluster's CPU, memory and fullest disk. W
 has a drive nearly full, or is unreachable or without the shared mount, it adds a small sign for that kind of
 warning, amber or red when critical, with a count of any others. **Settings › Cluster** picks what it shows and the
 warning thresholds; with only warnings picked, it appears just when one fires. Its dropdown names each warning's
-host, and **Snooze** keeps a warning off the top bar for an hour, a day, 5 days or until it clears; parallel-workers
-keeps checking the host meanwhile. The dropdown also lists each host's cores, memory and disks, and failed jobs by
-project, with a note to copy for that project's agent and buttons that bring its VS Code window forward. The shared
-drive's card names the host serving it and shows the scheduler's job slots in use, and the drive's throughput and
-that host's network over the last 10 minutes.
+host, and **Snooze** keeps a warning off the top bar until it clears, or for at most a time you type (such as 5d or
+120h); parallel-workers keeps checking the host meanwhile. The dropdown also lists each host's cores, memory and
+disks, and failed jobs by project, with a note to copy for that project's agent and buttons that bring its VS Code
+window forward. The shared drive's card names the host serving it and shows the scheduler's job slots in use, and
+the drive's throughput and that host's network over the last 10 minutes.
 
 ## Command line
 

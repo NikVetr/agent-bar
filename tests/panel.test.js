@@ -327,16 +327,23 @@ test('cluster warnings name down hosts, lost mounts, memory pressure and nearly 
     assert.equal(clusterWarnings({hosts: [host('fine')]}).length, 0);
 });
 
-test('a snooze marks its warning until its time or, without one, until the warning clears', () => {
+test('a snooze marks its warning until the warning clears or its time passes', () => {
     const {applySnoozes} = fixture().context;
     const warnings = [{host: 'off', kind: 'down'}, {host: 'full', kind: 'disk'}, {host: 'tight', kind: 'memory'}];
-    const snoozes = {'off:down': 200, 'full:disk': null, 'tight:memory': 50, 'gone:down': null};
+    const snoozes = {'off:down': 200, 'full:disk': null, 'tight:memory': 50, 'gone:down': null, 'gone:disk': 900};
     const result = applySnoozes(warnings, snoozes, 100);
     assert.equal(result.warnings.map(w => `${w.host}${w.snoozed ? `@${w.until}` : ''}`).join(), 'off@200,full@null,tight');
-    // The ended time and the cleared warning are dropped; the rest stay saved.
+    // The passed time and the cleared warnings, timed or not, are dropped; the rest stay saved.
     assert.equal(Object.entries(result.snoozes).join(' '), 'off:down,200 full:disk,');
-    assert.equal(Object.keys(applySnoozes([], snoozes, 300).snoozes).length, 0);
+    assert.equal(Object.keys(applySnoozes([], snoozes, 0).snoozes).length, 0);
     assert.equal(applySnoozes(warnings, undefined, 100).warnings.filter(w => w.snoozed).length, 0);
+});
+
+test('a typed snooze limit reads minutes, hours, days and weeks, a bare number as hours', () => {
+    const {parseDuration} = fixture().context;
+    assert.equal(['90m', '120h', '5d', '2w', '1d 12h', '1.5h', '120', ' 5D '].map(parseDuration).join(),
+        '5400,432000,432000,1209600,129600,5400,432000,432000');
+    for (const bad of ['', '0', '0h', 'soon', '5x', 'h5', '5d-2h']) assert.equal(parseDuration(bad), null, bad);
 });
 
 test('shared-drive figures name what the pool holds back for, give graph peaks, and leave out what the snapshot lacks', () => {

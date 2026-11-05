@@ -413,15 +413,22 @@ function clusterWarnings(snapshot, memoryLevel = 'warn', diskPct = 90) {
     return warnings;
 }
 
-// How long Snooze can keep a warning off the top bar, in seconds; null lasts until the warning clears.
-const SNOOZE = [[3600, '1 hour'], [86400, '1 day'], [5 * 86400, '5 days'], [null, 'until it clears']];
+// Seconds in a typed duration such as 90m, 120h, 5d, 2w or 1d12h; a bare number counts hours. Null
+// for anything else, zero included.
+function parseDuration(text) {
+    const value = text.replace(/\s+/g, '').toLowerCase();
+    const units = {m: 60, h: 3600, d: 86400, w: 604800};
+    const seconds = /^\d+(\.\d+)?$/.test(value) ? Number(value) * 3600 : /^(\d+(\.\d+)?[mhdw])+$/.test(value)
+        ? [...value.matchAll(/(\d+(?:\.\d+)?)([mhdw])/g)].reduce((sum, [, n, unit]) => sum + Number(n) * units[unit], 0) : 0;
+    return seconds > 0 ? Math.round(seconds) : null;
+}
 
-// `warnings` with the snoozed ones marked, and `snoozes` (`host:kind` to the second a snooze ends, or
-// null) without those that ended: by time, or by their warning clearing.
+// `warnings` with the snoozed ones marked, and `snoozes` (`host:kind` to the second a snooze ends at
+// the latest, or null) without those that ended: their warning cleared, or their time passed.
 function applySnoozes(warnings, snoozes, now) {
     const key = warning => `${warning.host}:${warning.kind}`;
     const kept = Object.fromEntries(Object.entries(snoozes || {}).filter(([name, until]) =>
-        until === null ? warnings.some(warning => key(warning) === name) : until > now));
+        warnings.some(warning => key(warning) === name) && (until === null || until > now)));
     return {snoozes: kept, warnings: warnings.map(warning => key(warning) in kept
         ? {...warning, snoozed: true, until: kept[key(warning)]} : warning)};
 }
@@ -1081,8 +1088,8 @@ class Tracker {
         const cluster = card('Cluster dropdown');
         row(cluster, dots(['finished', 'attention', 'failed']),
             'A host is fine, has a warning, or is unreachable. Warnings are listed first, each with its sign from the top bar; '
-            + 'a clock marks a host that stopped updating. Snooze keeps one off the top bar for an hour, a day, 5 days, '
-            + 'or until it clears; snoozed ones follow, gray.');
+            + 'a clock marks a host that stopped updating. Snooze keeps one off the top bar until it clears, or for at most '
+            + 'a time you type (90m, 120h, 5d, 2w; a bare number is hours); snoozed ones follow, gray.');
         row(cluster, [this._drawing((cr, width, height) => paintCores(cr, width, height, [18, 42, 63, 78, 91, 97, 55, 30]),
             {width: 120, height: 24})], 'One bar per core, colored like the CPU percentage.');
         row(cluster, [this._drawing((cr, width, height) => paintMemory(cr, width, height, 0.55, 0.2), {width: 120, height: 6})],
@@ -1282,12 +1289,13 @@ class Tracker {
         return applySnoozes(warnings, this._settings.clusterSnoozed, Date.now() / 1000);
     }
 
-    // Snoozes a `host:kind` warning for `seconds`, until it clears (null), or no longer (undefined).
+    // Snoozes a `host:kind` warning until it clears or, sooner, `seconds` pass; null sets no time, and
+    // undefined ends the snooze.
     _setSnooze(key, seconds) {
         const snoozes = {...this._settings.clusterSnoozed};
         if (seconds === undefined) delete snoozes[key];
         else snoozes[key] = seconds === null ? null : Math.round(Date.now() / 1000 + seconds);
-        if (this._clusterCards) this._clusterCards.choosing = null;
+        if (this._clusterCards) this._clusterCards.choosing = this._clusterCards.typed = null;
         this._saveSetting('clusterSnoozed', snoozes);
         if (this._clusterButton.menu.isOpen) this._updateCluster();
     }
@@ -1761,27 +1769,47 @@ class Tracker {
             // A host that stopped updating is not on the top bar, so there is nothing to snooze.
             if (issue.kind === 'stale') continue;
             if (issue.snoozed) {
-                const until = issue.until === null ? 'until it clears' : `until ${new Date(issue.until * 1000).toLocaleString('en-US',
+                const until = issue.until === null ? '' : ` or ${new Date(issue.until * 1000).toLocaleString('en-US',
                     {weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23'})}`;
-                line.add_child(new St.Label({text: `snoozed ${until}`, style_class: 'tracker-detail', y_align: Clutter.ActorAlign.CENTER}));
+                // The warning's own text gives way to when the snooze ends.
+                const note = new St.Label({text: `snoozed until it clears${until}`, style_class: 'tracker-detail',
+                    y_align: Clutter.ActorAlign.CENTER});
+                note.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+                line.add_child(note);
                 line.add_child(button('Unsnooze', `Show ${issue.host}'s warning on the top bar again`, () => this._setSnooze(key, undefined)));
                 continue;
             }
             const choose = open => () => {
                 view.choosing = open ? key : null;
+                view.typed = null;
                 this._updateCluster();
             };
             if (view.choosing !== key) {
-                line.add_child(button('Snooze', `Keep ${issue.host}'s warning off the top bar for a while`, choose(true)));
+                line.add_child(button('Snooze', `Keep ${issue.host}'s warning off the top bar until it clears`, choose(true)));
                 continue;
             }
+            // What was typed survives the list rebuilding under it as the warning's text changes.
             const choices = new St.BoxLayout({style_class: 'tracker-cluster-snooze', x_align: Clutter.ActorAlign.END});
-            choices.add_child(new St.Label({text: 'Off the top bar for', style_class: 'tracker-detail', y_align: Clutter.ActorAlign.CENTER}));
-            for (const [seconds, caption] of SNOOZE)
-                choices.add_child(button(caption, `Snooze ${issue.host}'s warning ${seconds === null ? caption : `for ${caption}`}`,
-                    () => this._setSnooze(key, seconds)));
+            choices.add_child(new St.Label({text: 'Off the top bar until it clears, or at most', style_class: 'tracker-detail',
+                y_align: Clutter.ActorAlign.CENTER}));
+            const limit = new St.Entry({hint_text: 'e.g. 5d or 120h', text: view.typed || '', can_focus: true,
+                style_class: 'tracker-search tracker-cluster-snooze-entry', y_align: Clutter.ActorAlign.CENTER});
+            limit.clutter_text.connect('text-changed', () => {
+                view.typed = limit.get_text();
+                limit.remove_style_class_name('tracker-entry-invalid');
+            });
+            const snooze = () => {
+                const typed = limit.get_text().trim();
+                const seconds = typed ? parseDuration(typed) : null;
+                if (typed && seconds === null) limit.add_style_class_name('tracker-entry-invalid');
+                else this._setSnooze(key, seconds);
+            };
+            limit.clutter_text.connect('activate', snooze);
+            choices.add_child(limit);
+            choices.add_child(button('Snooze', `Snooze ${issue.host}'s warning`, snooze));
             choices.add_child(button('Cancel', 'Keep this warning on the top bar', choose(false)));
             view.problemList.add_child(choices);
+            global.stage.set_key_focus(limit);
         }
     }
 
