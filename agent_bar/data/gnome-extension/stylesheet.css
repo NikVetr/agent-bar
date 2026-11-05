@@ -7,6 +7,8 @@
 .tracker-nav-item { spacing: 10px; padding: 6px 16px; }
 .tracker-quick-button { padding: 1px 9px; border-radius: 10px; font-weight: bold; background-color: rgba(255, 255, 255, 0.08); }
 .tracker-quick-button:hover { background-color: rgba(255, 255, 255, 0.18); }
+/* Before the tone colors, so `tracker-detail tracker-<tone>` takes the tone. */
+.tracker-detail { font-size: 12px; color: #a6afbd; }
 .tracker-claude { color: #e6a187; }
 .tracker-codex { color: #79cfbf; }
 .tracker-copilot { color: #e892d0; }
@@ -51,7 +53,6 @@
 .tracker-row { spacing: 4px; }
 .tracker-row-title { spacing: 10px; }
 .tracker-title { font-size: 14px; color: #edf0f5; max-width: 350px; }
-.tracker-detail { font-size: 12px; color: #a6afbd; }
 .tracker-reason { font-size: 12px; }
 .tracker-chip { padding: 4px 8px; border-radius: 11px; font-size: 11px; }
 .tracker-chip-attention { color: #f4c36a; background-color: rgba(210, 147, 45, 0.15); }
@@ -151,8 +152,6 @@
 .tracker-cluster-group { spacing: 10px; }
 .tracker-cluster-stat { font-size: 13px; }
 .tracker-cluster-figure { color: #dfe4ea; }
-/* .tracker-detail's color would override a tone's. */
-.tracker-cluster-alert { font-size: 12px; }
 .tracker-cluster-stat-name { min-width: 96px; }
 .tracker-cluster-row { spacing: 10px; }
 .tracker-cluster-row .tracker-cluster-card { width: 176px; }

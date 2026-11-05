@@ -1419,7 +1419,7 @@ class Tracker {
                 // Problems replace the routine disk line so they are not truncated away.
                 card.status.text = problems.length ? problems.map(problem => problem.text).join(' · ') : diskText && `disk ${diskText}`;
                 card.status.style_class = problems.length
-                    ? `tracker-cluster-alert tracker-${problems.some(problem => problem.critical) ? 'failed' : 'attention'}` : 'tracker-detail';
+                    ? `tracker-detail tracker-${problems.some(problem => problem.critical) ? 'failed' : 'attention'}` : 'tracker-detail';
                 continue;
             }
             const memoryUsed = memory ? 100 * memory.used_bytes / memory.total_bytes : null;
