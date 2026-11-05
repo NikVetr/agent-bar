@@ -17,6 +17,8 @@ const CONFIG = GLib.build_filenamev([GLib.get_home_dir(), '.config/agent-bar/set
 // Written by the parallel-workers collector; the panel never contacts cluster hosts itself.
 const CLUSTER = GLib.build_filenamev([GLib.get_home_dir(), '.local/state/parallel-workers/cluster-status.json']);
 const CLUSTER_STALE = 30;
+// Seconds of shared-drive readings the panel keeps for its sparklines.
+const SHARED_WINDOW = 600;
 // Where the Queues tab sends someone without parallel-workers; it has no public home yet.
 const SCHEDULER_URL = null;
 // [section, key, label, description, default, [[value, caption]...]]; a list default makes the setting
@@ -386,13 +388,13 @@ function clusterBarParts(snapshot, show, scope = 'all') {
 
 // What needs a look on every host, whatever the top bar counts: unreachable, the shared mount lost,
 // memory pressure at `memoryLevel` or worse, or a drive at least `diskPct` full, the shared drive
-// included. `short` is the top bar's wording; `critical` ones show red.
+// included. `kind` picks the glyph (a drive's also shows `used`, 0-1); `critical` ones show red.
 function clusterWarnings(snapshot, memoryLevel = 'warn', diskPct = 90) {
     const warnings = [];
-    const add = (host, short, text, critical) => warnings.push({host, short, text, critical});
+    const add = (host, kind, text, critical, used = null) => warnings.push({host, kind, text, critical, used});
     const disk = (host, free, total) => {
         const used = usedPct(free, total);
-        if (used >= diskPct) add(host, `disk ${Math.round(used)}%`, `disk ${Math.round(used)}% full, ${bytes(free)} free`, used >= 98);
+        if (used >= diskPct) add(host, 'disk', `disk ${Math.round(used)}% full, ${bytes(free)} free`, used >= 98, used / 100);
     };
     for (const host of snapshot.hosts) {
         if (!host.ok) {
@@ -411,23 +413,166 @@ function clusterWarnings(snapshot, memoryLevel = 'warn', diskPct = 90) {
     return warnings;
 }
 
-// The shared-drive sampler's figures as [caption, text]; text is empty for a figure this snapshot lacks.
-function sharedRows(shared) {
+// The shared-drive sampler's figures, one row each: its caption, the current reading, and a note: what
+// the adaptive pool is holding back for (`held`), or a graph's peak over `history`. Text is empty for
+// a figure this snapshot lacks.
+function sharedRows(shared, history = []) {
     const rate = value => `${bytes(value)}/s`;
+    const peak = (...keys) => {
+        const values = history.flatMap(reading => keys.map(key => reading[key])).filter(Number.isFinite);
+        return values.length > 1 ? `peak ${rate(Math.max(...values))}` : '';
+    };
     const {pool, disk, network, smbd, registry} = shared;
-    const held = pool ? [pool.resource_state, pool.io_state].filter(state => state && state !== 'ok') : [];
-    const split = disk && (Number.isFinite(disk.read_bytes_per_s) || Number.isFinite(disk.write_bytes_per_s));
+    const held = pool ? [pool.resource_state && pool.resource_state !== 'ok' && `resources ${pool.resource_state}`,
+        pool.io_state && pool.io_state !== 'ok' && `I/O ${pool.io_state}`,
+        pool.quarantined && `${pool.quarantined} quarantined`].filter(Boolean) : [];
+    const slots = pool && (!Number.isFinite(pool.capacity) ? pool.state
+        : [Number.isFinite(pool.in_use) ? `${pool.in_use} running of ${pool.capacity}` : `${pool.capacity} allowed`,
+            pool.state !== 'active' && pool.state].filter(Boolean).join(' · '));
     return [
-        ['Adaptive pool', pool && [Number.isFinite(pool.in_use) ? `${pool.in_use} running of ${pool.capacity} slots` : `${pool.capacity} slots`,
-            pool.state !== 'active' && pool.state, ...held, pool.quarantined && `${pool.quarantined} quarantined`].filter(Boolean).join(' · ')],
-        ['Disk I/O', disk && [split ? `read ${rate(disk.read_bytes_per_s)} · write ${rate(disk.write_bytes_per_s)}`
-            : Number.isFinite(disk.bytes_per_s) && rate(disk.bytes_per_s),
-        Number.isFinite(disk.ops_per_s) && `${Math.round(disk.ops_per_s)} ops/s`].filter(Boolean).join(' · ')],
-        ['Network', network && `in ${rate(network.rx_bytes_per_s)} · out ${rate(network.tx_bytes_per_s)}`],
-        ['File server', smbd && `${Math.round(smbd.cpu_pct)}% CPU · ${smbd.sessions} session${smbd.sessions === 1 ? '' : 's'}`],
-        ['Queue registry', registry && Number.isFinite(registry.active_queues)
-            && `${registry.active_queues} active queues · ${registry.completed_per_min} jobs done / min`],
-    ].map(([caption, text]) => [caption, text || '']);
+        {key: 'pool', caption: 'Job slots', text: slots, note: held.length ? `holding back: ${held.join(', ')}` : '', held: held.length > 0},
+        {key: 'disk', caption: 'Drive I/O', note: peak('disk'), text: disk && [Number.isFinite(disk.bytes_per_s) && rate(disk.bytes_per_s),
+            Number.isFinite(disk.ops_per_s) && `${Math.round(disk.ops_per_s)} ops/s`].filter(Boolean).join(' · ')},
+        {key: 'network', caption: 'Network', note: peak('rx', 'tx'),
+            text: network && `in ${rate(network.rx_bytes_per_s)} · out ${rate(network.tx_bytes_per_s)}`},
+        {key: 'smbd', caption: 'File server', text: smbd && `${Math.round(smbd.cpu_pct)}% CPU · ${smbd.sessions} session${smbd.sessions === 1 ? '' : 's'}`},
+        {key: 'registry', caption: 'Queues', text: registry && Number.isFinite(registry.active_queues)
+            && `${registry.active_queues} active · ${registry.claimed_per_min} claimed / min · ${registry.completed_per_min} done / min`},
+    ].map(row => ({held: false, ...row, text: row.text || '', note: row.note || ''}));
+}
+
+// `history` with this snapshot's shared-drive reading added, once per sample, keeping SHARED_WINDOW seconds.
+function recordShared(history, shared) {
+    if (!shared?.ok || !Number.isFinite(shared.updated) || history[history.length - 1]?.at === shared.updated) return history;
+    return [...history, {at: shared.updated, disk: shared.disk?.bytes_per_s, rx: shared.network?.rx_bytes_per_s,
+        tx: shared.network?.tx_bytes_per_s}].filter(reading => reading.at > shared.updated - SHARED_WINDOW);
+}
+
+// The `keys` of `history` over the last SHARED_WINDOW seconds, ending at the newest reading, on one
+// scale from zero to their peak: the first as a filled line, any second as a plain line.
+function paintSpark(cr, width, height, history, keys) {
+    cr.setSourceRGBA(1, 1, 1, 0.06);
+    cr.rectangle(0, 0, width, height);
+    cr.fill();
+    const end = history[history.length - 1]?.at;
+    const peak = Math.max(1, ...history.flatMap(reading => keys.map(key => reading[key])).filter(Number.isFinite));
+    const x = at => width * (1 - (end - at) / SHARED_WINDOW);
+    const y = value => height - 1 - (height - 2) * value / peak;
+    keys.forEach((key, index) => {
+        const points = history.filter(reading => Number.isFinite(reading[key]));
+        if (points.length < 2) return;
+        const trace = () => points.forEach((p, i) => (i ? cr.lineTo(x(p.at), y(p[key])) : cr.moveTo(x(p.at), y(p[key]))));
+        if (!index) {
+            trace();
+            cr.lineTo(x(points[points.length - 1].at), height);
+            cr.lineTo(x(points[0].at), height);
+            cr.closePath();
+            cr.setSourceRGBA(0.51, 0.73, 0.98, 0.3);
+            cr.fill();
+        }
+        trace();
+        cr.setSourceRGBA(...(index ? [0.88, 0.91, 0.95, 0.8] : [0.51, 0.73, 0.98, 0.95]));
+        cr.setLineWidth(index ? 1 : 1.3);
+        cr.stroke();
+    });
+}
+
+// The pool's job slots, one cell each: running ones blue, free ones faint, and any running past what
+// it allows now amber. Cells too narrow to tell apart become one bar.
+function paintSlots(cr, width, height, inUse, capacity) {
+    const total = Math.max(inUse, capacity);
+    if (!(total > 0)) return;
+    const running = Math.min(inUse, capacity);
+    const colors = [[0.51, 0.73, 0.98, 0.95], [1, 1, 1, 0.08], [0.96, 0.76, 0.42, 0.95]];
+    const cell = (width - (total - 1)) / total;
+    const spans = cell >= 2
+        ? [...Array(total).keys()].map(i => [i * (cell + 1), cell, i < running ? 0 : i < capacity ? 1 : 2])
+        : [[0, running, 0], [running, capacity - running, 1], [capacity, inUse - capacity, 2]]
+            .filter(([, n]) => n > 0).map(([from, n, color]) => [width * from / total, width * n / total, color]);
+    for (const [x, w, color] of spans) {
+        cr.setSourceRGBA(...colors[color]);
+        cr.rectangle(x, 0, w, height);
+        cr.fill();
+    }
+}
+
+// A cluster warning's kind drawn in `rgba`, its widget's text color: a drive filled as far as it is full
+// (`used`, 0-1), a memory module, a crossed-out circle for a host that is down, the eject sign for a lost shared
+// mount, a clock for a host gone quiet, and a warning sign for anything else.
+function paintGlyph(cr, size, kind, used, rgba) {
+    const c = size / 2, r = size / 2 - 1.5;
+    cr.setSourceRGBA(...rgba);
+    cr.setLineWidth(1.5);
+    const circle = () => {
+        cr.arc(c, c, r, 0, 2 * Math.PI);
+        cr.stroke();
+    };
+    if (kind === 'disk') {
+        // A drive, filled as far as it is full.
+        const left = 1.5, right = size - 1.5, ry = size * 0.14, top = 1 + ry, bottom = size - 1 - ry;
+        const ellipse = (y, to = 2 * Math.PI) => {
+            cr.save();
+            cr.translate(c, y);
+            cr.scale((right - left) / 2, ry);
+            cr.arc(0, 0, 1, 0, to);
+            cr.restore();
+        };
+        const level = bottom - (bottom - top) * Math.min(1, Math.max(0, used || 0));
+        cr.rectangle(left, level, right - left, bottom - level);
+        cr.fill();
+        ellipse(bottom);
+        cr.fill();
+        ellipse(level);
+        cr.fill();
+        ellipse(top);
+        cr.stroke();
+        cr.moveTo(left, top);
+        cr.lineTo(left, bottom);
+        cr.moveTo(right, top);
+        cr.lineTo(right, bottom);
+        cr.stroke();
+        ellipse(bottom, Math.PI);
+        cr.stroke();
+    } else if (kind === 'memory') {
+        // The board with two chips on it, and its contacts below.
+        const top = size * 0.2, board = size * 0.48;
+        cr.rectangle(0.75, top + 0.75, size - 1.5, board - 1.5);
+        cr.stroke();
+        for (const x of [0.22, 0.56]) cr.rectangle(size * x, top + 3, size * 0.22, board - 6);
+        cr.fill();
+        for (let x = 2; x < size - 2; x += 2.5) cr.rectangle(x, top + board + 1, 1.2, size * 0.18);
+        cr.fill();
+    } else if (kind === 'down') {
+        circle();
+        const d = r * Math.SQRT1_2;
+        cr.moveTo(c - d, c - d);
+        cr.lineTo(c + d, c + d);
+        cr.stroke();
+    } else if (kind === 'unmounted') {
+        cr.moveTo(c, size * 0.1);
+        cr.lineTo(size - 1, size * 0.6);
+        cr.lineTo(1, size * 0.6);
+        cr.closePath();
+        cr.fill();
+        cr.rectangle(1, size * 0.72, size - 2, size * 0.18);
+        cr.fill();
+    } else if (kind === 'stale') {
+        circle();
+        cr.moveTo(c, c - r * 0.65);
+        cr.lineTo(c, c);
+        cr.lineTo(c + r * 0.55, c);
+        cr.stroke();
+    } else {
+        cr.moveTo(c, 1);
+        cr.lineTo(size - 0.5, size - 1);
+        cr.lineTo(0.5, size - 1);
+        cr.closePath();
+        cr.fill();
+        cr.setSourceRGBA(0, 0, 0, 0.85);
+        cr.rectangle(c - 0.8, size * 0.36, 1.6, size * 0.3);
+        cr.rectangle(c - 0.8, size * 0.72, 1.6, 1.6);
+        cr.fill();
+    }
 }
 
 // One bar per core on a faint track, colored like loadStyle.
@@ -575,7 +720,13 @@ class Tracker {
         clusterBar.add_child(new St.Icon({icon_name: 'utilities-system-monitor-symbolic', icon_size: 14,
             style_class: 'tracker-cluster-icon', y_align: Clutter.ActorAlign.CENTER}));
         this._clusterValues = new St.BoxLayout({style_class: 'tracker-cluster-values', y_align: Clutter.ActorAlign.CENTER});
-        this._clusterAlert = new St.Label({style_class: 'tracker-failed', visible: false, y_align: Clutter.ActorAlign.CENTER});
+        // The most serious warning's glyph, and how many more there are.
+        this._clusterAlert = new St.BoxLayout({style_class: 'tracker-cluster-warning', visible: false, y_align: Clutter.ActorAlign.CENTER});
+        this._clusterGlyph = this._glyph('alert');
+        this._clusterMore = new St.Label({y_align: Clutter.ActorAlign.CENTER});
+        this._clusterAlert.add_child(this._clusterGlyph);
+        this._clusterAlert.add_child(this._clusterMore);
+        this._sharedHistory = [];
         clusterBar.add_child(this._clusterValues);
         clusterBar.add_child(this._clusterAlert);
         this._clusterButton.add_child(clusterBar);
@@ -818,9 +969,10 @@ class Tracker {
             'Cluster CPU: busy cores over the job slots each host allows, a host counting at most full. '
             + 'Gray under 50%, blue from 50%, amber from 90%. Settings › Cluster adds memory and the fullest disk.'
             + (this._cluster ? '' : ' Shown once the parallel-workers collector runs.'));
-        if (scheduler) row(top, [text('⚠ mba disk 92%', 'tracker-attention'), text('⚠ mm2 down +1', 'tracker-failed')],
-            'A cluster warning: memory pressure, a drive nearly full, or a host unreachable or without the shared mount. '
-            + 'Red when critical; +1 counts the others, listed in the dropdown.');
+        if (scheduler) row(top, [this._glyph('disk', 0.92), this._glyph('memory'), this._glyph('down', null, 'failed'),
+            this._glyph('unmounted', null, 'failed'), text('+1', 'tracker-failed')],
+            'A cluster warning, by kind: a drive nearly full (filled as far as it is), memory pressure, a host unreachable, '
+            + 'or the shared drive unmounted. Red when critical; +1 counts the others. The dropdown names the hosts.');
         row(top, [text('▾', 'tracker-nav-arrow'), ...dots(['attention', 'working', 'waiting', 'failed', 'finished'])],
             'Every VS Code window, terminal session, Codex app and Antigravity window, with a dot for its most urgent chat: '
             + 'needs review, working, waiting, failed, finished.');
@@ -909,11 +1061,20 @@ class Tracker {
 
         const cluster = card('Cluster dropdown');
         row(cluster, dots(['finished', 'attention', 'failed']),
-            'A host is fine, has a warning, or is unreachable. Warnings are listed first.');
+            'A host is fine, has a warning, or is unreachable. Warnings are listed first, each with its sign from the top bar; '
+            + 'a clock marks a host that stopped updating.');
         row(cluster, [this._drawing((cr, width, height) => paintCores(cr, width, height, [18, 42, 63, 78, 91, 97, 55, 30]),
             {width: 120, height: 24})], 'One bar per core, colored like the CPU percentage.');
         row(cluster, [this._drawing((cr, width, height) => paintMemory(cr, width, height, 0.55, 0.2), {width: 120, height: 6})],
             'Memory used (solid) and cache (faint); disk used in the same blue.');
+        const sample = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(i => ({at: i * SHARED_WINDOW / 9, rx: [2, 3, 9, 14, 8, 5, 6, 12, 7, 4][i],
+            tx: [1, 1, 2, 3, 2, 1, 1, 2, 2, 1][i]}));
+        row(cluster, [this._drawing((cr, width, height) => paintSlots(cr, width, height, 9, 8), {width: 120, height: 10})],
+            'Shared drive: the adaptive pool\'s job slots, running (blue) of those it allows now. It lowers that while '
+            + 'it holds back for resources or I/O, so running jobs can pass it (amber).');
+        row(cluster, [this._drawing((cr, width, height) => paintSpark(cr, width, height, sample, ['rx', 'tx']), {width: 120, height: 20})],
+            'The drive\'s throughput and its host\'s network over the last 10 minutes, each scaled to its peak: '
+            + 'network in filled, out as a line. Kept while the panel runs.');
         row(cluster, [text('12 failed', 'tracker-failed'), icon('edit-copy-symbolic')],
             'Failed jobs not yet rerun, by project. Copy puts a note for that project\'s agent on the clipboard: queues, batches, paths, and hosts down. '
             + 'The window buttons bring the project\'s VS Code window forward or send it back.');
@@ -939,7 +1100,7 @@ class Tracker {
         const cluster = new St.BoxLayout({style_class: 'tracker-cluster-bar'});
         cluster.add_child(new St.Icon({icon_name: 'utilities-system-monitor-symbolic', icon_size: 14, style_class: 'tracker-cluster-icon'}));
         cluster.add_child(text('58%', 'tracker-working'));
-        cluster.add_child(text('⚠', 'tracker-attention'));
+        cluster.add_child(this._glyph('disk', 0.92));
         // [part, label title, title style, label detail]; a part without a title is not labelled.
         const parts = [
             [ratio('✳', 'claude', '2 / 14', 'tracker-help-bright'), 'Claude chats', 'tracker-claude', 'needing review / open'],
@@ -949,7 +1110,7 @@ class Tracker {
             [text('◌ 1', 'tracker-waiting'), '◌ Waiting', 'tracker-waiting', 'quiet, or background work pending'],
             ...this._setting('scheduler') ? [
                 [text('Q 4 / 9', 'tracker-help-bright'), 'Q Queues', 'tracker-help-bright', 'finished / outstanding since last turn'],
-                [cluster, 'Cluster', 'tracker-working', '⚠: a host or drive needs a look']] : [],
+                [cluster, 'Cluster', 'tracker-working', 'with a sign when a host needs a look']] : [],
             [text('▾', 'tracker-nav-arrow'), '▾ Windows', 'tracker-help-bright', 'every chat window'],
             [text('✳ my-project…', 'tracker-quick-button tracker-claude'), 'Review shortcut', 'tracker-claude', 'jumps to a chat with a new reply'],
         ];
@@ -1078,6 +1239,7 @@ class Tracker {
                 if (cluster.schema !== 1 || !Array.isArray(cluster.hosts)) throw new Error('Unsupported cluster snapshot');
                 this._cluster = cluster;
                 this._clusterError = null;
+                this._sharedHistory = recordShared(this._sharedHistory, cluster.shared);
             } catch (error) {
                 // No snapshot means no collector yet: stay hidden rather than show an error.
                 this._cluster = null;
@@ -1122,10 +1284,13 @@ class Tracker {
         });
         const [first] = warnings;
         this._clusterAlert.visible = warnings.length > 0 || (!cluster && !!this._clusterError);
-        this._clusterAlert.text = first ? `⚠ ${first.host} ${first.short}${warnings.length > 1 ? ` +${warnings.length - 1}` : ''}` : '⚠';
-        this._clusterAlert.style_class = !first || first.critical ? 'tracker-failed' : 'tracker-attention';
+        const tone = !first || first.critical ? 'failed' : 'attention';
+        this._setGlyph(this._clusterGlyph, first ? first.kind : 'alert', first?.used, tone);
+        setTone(this._clusterMore, tone);
+        this._clusterMore.text = warnings.length > 1 ? `+${warnings.length - 1}` : '';
+        this._clusterMore.visible = warnings.length > 1;
         this._clusterButton.accessible_name = ['Cluster', ...parts.map(part => `${part.caption || 'cpu'} ${pct(part.value)}`),
-            ...warnings.map(warning => `${warning.host} ${warning.text}`)].join(', ');
+            ...warnings.map(warning => `${warning.host} ${warning.text}`), ...!cluster && this._clusterError ? [this._clusterError] : []].join(', ');
     }
 
     // Builds the cluster dropdown once per opening, and again only when its hosts, layout or failed
@@ -1175,8 +1340,10 @@ class Tracker {
         const cards = byHost ? this._clusterHosts(columns, cluster) : this._clusterMeasures(columns, cluster, sharedDisk);
         const shared = new St.BoxLayout({vertical: true, x_expand: true, style_class: 'tracker-cluster-card'});
         const sharedHead = new St.BoxLayout({style_class: 'tracker-cluster-measure-row'});
-        sharedHead.add_child(new St.Label({text: 'Shared drive', x_expand: true, style_class: 'tracker-cluster-host',
-            y_align: Clutter.ActorAlign.CENTER}));
+        sharedHead.add_child(new St.Label({text: 'Shared drive', style_class: 'tracker-cluster-host', y_align: Clutter.ActorAlign.CENTER}));
+        // The host that serves the drive takes every reading below.
+        const sharedFrom = new St.Label({style_class: 'tracker-detail', x_expand: true, y_align: Clutter.ActorAlign.CENTER});
+        sharedHead.add_child(sharedFrom);
         shared.add_child(sharedHead);
         if (byHost) {
             sharedDisk.diskNote = new St.Label({style_class: 'tracker-detail', y_align: Clutter.ActorAlign.CENTER});
@@ -1191,16 +1358,41 @@ class Tracker {
         const sharedDetail = new St.Label({style_class: 'tracker-detail'});
         sharedDetail.clutter_text.ellipsize = Pango.EllipsizeMode.END;
         shared.add_child(sharedDetail);
-        const sharedGrid = new Clutter.GridLayout({column_spacing: 14, row_spacing: 5});
+        // Caption, graph, reading and note; a figure without a graph reads across all three, and what the
+        // pool holds back for takes its own line, too long to share one.
+        const sharedGrid = new Clutter.GridLayout({column_spacing: 12, row_spacing: 6});
         const sharedFigures = new St.Widget({layout_manager: sharedGrid, x_expand: true});
-        const sharedStats = sharedRows({}).map(([caption], index) => {
-            const name = new St.Label({text: caption, style_class: 'tracker-detail tracker-cluster-stat-name', y_align: Clutter.ActorAlign.CENTER});
-            const value = new St.Label({style_class: 'tracker-cluster-stat tracker-cluster-figure', x_expand: true,
-                y_align: Clutter.ActorAlign.CENTER});
-            value.clutter_text.ellipsize = Pango.EllipsizeMode.END;
-            sharedGrid.attach(name, 0, index, 1, 1);
-            sharedGrid.attach(value, 1, index, 1, 1);
-            return [name, value];
+        const graphs = {
+            pool: [(cr, width, height) => {
+                const pool = this._cluster?.shared?.pool;
+                if (pool) paintSlots(cr, width, height, pool.in_use || 0, pool.capacity || 0);
+            }, 'tracker-cluster-slots'],
+            disk: [(cr, width, height) => paintSpark(cr, width, height, this._sharedHistory, ['disk']), 'tracker-cluster-spark'],
+            network: [(cr, width, height) => paintSpark(cr, width, height, this._sharedHistory, ['rx', 'tx']), 'tracker-cluster-spark'],
+        };
+        let line = 0;
+        const sharedStats = sharedRows({}).map(({key, caption}) => {
+            const label = (style, expand = false) => {
+                const actor = new St.Label({style_class: style, x_expand: expand, y_align: Clutter.ActorAlign.CENTER});
+                actor.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+                return actor;
+            };
+            const name = label('tracker-detail tracker-cluster-stat-name');
+            name.text = caption;
+            const value = label('tracker-cluster-stat tracker-cluster-figure', !graphs[key]);
+            const note = label('tracker-detail', true);
+            const graph = graphs[key] && this._drawing(graphs[key][0], {style_class: graphs[key][1]});
+            sharedGrid.attach(name, 0, line, 1, 1);
+            if (graph) {
+                sharedGrid.attach(graph, 1, line, 1, 1);
+                sharedGrid.attach(value, 2, line, 1, 1);
+            } else {
+                sharedGrid.attach(value, 1, line, 3, 1);
+            }
+            if (key === 'pool') sharedGrid.attach(note, 1, ++line, 3, 1);
+            else if (graph) sharedGrid.attach(note, 3, line, 1, 1);
+            line++;
+            return {key, name, value, note, graph};
         });
         shared.add_child(sharedFigures);
         columns.add_child(shared);
@@ -1215,7 +1407,7 @@ class Tracker {
         footer.label.clutter_text.line_wrap = true;
         menu.addMenuItem(footer);
         this._clusterCards = {signature: this._clusterSignature(cluster), cards, failures, stats, captions, subtitle,
-            problems, problemList, sharedDisk, sharedDetail, sharedFigures, sharedStats, footer};
+            problems, problemList, sharedDisk, sharedFrom, sharedDetail, sharedFigures, sharedStats, footer};
         this._updateCluster();
     }
 
@@ -1225,6 +1417,30 @@ class Tracker {
         return JSON.stringify([this._setting('clusterLayout'), cluster.hosts.map(host => host.id),
             [...failedQueues(cluster.queues)].map(([project, queues]) => [project, queues.map(q => [q.id, q.failed]),
                 projectWindow(windows, project)?.id])]);
+    }
+
+    // A warning's glyph (see paintGlyph), drawn in its tone's text color.
+    _glyph(kind, used = null, tone = 'attention') {
+        const area = new St.DrawingArea({width: 14, height: 14, y_align: Clutter.ActorAlign.CENTER});
+        area.connect('repaint', () => {
+            const cr = area.get_context();
+            const color = area.get_theme_node().get_foreground_color();
+            paintGlyph(cr, Math.min(...area.get_surface_size()), area._kind, area._used,
+                [color.red / 255, color.green / 255, color.blue / 255, color.alpha / 255]);
+            cr.$dispose();
+        });
+        area.connect('style-changed', () => area.queue_repaint());
+        this._setGlyph(area, kind, used, tone);
+        return area;
+    }
+
+    _setGlyph(area, kind, used, tone) {
+        if (area._kind !== kind || area._used !== used) {
+            area._kind = kind;
+            area._used = used;
+            area.queue_repaint();
+        }
+        setTone(area, tone);
     }
 
     // A drawn bar or strip; paint(cr, width, height) reads its values whenever it repaints.
@@ -1396,7 +1612,7 @@ class Tracker {
             const card = view.cards.get(host.id);
             const problems = warnings.filter(warning => warning.host === host.id);
             if (host.ok && now - host.updated > CLUSTER_STALE)
-                problems.push({host: host.id, text: `no update for ${duration(Math.round(now - host.updated))}`, critical: false});
+                problems.push({host: host.id, kind: 'stale', text: `no update for ${duration(Math.round(now - host.updated))}`, critical: false});
             issues.push(...problems);
             const tone = !host.ok ? 'failed' : problems.length ? 'attention' : 'finished';
             for (const dot of card.dots) setTone(dot, tone);
@@ -1450,14 +1666,21 @@ class Tracker {
         setTone(drive.diskValue, spaceUsed === null ? 'muted' : loadStyle(spaceUsed));
         drive.diskNote.text = space ? `${bytes(space.free_bytes)} free of ${bytes(space.total_bytes)}` : '';
         for (const dot of drive.dots) setTone(dot, !shared ? 'muted' : !shared.ok ? 'failed' : sharedWarnings.length ? 'attention' : 'finished');
+        const sampled = shared?.updated && now - shared.updated > CLUSTER_STALE ? ` · last sample ${age(shared.updated)}` : '';
+        view.sharedFrom.text = shared?.host ? `served by ${shared.host}${sampled}` : '';
         view.sharedDetail.text = !shared ? 'No shared-drive data in this snapshot' : shared.error || 'Shared-drive sampler unavailable';
         view.sharedDetail.visible = !shared?.ok;
-        const figures = shared?.ok ? sharedRows(shared) : [];
-        view.sharedStats.forEach(([name, value], index) => {
-            value.text = figures[index]?.[1] || '';
-            name.visible = value.visible = !!value.text;
-        });
-        view.sharedFigures.visible = figures.some(([, text]) => text);
+        const figures = shared?.ok ? sharedRows(shared, this._sharedHistory) : [];
+        for (const stat of view.sharedStats) {
+            const row = figures.find(figure => figure.key === stat.key);
+            stat.value.text = row?.text || '';
+            stat.note.text = row?.note || '';
+            stat.note.style_class = row?.held ? 'tracker-detail tracker-attention' : 'tracker-detail';
+            for (const actor of [stat.name, stat.value, stat.graph]) if (actor) actor.visible = !!stat.value.text;
+            stat.note.visible = !!stat.value.text && !!stat.note.text;
+            stat.graph?.queue_repaint();
+        }
+        view.sharedFigures.visible = figures.some(row => row.text);
         view.footer.label.text = `From the parallel-workers collector · CPU over ${totals.slotted ? 'job slots'
             : 'job slots, or cores where none are set'}, ${this._setting('clusterHosts') === 'all' ? 'all hosts' : 'without this desktop'}`;
     }
@@ -1471,8 +1694,7 @@ class Tracker {
         view.problemList.destroy_all_children();
         for (const issue of issues) {
             const line = new St.BoxLayout({style_class: 'tracker-cluster-measure-row'});
-            line.add_child(new St.Label({text: '⚠', style_class: issue.critical ? 'tracker-failed' : 'tracker-attention',
-                y_align: Clutter.ActorAlign.CENTER}));
+            line.add_child(this._glyph(issue.kind, issue.used, issue.critical ? 'failed' : 'attention'));
             line.add_child(new St.Label({text: issue.host, style_class: 'tracker-cluster-host tracker-cluster-measure-host',
                 y_align: Clutter.ActorAlign.CENTER}));
             const text = new St.Label({text: issue.text, x_expand: true, y_align: Clutter.ActorAlign.CENTER,

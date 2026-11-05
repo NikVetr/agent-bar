@@ -321,21 +321,37 @@ test('cluster warnings name down hosts, lost mounts, memory pressure and nearly 
         host('tight', {memory: {pressure: 'warn'}}), host('swap', {memory: {pressure: 'critical'}}),
         host('full', {disk: {root_free_bytes: 6, root_total_bytes: 100}})],
     shared: {ok: true, disk: {free_bytes: 1, total_bytes: 100}}};
-    const text = warnings => warnings.map(w => `${w.host}:${w.short}${w.critical ? '!' : ''}`).join(' ');
-    assert.equal(text(clusterWarnings(snapshot)), 'off:down! lost:unmounted! tight:memory swap:memory! full:disk 94% shared:disk 99%!');
-    assert.equal(text(clusterWarnings(snapshot, 'critical', 95)), 'off:down! lost:unmounted! swap:memory! shared:disk 99%!');
+    const text = warnings => warnings.map(w => `${w.host}:${w.kind}${w.used ? Math.round(100 * w.used) : ''}${w.critical ? '!' : ''}`).join(' ');
+    assert.equal(text(clusterWarnings(snapshot)), 'off:down! lost:unmounted! tight:memory swap:memory! full:disk94 shared:disk99!');
+    assert.equal(text(clusterWarnings(snapshot, 'critical', 95)), 'off:down! lost:unmounted! swap:memory! shared:disk99!');
     assert.equal(clusterWarnings({hosts: [host('fine')]}).length, 0);
 });
 
-test('shared-drive figures fall back to total throughput and leave out what the snapshot lacks', () => {
+test('shared-drive figures name what the pool holds back for, give graph peaks, and leave out what the snapshot lacks', () => {
     const {sharedRows} = fixture().context;
-    const rows = sharedRows({pool: {state: 'active', capacity: 59, in_use: 45, resource_state: 'ok', io_state: 'held', quarantined: 0},
-        disk: {bytes_per_s: 1536, read_bytes_per_s: null, write_bytes_per_s: null, ops_per_s: 36.6},
-        network: {rx_bytes_per_s: 2048, tx_bytes_per_s: 0}, smbd: {cpu_pct: 387.2, sessions: 1}});
-    assert.equal(rows.map(([caption, text]) => `${caption}: ${text}`).join(' | '),
-        'Adaptive pool: 45 running of 59 slots · held | Disk I/O: 1.5 KB/s · 37 ops/s | Network: in 2.0 KB/s · out 0 B/s'
-        + ' | File server: 387% CPU · 1 session | Queue registry: ');
-    assert.equal(sharedRows({}).map(([, text]) => text).join(''), '');
+    const shared = {pool: {state: 'active', capacity: 44, in_use: 46, resource_state: 'degraded', io_state: 'ok', quarantined: 0},
+        disk: {bytes_per_s: 1536, ops_per_s: 36.6}, network: {rx_bytes_per_s: 2048, tx_bytes_per_s: 0}, smbd: {cpu_pct: 387.2, sessions: 1},
+        registry: {active_queues: 28, claimed_per_min: 2.1, completed_per_min: 0}};
+    const text = rows => rows.map(row => `${row.caption}: ${row.text}${row.note ? ` (${row.note}${row.held ? '!' : ''})` : ''}`).join(' | ');
+    assert.equal(text(sharedRows(shared)), 'Job slots: 46 running of 44 (holding back: resources degraded!) | Drive I/O: 1.5 KB/s · 37 ops/s'
+        + ' | Network: in 2.0 KB/s · out 0 B/s | File server: 387% CPU · 1 session | Queues: 28 active · 2.1 claimed / min · 0 done / min');
+    const history = [{at: 1, disk: 4096, rx: 100, tx: 3072}, {at: 2, disk: 1024, rx: 0, tx: 0}];
+    assert.equal(sharedRows(shared, history).map(row => row.note).slice(1, 3).join(), 'peak 4.0 KB/s,peak 3.0 KB/s');
+    // A pool that is not running has no slot counts to show.
+    assert.equal(sharedRows({pool: {state: 'off'}})[0].text, 'off');
+    assert.equal(sharedRows({}).map(row => row.text + row.note).join(''), '');
+});
+
+test('shared-drive history adds each sample once and keeps the sparkline window', () => {
+    const {context} = fixture();
+    const {recordShared} = context, SHARED_WINDOW = vm.runInContext('SHARED_WINDOW', context);
+    const sample = at => ({ok: true, updated: at, disk: {bytes_per_s: at}, network: {rx_bytes_per_s: 1, tx_bytes_per_s: 2}});
+    let history = [];
+    for (const at of [100, 100, 105]) history = recordShared(history, sample(at));
+    assert.equal(history.map(reading => reading.at).join(), '100,105');
+    assert.equal(recordShared(history, {ok: false, updated: 110}), history);
+    history = recordShared(history, sample(100 + SHARED_WINDOW));
+    assert.equal(history.map(reading => `${reading.at}:${reading.disk}`).join(), `105:105,${100 + SHARED_WINDOW}:${100 + SHARED_WINDOW}`);
 });
 
 test('a multiple-choice setting keeps only a saved list of known values', () => {
