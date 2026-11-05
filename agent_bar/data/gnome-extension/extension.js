@@ -658,6 +658,8 @@ function failureReport(project, queues, cluster) {
 class Tracker {
     enable() {
         this._enabled = true;
+        // A screen lock disables and re-enables this same object; disable() destroyed these widgets.
+        this._body = this._pickerList = this._clusterBody = this._clusterCards = this._clusterBarSignature = null;
         this._cancel = new Gio.Cancellable();
         this._borrowed = new Map();
         this._returnsLoaded = false;
