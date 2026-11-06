@@ -75,6 +75,11 @@ class Ledger:
                        # An automatic continuation is a new turn too; otherwise its completion
                        # looks like a duplicate of the previous turn's and is dropped.
                        turn=turn or ({'message': f'input:{at}', 'start': f'start:{at}'}.get(kind) or row['turn']))
+        # A question or approval needs the user only until the turn moves on: any later event of the turn means it
+        # was answered, or, like approvals Codex reports and grants at once, never waited for them.
+        if kind not in ['question', 'approval']:
+            for name in ['Input needed', 'Approval needed']:
+                if row['reasons'].get(name, at) < at: del row['reasons'][name]
         reasons = {'complete': 'Reply finished', 'failure': 'Turn failed',
                    'question': 'Input needed', 'approval': 'Approval needed'}
         if kind in reasons and at >= self.data['since']:

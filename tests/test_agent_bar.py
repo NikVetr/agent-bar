@@ -37,6 +37,21 @@ class TrackerTests(unittest.TestCase):
         self.assertFalse(self.ledger.unread('claude:a'))
         self.assertEqual(self.ledger.conversation('claude:a')['state'], 'approval needed')
 
+    def test_an_answered_question_or_approval_no_longer_needs_review(self):
+        self.ledger.event('codex:a', 'approval', 110)
+        self.ledger.event('codex:a', 'question', 111)
+        self.assertEqual(self.ledger.unread('codex:a'), ['Approval needed', 'Input needed'])
+        # A tool result from before the question, processed late, leaves the question standing.
+        self.ledger.event('codex:a', 'resume', 110.5)
+        self.assertEqual(self.ledger.unread('codex:a'), ['Input needed'])
+        self.ledger.event('codex:a', 'resume', 113)
+        self.assertEqual(self.ledger.conversation('codex:a')['state'], 'working')
+        self.assertFalse(self.ledger.unread('codex:a'))
+        # Approved mid-turn, the finished reply is what is left to review.
+        self.ledger.event('codex:a', 'approval', 120)
+        self.ledger.event('codex:a', 'complete', 130)
+        self.assertEqual(self.ledger.unread('codex:a'), ['Reply finished'])
+
     def test_duplicate_hook_and_transcript_completion_stays_reviewed(self):
         self.ledger.event('codex:a', 'complete', 110, 'turn-1')
         self.ledger.acknowledge('codex:a', 115)
