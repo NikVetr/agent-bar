@@ -66,10 +66,13 @@ earlier installation's interpreter.
 `messages.py` keeps notes in `messages.sqlite`. The CLI writes and reads it directly, identifying the sender from
 `CLAUDE_CODE_SESSION_ID` or `CODEX_THREAD_ID`. Sending needs an open Claude Code or Codex recipient and passes a
 per-pair loop guard, reset by the sender's last human prompt or by the user, plus an hourly cap; refused sends are
-kept so the panel can show what was held back. Files under `wake/` hold each recipient's newest unread id, the newest
-it was woken or told about, and its one live waiter's pid. A chat in a turn gets new messages mid-turn only as the
-user's setting allows. The snapshot's `messages.stranded` lists the open chats whose unread messages wait for the user
-to start a turn: Codex chats, and Claude chats no waiter will wake (waking off, or idle with no live waiter left).
+kept so the panel can show what was held back. Files under `wake/` hold each recipient's newest unread id, the
+newest it was woken or told about, and its one live waiter's pid. A chat in a turn gets new messages mid-turn only
+as the user's setting allows. With waking on, `send` queues the turn-start note for a Codex chat open in VS Code
+with `codex queue`; VS Code's Codex runs it as a turn once any turn in progress ends, and a `.queued` marker under
+`wake/` keeps it to one note until that turn starts. The snapshot's `messages.stranded` lists the open chats whose
+unread messages wait for the user to start a turn: Codex chats with no note queued, and Claude chats no waiter will
+wake (waking off, or idle with no live waiter left).
 
 ## GNOME Shell extension
 

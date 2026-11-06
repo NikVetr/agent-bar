@@ -63,11 +63,12 @@ again, leaving your history and settings (`--purge` deletes those too).
   question or for approval, or all of its project's queues finish. Opening it from Agent Bar, answering it, or sending
   it a message clears that.
 - **● 3** working, **◌ 1** waiting: a turn that has gone quiet, or ended with background work still pending.
-- **✉ 2**: chats where messages from other agents wait for you to start a turn: Codex chats, which nothing can wake,
-  and Claude chats a wake-up won't reach. Clicking it opens the Messages tab.
+- **✉ 2**: chats where messages from other agents wait for you to start a turn, with no wake-up coming: waking off,
+  a Claude chat idle over 2 hours, or a Codex chat not open in VS Code. Clicking it opens the Messages tab.
 - **Q 2 / 5**: queues finished / outstanding since each project's last turn, with the scheduler integration.
 - **▾**: every window with a chat, with a dot for its most urgent state; click one to bring it forward.
-- **Shortcut buttons**: while only a few chats need review, each gets a button that brings it forward.
+- **Shortcut buttons**: while only a few chats need review, each gets a button that brings it forward. **Settings ›
+  Top bar** picks which reasons give one: a finished or failed reply, a question or approval, finished queues.
 
 Clicking the counts opens the dropdown, with these tabs:
 
@@ -95,11 +96,12 @@ agent-bar send <key> "text"       # message one of them
 agent-bar inbox                   # read this chat's messages
 ```
 
-The recipient sees a one-line note with its unread count when its next turn starts. With **Wake idle Claude chats**
-on in settings, an idle Claude Code chat is also woken by a new message. Codex cannot be woken from outside, so it
-waits for its next turn. Copilot and Antigravity chats cannot receive messages, because they have no hook to show the
-note. In the Messages tab, each chat's badge shows a sealed envelope while it has unread messages, amber when they wait
-for you to start a turn there, and an open one once it has read them.
+The recipient sees a one-line note with its unread count when its next turn starts. With **Wake idle chats** on in
+settings, a new message also starts a turn in an idle Claude Code chat (up to 2 hours after its last turn) and in a
+Codex chat open in VS Code (once any turn in progress ends; this needs the `codex` command with `codex queue`).
+Other chats wait for their next turn. Copilot and Antigravity chats cannot receive messages, because they have no
+hook to show the note. In the Messages tab, each chat's badge shows a sealed envelope while it has unread messages,
+amber when they wait for you to start a turn there, and an open one once it has read them.
 
 Each message goes to one chat; there is no broadcast. A loop guard refuses a fourth message to the same chat until you
 write to the sender again, and more than 10 an hour; you can lift it from the Messages tab. Agents are told to treat

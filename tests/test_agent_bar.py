@@ -288,6 +288,40 @@ class TrackerTests(unittest.TestCase):
                 os.utime(messages.wake_files('claude:live', root)[2], (old, old))
                 self.assertEqual(messages.stranded(unread, rows, root), ['codex:c', 'claude:idle', 'claude:live', 'claude:used'])
 
+    def test_waking_queues_one_note_for_a_codex_chat_open_in_vs_code(self):
+        from agent_bar import hook, messages
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            row = lambda key, kind: {'key': key, 'provider': key.split(':')[0], 'title': key, 'project': 'p',
+                                     'state': 'finished', 'target': {'kind': kind}}
+            rows = [row('claude:a', 'tab'), row('codex:v', 'codex-sidebar'), row('codex:t', 'window')]
+            (root / 'snapshot.json').write_text(json.dumps({'rows': rows}))
+            (root / 'ledger.json').write_text(json.dumps({'conversations': {}}))
+            settings, calls = root / 'settings.json', []
+            run = lambda command, **_: calls.append(command) or subprocess.CompletedProcess(command, 0, 'Queued', '')
+            with unittest.mock.patch.object(messages, 'SETTINGS', settings), \
+                    unittest.mock.patch.object(messages.shutil, 'which', lambda name: '/bin/codex'), \
+                    unittest.mock.patch.object(messages.subprocess, 'run', run), \
+                    unittest.mock.patch.dict(os.environ, {'AGENT_BAR_STATE_DIR': str(root)}):
+                self.assertEqual(messages.send('claude:a', 'codex:v', 'one', root)['delivery'], 'at its next turn')
+                settings.write_text(json.dumps({'wake': True}))
+                self.assertEqual(messages.send('claude:a', 'codex:v', 'two', root)['delivery'], 'by a queued wake-up turn')
+                [command] = calls
+                self.assertEqual(command[1:4], ['queue', '--thread', 'v'])
+                self.assertTrue(command[-1].startswith('<agent-message>[agent-bar] 2 unread messages'))
+                # One note at a time; it reports every unread message once its turn starts.
+                self.assertEqual(messages.send('claude:a', 'codex:v', 'three', root)['delivery'], 'with the wake-up already queued')
+                self.assertEqual(messages.stranded({'codex:v': 3}, rows, root), [])
+                # Codex elsewhere than VS Code is not woken.
+                self.assertEqual(messages.send('claude:a', 'codex:t', 'x', root)['delivery'], 'at its next turn')
+                self.assertEqual(len(calls), 1)
+                # The note's turn starts: no longer pending, so unread messages left after it strand.
+                with unittest.mock.patch('sys.argv', ['hook', 'codex']), unittest.mock.patch('sys.stdin', io.StringIO(json.dumps(
+                        {'hook_event_name': 'UserPromptSubmit', 'session_id': 'v', 'prompt': command[-1]}))):
+                    hook.main()
+                self.assertFalse(messages.codex_pending('codex:v', root))
+                self.assertEqual(messages.stranded({'codex:v': 3}, rows, root), ['codex:v'])
+
     def test_a_busy_chat_gets_messages_mid_turn_only_as_the_user_allows(self):
         from agent_bar import hook, messages
         with tempfile.TemporaryDirectory() as root:

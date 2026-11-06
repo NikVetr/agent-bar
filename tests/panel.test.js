@@ -97,6 +97,9 @@ test('top-bar shortcuts list distinct conversations awaiting review, oldest firs
         {key: 'c', target: {}, unread: [], completed_at: 30},
         {key: 'd', target: null, unread: ['Reply finished'], completed_at: 5}];
     assert.equal(f.context.readyConversations(rows).map(r => r.key).join(','), 'a,b');
+    // Only the reasons picked in settings give a shortcut.
+    assert.equal(f.context.readyConversations(rows, ['Input needed']).map(r => r.key).join(','), 'a');
+    assert.equal(f.context.readyConversations(rows, []).length, 0);
 });
 
 test('another conversation in the same window switches without returning', async () => {

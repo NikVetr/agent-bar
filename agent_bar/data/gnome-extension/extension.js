@@ -28,6 +28,9 @@ const SETTINGS = [
         [[0, 'Off'], [3, '3'], [6, '6'], [10, '10']]],
     ['Top bar', 'quickChars', 'Button name length', 'Characters of the folder name on each shortcut', 16,
         [[12, '12'], [16, '16'], [24, '24']]],
+    ['Top bar', 'quickReasons', 'Review buttons for', 'Reasons that give a chat a shortcut',
+        ['Reply finished', 'Turn failed', 'Input needed', 'Approval needed', 'Queues finished'],
+        [['Reply finished', 'Reply'], ['Turn failed', 'Failure'], ['Input needed', 'Question'], ['Approval needed', 'Approval'], ['Queues finished', 'Queues']]],
     ['Top bar', 'queueBar', 'Queue count', 'Q finished / outstanding since each project\'s last turn', true,
         [[true, 'Show'], [false, 'Hide']]],
     ['Cluster', 'clusterBar', 'Top-bar indicator', 'Pick any; with only Warnings it appears just when one fires', ['cpu', 'warnings'],
@@ -64,7 +67,7 @@ const SETTINGS = [
         [[true, 'On'], [false, 'Off']]],
     ['Integrations', 'messages', 'Agent messages', 'Chats can message one open chat; it sees an unread count at its next turn start', true,
         [[true, 'On'], [false, 'Off']]],
-    ['Integrations', 'wake', 'Wake idle Claude chats', 'A message starts a turn in an idle Claude Code chat (up to 2 h after its last turn); Codex waits for its next turn', false,
+    ['Integrations', 'wake', 'Wake idle chats', 'A message starts a turn in an idle Claude Code chat (up to 2 h after its last turn), or in a Codex chat open in VS Code once any turn in progress ends', false,
         [[true, 'On'], [false, 'Off']]],
     ['Integrations', 'midturn', 'Messages to a busy Claude chat', 'With waking on, whether a message can arrive during its turn instead of right after it', 'after',
         [['after', 'After its turn'], ['urgent', 'Urgent mid-turn'], ['always', 'Mid-turn']]],
@@ -134,10 +137,12 @@ function completionTime(row) {
     return row.completed_at || (row.state === 'finished' ? row.state_at : 0);
 }
 
-function readyConversations(rows) {
+// Open chats needing review for one of `reasons` (any, when null), the longest waiting first.
+function readyConversations(rows, reasons = null) {
     const unique = new Map();
     for (const row of rows)
-        if (row.unread.length && row.target && !unique.has(row.key)) unique.set(row.key, row);
+        if (row.target && !unique.has(row.key) && row.unread.some(reason => !reasons || reasons.includes(reason)))
+            unique.set(row.key, row);
     return [...unique.values()].sort((a, b) => completionTime(a) - completionTime(b));
 }
 
@@ -1039,8 +1044,8 @@ class Tracker {
             'A cluster warning, by kind: a drive nearly full (filled as far as it is), memory pressure, a host unreachable, '
             + 'or the shared drive unmounted. Red when critical; +1 counts the others. The dropdown names the hosts.');
         if (this._setting('messages')) row(top, [this._glyph('mail', null, 'attention'), text('2', 'tracker-attention')],
-            'Messages from other agents wait in 2 chats until you start a turn there: Codex chats, which nothing can wake, and '
-            + 'Claude chats a wake-up will not reach (waking off, or idle over 2 h). Clicking it opens Messages.');
+            'Messages from other agents wait in 2 chats until you start a turn there, with no wake-up coming: waking off, '
+            + 'a Claude chat idle over 2 h, or a Codex chat not open in VS Code. Clicking it opens Messages.');
         row(top, [text('▾', 'tracker-nav-arrow'), ...dots(['attention', 'working', 'waiting', 'failed', 'finished'])],
             'Every VS Code window, terminal session, Codex app and Antigravity window, with a dot for its most urgent chat: '
             + 'needs review, working, waiting, failed, finished.');
@@ -1096,7 +1101,7 @@ class Tracker {
         if (this._setting('messages')) {
             const letters = card('Messages');
             row(letters, [text('✉ 2 unread', 'tracker-detail')], 'Messages from other chats wait for this one. It sees their count when '
-                + 'its next turn starts, from you or an automatic wake-up, and reads them with `agent-bar inbox`; nothing wakes an idle chat.');
+                + 'its next turn starts, from you or an automatic wake-up, and reads them with `agent-bar inbox`.');
             row(letters, [this._glyph('mail', null, 'attention'), this._glyph('mail', null, 'help-bright'), this._glyph('mail-open', null, 'muted')],
                 'On a thread\'s chats: messages to it unread, waiting for you to start a turn there (amber) or for a wake-up; '
                 + 'opened once it has read them all.');
@@ -1106,7 +1111,8 @@ class Tracker {
             row(letters, [reset], 'When a pair reaches that limit, its header says so and how many sends were held back; the sending agent is told '
                 + 'to ask you. Reset limit allows another round without writing to either chat.');
             row(letters, [text(this._setting('wake') ? 'Wake: on' : 'Wake: off', 'tracker-detail')], 'With Settings › Integrations › Wake idle '
-                + 'Claude chats on, a message starts a turn in an idle Claude Code chat (up to 2 h after its last turn), once per message.');
+                + 'chats on, a message starts a turn in an idle Claude Code chat (up to 2 h after its last turn), once per message, and in a Codex '
+                + 'chat open in VS Code, once any turn in progress ends.');
         }
 
         // The rest describes the job scheduler integration.
@@ -1866,7 +1872,7 @@ class Tracker {
     }
 
     _renderQuick(rows) {
-        const ready = readyConversations(rows);
+        const ready = readyConversations(rows, this._setting('quickReasons'));
         const limit = this._setting('quickLimit'), chars = this._setting('quickChars');
         const shown = ready.length <= limit ? ready : [];
         const signature = JSON.stringify(shown.map(row => [row.key, row.window, row.project]));

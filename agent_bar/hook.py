@@ -85,8 +85,11 @@ def main():
     record({'provider': provider, 'session': data['session_id'], 'kind': kind,
             'at': time.time(), 'turn': data.get('turn_id'), 'cwd': data.get('cwd'),
             'transcript': data.get('transcript_path')})
-    # A turn the waiter woke already carries the note.
-    if event == 'UserPromptSubmit' and '[agent-bar]' not in data.get('prompt', ''):
+    # A turn the waiter woke, or a queued Codex note started, already carries the note.
+    if event == 'UserPromptSubmit' and '[agent-bar]' in data.get('prompt', ''):
+        from agent_bar import messages
+        messages.queued_file(f'{provider}:{data["session_id"]}', state_root).unlink(missing_ok=True)
+    elif event == 'UserPromptSubmit':
         from agent_bar import messages
         key = f'{provider}:{data["session_id"]}'
         note = messages.notice(key, state_root)

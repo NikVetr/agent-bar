@@ -1,11 +1,14 @@
 """Messages between open agent conversations: addressed to one conversation, read at its next turn start.
 
 A recipient learns of unread messages from its own turn-start hook. With waking on, an idle Claude Code
-chat is also woken once per message by a background Stop hook (`claude_hook.py wait`). The loop guard
-bounds how much two agents can say to each other before either user writes again or resets it."""
+chat is also woken once per message by a background Stop hook (`agent_bar.hook wait`), and a Codex chat open in
+VS Code by a note queued with `codex queue`, which VS Code's Codex runs as a turn once any turn in progress ends.
+The loop guard bounds how much two agents can say to each other before either user writes again or resets it."""
 import json
 import os
+import shutil
 import sqlite3
+import subprocess
 import time
 from pathlib import Path
 
@@ -19,6 +22,8 @@ BUSY = {'working', 'input needed', 'approval needed'}  # Tracker states during a
 KEEP = 30 * 86400  # Read messages are kept this long.
 RECENT = 40  # Messages the panel lists.
 RECEIVERS = {'claude', 'codex'}  # Providers whose hooks show a recipient its unread messages.
+VSCODE = {'tab', 'codex-sidebar'}  # Targets of chats in VS Code, whose own Codex server runs queued messages.
+QUEUED_HOLD = 2 * 3600  # A queued Codex note whose turn has not started in this long no longer counts as pending.
 
 
 def setting(key, default):
@@ -61,20 +66,48 @@ def midturn(key, root=ROOT):
     return {'after': 'none', 'urgent': 'urgent', 'always': 'all'}.get(setting('midturn', 'after'), 'none')
 
 
+def queued_file(key, root=ROOT):
+    """Marks a Codex chat's queued wake-up note until its turn starts."""
+    return Path(f'{wake_files(key, root)[0]}.queued')
+
+
+def codex_pending(key, root=ROOT, now=None):
+    try: return (now or time.time()) - queued_file(key, root).stat().st_mtime < QUEUED_HOLD
+    except OSError: return False
+
+
+def wake_codex(key, root=ROOT):
+    """With waking on, queue the unread-messages note for a Codex chat open in VS Code, one note at a time. Says how
+    the messages will reach the chat."""
+    rows = [row for row in snapshot(root)['rows'] if row['key'] == key]
+    if not waking() or not any((row.get('target') or {}).get('kind') in VSCODE for row in rows): return 'at its next turn'
+    if codex_pending(key, root): return 'with the wake-up already queued'
+    codex, note = shutil.which('codex'), notice(key, root)
+    if not codex or not note: return 'at its next turn' + ('' if codex else ' (no codex command to wake it)')
+    # Marked as an agent message, so the turn-start hook takes it for an automatic turn, not the user's.
+    command = [codex, 'queue', '--thread', key.split(':', 1)[1], '--message', f'<agent-message>{note}</agent-message>']
+    try: result = subprocess.run(command, capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.TimeoutExpired) as error: return f'at its next turn (codex queue failed: {error})'
+    if result.returncode: return f'at its next turn (codex queue failed: {(result.stderr or result.stdout).strip()[-200:]})'
+    queued_file(key, root).write_text(str(time.time()))
+    return 'by a queued wake-up turn'
+
+
 def number(path):
     try: return int(path.read_text() or 0)
     except (OSError, ValueError): return 0
 
 
 def stranded(unread, rows, root=ROOT, now=None):
-    """Open chats whose unread messages wait for the user to start a turn there: Codex chats, which nothing can
-    wake, and Claude chats no waiter will wake: waking off, or idle with no live waiter left to wake them for
-    their newest message. A Claude chat in a turn gets a waiter when the turn ends."""
+    """Open chats whose unread messages wait for the user to start a turn there: Codex chats with no queued
+    wake-up note pending, and Claude chats no waiter will wake: waking off, or idle with no live waiter left to wake
+    them for their newest message. A Claude chat in a turn gets a waiter when the turn ends."""
     from .hook import WAIT
     now, keys = now or time.time(), []
     for row in rows:
         key = row['key']
         if not unread.get(key) or key in keys or row['provider'] not in RECEIVERS: continue
+        if row['provider'] == 'codex' and waking() and codex_pending(key, root): continue
         if row['provider'] == 'claude' and waking():
             if row['state'] in BUSY: continue
             latest, woken, waiter, _ = wake_files(key, root)
@@ -162,8 +195,9 @@ def send(sender, recipient, body, root=ROOT, now=None, urgent=False):
         latest, _, _, urgent_latest = wake_files(recipient, root)
         latest.write_text(str(cursor.lastrowid))
         if urgent: urgent_latest.write_text(str(cursor.lastrowid))
+    delivery = wake_codex(recipient, root) if recipient.startswith('codex:') else None
     return {'ok': True, 'id': cursor.lastrowid, 'to': open_rows[recipient]['title'],
-            'remaining': PEER_LIMIT - peer - 1}
+            'remaining': PEER_LIMIT - peer - 1, **({'delivery': delivery} if delivery else {})}
 
 
 def reset_limit(first, second, root=ROOT, now=None):
