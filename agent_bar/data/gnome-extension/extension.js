@@ -1925,14 +1925,17 @@ class Tracker {
     _fitQuick(ready) {
         const panel = Main.panel, total = ready.length;
         // Each side's box gets at most half of what the centre box leaves.
-        const side = Math.floor((panel.width - panel._centerBox.get_preferred_width(-1)[1]) / 2) - 8;
+        const side = Math.floor((panel.width - panel._centerBox.get_preferred_width(-1)[1]) / 2) - 2;
         const width = actor => actor.get_preferred_width(-1)[1];
         const room = (box, own) => side - own.get_theme_node().get_length('margin-left') - own.get_theme_node().get_length('margin-right')
             - box.get_children().filter(child => child !== own && child.visible).reduce((sum, child) => sum + width(child), 0);
         const leftRoom = room(panel._leftBox, this._quick), rightRoom = room(panel._rightBox, this._quickRight);
         const spacing = this._quick.get_theme_node().get_length('spacing');
         const buttons = this._quickButtons;
-        buttons.forEach(button => button.show());
+        buttons.forEach(button => {
+            button.show();
+            button.set_width(-1);
+        });
         const widths = buttons.map(width);
         this._quickMore.label = `+${total} more`;
         const more = width(this._quickMore) + spacing;
@@ -1947,15 +1950,23 @@ class Tracker {
             }
             return [count, used];
         };
-        let [left] = fill(leftRoom, 0, false);
+        let [left, usedLeft] = fill(leftRoom, 0, false);
+        // The next shortcut, its name cut short, takes what the left half has left, so the row runs on unbroken.
+        let squeezed = leftRoom - usedLeft - spacing;
+        if (left < buttons.length && squeezed >= 90) left++;
+        else squeezed = 0;
         let [right, usedRight] = fill(rightRoom, left, true);
         let moreRight = true;
         if (total > left + right && (!right || usedRight + more > rightRoom)) {
             // +N more ends the left side instead, next to the shortcuts it continues.
             [left] = fill(leftRoom, 0, true);
-            right = 0;
+            right = squeezed = 0;
             moreRight = false;
         }
+        if (squeezed) buttons[left - 1].set_width(squeezed);
+        // Taking all the room it has, the right half's box starts at the middle, against the left half's shortcuts.
+        this._quickRight.visible = right > 0;
+        this._quickRight.set_width(right > 0 ? Math.max(0, rightRoom) : -1);
         const place = (box, actors) => actors.forEach((actor, index) => {
             if (actor.get_parent() !== box) {
                 actor.get_parent()?.remove_child(actor);
