@@ -68,7 +68,7 @@ again, leaving your history and settings (`--purge` deletes those too).
 - **Q 2 / 5**: queues finished / outstanding since each project's last turn, with the scheduler integration.
 - **▾**: every window with a chat, with a dot for its most urgent state; click one to bring it forward.
 - **Shortcut buttons**: chats needing review get a button that brings them forward, the longest waiting first, as
-  many as fit; **+2 more** counts the rest and opens them in Chats. **Settings › Top bar** sets the most buttons and
+  many as fit, continuing right of the middle when the left half is full; **+2 more** lists the rest. **Settings › Top bar** sets the most buttons and
   which reasons give one: a finished or failed reply, a question or approval, finished queues.
 
 Clicking the counts opens the dropdown, with these tabs:

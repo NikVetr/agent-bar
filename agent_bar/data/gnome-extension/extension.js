@@ -24,7 +24,7 @@ const SCHEDULER_URL = null;
 // [section, key, label, description, default, [[value, caption]...]]; a list default makes the setting
 // multiple-choice. The service reads quietMinutes.
 const SETTINGS = [
-    ['Top bar', 'quickLimit', 'Review buttons', 'At most this many shortcuts, as room allows; +N more counts the rest', 6,
+    ['Top bar', 'quickLimit', 'Review buttons', 'At most this many shortcuts, as room allows; +N more lists the rest', 6,
         [[0, 'Off'], [3, '3'], [6, '6'], [10, '10']]],
     ['Top bar', 'quickChars', 'Button name length', 'Characters of the folder name on each shortcut', 16,
         [[12, '12'], [16, '16'], [24, '24']]],
@@ -802,6 +802,19 @@ class Tracker {
         for (const button of [this._button, this._nav, this._clusterButton]) button.menu.setSourceAlignment(0);
         this._holdHoverSwitch();
         this._quick = new St.BoxLayout({style_class: 'tracker-quick'});
+        // Shortcuts without room on the left continue at the start of the right-hand box.
+        this._quickRight = new St.BoxLayout({style_class: 'tracker-quick tracker-quick-right'});
+        this._quickButtons = [];
+        this._quickHidden = [];
+        this._quickMore = new St.Button({style_class: 'tracker-quick-button tracker-quick-more', can_focus: true,
+            visible: false, y_align: Clutter.ActorAlign.CENTER});
+        this._quick.add_child(this._quickMore);
+        // +N more lists the chats without a shortcut, hanging from where it sits.
+        this._quickMenu = new PopupMenu.PopupMenu(this._quickMore, 0.0, St.Side.TOP);
+        Main.uiGroup.add_actor(this._quickMenu.actor);
+        this._quickMenu.actor.hide();
+        Main.panel.menuManager.addMenu(this._quickMenu);
+        this._quickMore.connect('clicked', () => this._toggleQuickMenu());
         this._position();
         this._loadSettings();
         this._applySettings();
@@ -904,6 +917,10 @@ class Tracker {
             parent.insert_child_above(child, previous);
             previous = child;
         }
+        if (this._quickRight.get_parent() !== Main.panel._rightBox) {
+            this._quickRight.get_parent()?.remove_child(this._quickRight);
+            Main.panel._rightBox.insert_child_at_index(this._quickRight, 0);
+        }
     }
 
     _setting(key) {
@@ -932,7 +949,7 @@ class Tracker {
     }
 
     _applySettings() {
-        for (const actor of [this._bar, this._quick, this._button.menu.box, this._nav.menu.box,
+        for (const actor of [this._bar, this._quick, this._quickRight, this._quickMenu.box, this._button.menu.box, this._nav.menu.box,
             this._clusterButton?.menu.box].filter(Boolean)) {
             if (this._setting('palette') === 'colorblind') actor.add_style_class_name('tracker-colorblind');
             else actor.remove_style_class_name('tracker-colorblind');
@@ -1034,7 +1051,7 @@ class Tracker {
             : 'A ? means the agent-bar service stopped updating.');
         row(top, [text('✳ project…', 'tracker-quick-button tracker-claude')], limit
             ? `Up to ${limit} chats needing review get a shortcut, as many as fit, the longest waiting first; clicking one brings that `
-                + 'chat forward and clears it. +2 more counts the rest and opens them in Chats.'
+                + 'chat forward and clears it. They continue right of the middle when the left half is full; +2 more lists the rest.'
             : 'Review shortcuts are off (Settings › Top bar).');
         if (scheduler) row(top, [text('23%', 'tracker-muted'), text('64%', 'tracker-working'), text('94%', 'tracker-attention')],
             'Cluster CPU: busy cores over the job slots each host allows, a host counting at most full. '
@@ -1878,15 +1895,15 @@ class Tracker {
         const shown = ready.slice(0, limit);
         const signature = JSON.stringify(shown.map(row => [row.key, row.window, row.project]));
         if (signature !== this._quickSignature) this._buildQuick(signature, shown, chars);
-        this._fitQuick(limit ? ready.length : 0);
+        this._fitQuick(limit ? ready : []);
     }
 
-    // One shortcut per chat in `shown`, then +N more, which opens Chats on the ones needing review.
+    // One shortcut per chat in `shown`, placed by _fitQuick.
     _buildQuick(signature, shown, chars) {
         this._quickSignature = signature;
-        this._releaseFocus(null, this._quick);
-        this._quick.destroy_all_children();
-        for (const row of shown) {
+        for (const box of [this._quick, this._quickRight]) this._releaseFocus(null, box);
+        for (const button of this._quickButtons) button.destroy();
+        this._quickButtons = shown.map(row => {
             const name = row.project.length > chars ? `${row.project.slice(0, chars - 1)}…` : row.project;
             const button = new St.Button({label: `${PROVIDERS[row.provider]?.[0] || '•'} ${name}`,
                 style_class: `tracker-quick-button tracker-${row.provider}`, can_focus: true,
@@ -1897,46 +1914,81 @@ class Tracker {
                 this._quickSignature = null;
                 this._activate(row, this._snapshot, 'focus');
             });
+            // _fitQuick puts it in its place.
             this._quick.add_child(button);
-        }
-        this._quickMore = new St.Button({style_class: 'tracker-quick-button tracker-quick-more', can_focus: true,
-            visible: false, y_align: Clutter.ActorAlign.CENTER});
-        this._quickMore.connect('clicked', () => {
-            this._filter = 'review';
-            this._openOn = 'conversations';
-            this._button.menu.open();
+            return button;
         });
-        this._quick.add_child(this._quickMore);
     }
 
-    // Shows the shortcuts that fit in the top bar's left half, the longest waiting first, and counts the rest of
-    // the `total` chats needing review, those over the limit included, in +N more.
-    _fitQuick(total) {
-        const panel = Main.panel;
-        const buttons = this._quick.get_children().filter(child => child !== this._quickMore);
-        // The clock's box is centred, so the left box has half of what it leaves.
-        let room = Math.floor((panel.width - panel._centerBox.get_preferred_width(-1)[1]) / 2) - 8;
-        for (const child of panel._leftBox.get_children()) {
-            if (child === this._quick) break;
-            if (child.visible) room -= child.get_preferred_width(-1)[1];
-        }
-        const spacing = this._quick.get_theme_node().get_length('spacing');
+    // Shortcuts as room allows, the longest waiting first: in the top bar's left half after its other buttons, then
+    // at the start of the right half. +N more, after the last one shown, lists the rest of `ready`.
+    _fitQuick(ready) {
+        const panel = Main.panel, total = ready.length;
+        // Each side's box gets at most half of what the centre box leaves.
+        const side = Math.floor((panel.width - panel._centerBox.get_preferred_width(-1)[1]) / 2) - 8;
         const width = actor => actor.get_preferred_width(-1)[1];
+        const room = (box, own) => side - own.get_theme_node().get_length('margin-left') - own.get_theme_node().get_length('margin-right')
+            - box.get_children().filter(child => child !== own && child.visible).reduce((sum, child) => sum + width(child), 0);
+        const leftRoom = room(panel._leftBox, this._quick), rightRoom = room(panel._rightBox, this._quickRight);
+        const spacing = this._quick.get_theme_node().get_length('spacing');
+        const buttons = this._quickButtons;
+        buttons.forEach(button => button.show());
+        const widths = buttons.map(width);
         this._quickMore.label = `+${total} more`;
         const more = width(this._quickMore) + spacing;
-        let used = this._quick.get_theme_node().get_length('margin-left'), fits = 0;
-        for (const button of buttons) {
-            button.show();
-            const next = used + (fits ? spacing : 0) + width(button);
-            if (next + (total > fits + 1 ? more : 0) > room) break;
-            used = next;
-            fits++;
+        // How many buttons from `start` fit in `space`, keeping room for +N more if `keep` and any are left over.
+        const fill = (space, start, keep) => {
+            let used = -spacing, count = 0;
+            for (let i = start; i < buttons.length; i++) {
+                const next = used + spacing + widths[i];
+                if (next + (keep && total > i + 1 ? more : 0) > space) break;
+                used = next;
+                count++;
+            }
+            return [count, used];
+        };
+        let [left] = fill(leftRoom, 0, false);
+        let [right, usedRight] = fill(rightRoom, left, true);
+        let moreRight = true;
+        if (total > left + right && (!right || usedRight + more > rightRoom)) {
+            // +N more ends the left side instead, next to the shortcuts it continues.
+            [left] = fill(leftRoom, 0, true);
+            right = 0;
+            moreRight = false;
         }
-        buttons.forEach((button, index) => { button.visible = index < fits; });
-        const hidden = total - fits;
+        const place = (box, actors) => actors.forEach((actor, index) => {
+            if (actor.get_parent() !== box) {
+                actor.get_parent()?.remove_child(actor);
+                box.add_child(actor);
+            }
+            box.set_child_at_index(actor, index);
+        });
+        const unplaced = buttons.slice(left + right);
+        place(this._quick, [...buttons.slice(0, left), ...moreRight ? [] : [this._quickMore], ...unplaced]);
+        place(this._quickRight, [...buttons.slice(left, left + right), ...moreRight ? [this._quickMore] : []]);
+        unplaced.forEach(button => button.hide());
+        this._quickHidden = ready.slice(left + right);
+        const hidden = this._quickHidden.length;
         this._quickMore.label = `+${hidden} more`;
         this._quickMore.visible = hidden > 0;
-        this._quickMore.accessible_name = `${hidden} more chat${hidden === 1 ? '' : 's'} needing review, without room for a shortcut; open them in Chats`;
+        this._quickMore.accessible_name = `${hidden} more chat${hidden === 1 ? '' : 's'} needing review without room for a shortcut; click to list them`;
+    }
+
+    // The chats needing review without a shortcut, under +N more; choosing one brings it forward.
+    _toggleQuickMenu() {
+        if (this._quickMenu.isOpen) {
+            this._quickMenu.close();
+            return;
+        }
+        this._quickMenu.removeAll();
+        for (const row of this._quickHidden) {
+            const title = row.title.length > 48 ? `${row.title.slice(0, 47)}…` : row.title;
+            const item = new PopupMenu.PopupMenuItem(`${PROVIDERS[row.provider]?.[0] || '•'} ${row.project} · ${title}`);
+            item.label.add_style_class_name(`tracker-${row.provider}`);
+            item.connect('activate', () => this._activate(row, this._snapshot, 'focus'));
+            this._quickMenu.addMenuItem(item);
+        }
+        this._quickMenu.open();
     }
 
     _read() {
@@ -3157,6 +3209,8 @@ class Tracker {
         if (this._timer) GLib.source_remove(this._timer);
         this._menuSwitch.restore();
         this._dbus?.unexport();
+        this._quickMenu.destroy();
+        this._quickRight.destroy();
         this._quick.destroy();
         this._nav.destroy();
         this._clusterButton.destroy();

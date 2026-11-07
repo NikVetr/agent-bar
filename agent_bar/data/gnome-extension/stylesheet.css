@@ -2,6 +2,7 @@
 .tracker-provider-ratio { spacing: 5px; }
 .tracker-bar-divider { color: #555c67; }
 .tracker-quick { spacing: 6px; margin-left: 4px; }
+.tracker-quick-right { margin-left: 0; margin-right: 8px; }
 .tracker-nav-arrow { color: #c3cad4; }
 .tracker-nav-menu { width: 340px; color: #e9edf2; }
 .tracker-nav-item { spacing: 10px; padding: 6px 16px; }
