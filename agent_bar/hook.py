@@ -29,10 +29,25 @@ def record(item):
     temporary.replace(filename)
 
 
+def headless():
+    """Whether this hook runs for a non-interactive Claude Code session (print mode or the Agent SDK). Such a
+    session waits for its background hooks before it exits, so a waiter would hold it open for two hours."""
+    if os.environ.get('CLAUDE_CODE_ENTRYPOINT', '').startswith('sdk'): return True
+    pid = os.getppid()
+    try:
+        # The hook's shell, then Claude Code itself.
+        for _ in range(3):
+            if {b'-p', b'--print'} & set(Path(f'/proc/{pid}/cmdline').read_bytes().split(b'\0')): return True
+            pid = int(Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()[1])
+    except (OSError, ValueError, IndexError):
+        pass
+    return False
+
+
 def wait(data, every=3):
     """Watch for a message to this idle chat after its turn ended; wake it once for each new one."""
     from agent_bar import messages
-    if not data.get('session_id') or data.get('agent_id') or not messages.waking(): return
+    if not data.get('session_id') or data.get('agent_id') or not messages.waking() or headless(): return
     key, root, parent = f'claude:{data["session_id"]}', state(), os.getppid()
     latest, woken, waiter, urgent = messages.wake_files(key, root)
     waiter.write_text(str(os.getpid()))

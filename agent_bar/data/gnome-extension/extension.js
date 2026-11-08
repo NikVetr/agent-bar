@@ -1847,10 +1847,12 @@ class Tracker {
             const tone = !host.ok ? 'failed' : problems.length ? 'attention' : 'finished';
             for (const dot of card.dots) setTone(dot, tone);
             const busy = host.ok && host.cpu ? host.cpu.busy_pct : null;
-            card.perCore = host.cpu?.per_core || [];
+            // An unreachable host's last readings are old, or gone after a collector restart: none are shown.
+            const off = !host.ok;
+            card.perCore = off ? [] : host.cpu?.per_core || [];
             card.cores.queue_repaint();
             const {memory, disk} = host;
-            card.memoryParts = memory ? [memory.used_bytes / memory.total_bytes, (memory.cache_bytes || 0) / memory.total_bytes] : [0, 0];
+            card.memoryParts = memory && !off ? [memory.used_bytes / memory.total_bytes, (memory.cache_bytes || 0) / memory.total_bytes] : [0, 0];
             card.memory.queue_repaint();
             const memoryText = memory ? `${bytes(memory.used_bytes)} / ${bytes(memory.total_bytes)}`
                 + (memory.pressure && memory.pressure !== 'normal' ? ` · pressure ${memory.pressure === 'warn' ? 'elevated' : memory.pressure}` : '') : '';
@@ -1858,27 +1860,27 @@ class Tracker {
             const diskText = disk ? `${bytes(disk.root_free_bytes)} free of ${bytes(disk.root_total_bytes)}` : '';
             if (card.status) {
                 card.name.text = host.id;
-                card.cpu.text = pct(host.cpu?.busy_pct);
+                card.cpu.text = off ? '—' : pct(host.cpu?.busy_pct);
                 setTone(card.cpu, busy === null ? 'muted' : loadStyle(busy));
                 // The status line names any memory pressure that is a warning.
-                card.detail.text = [memory && `${bytes(memory.used_bytes)} / ${bytes(memory.total_bytes)}`, load].filter(Boolean).join(' · ');
+                card.detail.text = off ? 'unreachable' : [memory && `${bytes(memory.used_bytes)} / ${bytes(memory.total_bytes)}`, load].filter(Boolean).join(' · ');
                 // Problems replace the routine disk line so they are not truncated away.
                 card.status.text = problems.length ? problems.map(problem => problem.text).join(' · ') : diskText && `disk ${diskText}`;
                 card.status.style_class = problems.length
                     ? `tracker-detail tracker-${problems.some(problem => problem.critical) ? 'failed' : 'attention'}` : 'tracker-detail';
                 continue;
             }
-            const memoryUsed = memory ? 100 * memory.used_bytes / memory.total_bytes : null;
-            const diskUsed = disk ? usedPct(disk.root_free_bytes, disk.root_total_bytes) : null;
-            card.diskParts = disk ? [diskUsed / 100, 0] : [0, 0];
+            const memoryUsed = memory && !off ? 100 * memory.used_bytes / memory.total_bytes : null;
+            const diskUsed = disk && !off ? usedPct(disk.root_free_bytes, disk.root_total_bytes) : null;
+            card.diskParts = diskUsed !== null ? [diskUsed / 100, 0] : [0, 0];
             card.disk.queue_repaint();
             for (const [label, value] of [[card.cpu, busy], [card.memoryValue, memoryUsed], [card.diskValue, diskUsed]]) {
-                label.text = pct(value);
+                label.text = off ? '—' : pct(value);
                 setTone(label, value === null ? 'muted' : loadStyle(value));
             }
-            card.load.text = [Number.isInteger(host.slots) && `${host.slots} slots`, load].filter(Boolean).join(' · ');
-            card.memoryNote.text = memoryText;
-            card.diskNote.text = diskText;
+            card.load.text = off ? 'unreachable' : [Number.isInteger(host.slots) && `${host.slots} slots`, load].filter(Boolean).join(' · ');
+            card.memoryNote.text = off ? 'unreachable' : memoryText;
+            card.diskNote.text = off ? 'unreachable' : diskText;
         }
         const sharedWarnings = warnings.filter(warning => warning.host === 'shared');
         issues.push(...sharedWarnings);

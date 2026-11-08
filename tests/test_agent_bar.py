@@ -288,6 +288,18 @@ class TrackerTests(unittest.TestCase):
                 os.utime(messages.wake_files('claude:live', root)[2], (old, old))
                 self.assertEqual(messages.stranded(unread, rows, root), ['codex:c', 'claude:idle', 'claude:live', 'claude:used'])
 
+    def test_no_waiter_holds_a_headless_claude_session_open(self):
+        from agent_bar import hook, messages
+        with tempfile.TemporaryDirectory() as root, unittest.mock.patch.object(messages, 'SETTINGS', Path(root) / 'settings.json'):
+            (Path(root) / 'settings.json').write_text(json.dumps({'wake': True}))
+            for entrypoint in ['sdk-cli', 'sdk-py']:
+                with unittest.mock.patch.dict(os.environ, {'CLAUDE_CODE_ENTRYPOINT': entrypoint, 'AGENT_BAR_STATE_DIR': root}):
+                    started = time.time()
+                    self.assertIsNone(hook.wait({'session_id': 's', 'hook_event_name': 'Stop'}))
+                    self.assertLess(time.time() - started, 1)
+            with unittest.mock.patch.dict(os.environ, {'CLAUDE_CODE_ENTRYPOINT': 'claude-vscode'}):
+                self.assertFalse(hook.headless())
+
     def test_waking_queues_one_note_for_a_codex_chat_open_in_vs_code(self):
         from agent_bar import hook, messages
         with tempfile.TemporaryDirectory() as root:
