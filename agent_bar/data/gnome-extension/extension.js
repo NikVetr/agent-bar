@@ -1181,8 +1181,8 @@ class Tracker {
             + 'a clock marks a host that stopped updating. Snooze keeps one off the top bar until it clears, or for at most '
             + 'a time you type (90m, 120h, 5d, 2w; a bare number is hours); snoozed ones follow, gray.');
         row(cluster, [this._drawing((cr, width, height) => paintCores(cr, width, height, [18, 42, 63, 78, 91, 97, 55, 30]),
-            {width: 120, height: 24})], 'One bar per core, its height how busy the core is and its color the same as the CPU '
-            + 'percentage: gray under 50%, blue from 50%, amber from 90%. The color is load, not user against system time.');
+            {width: 120, height: 24})], 'One bar per core, as tall as the core is busy, colored like the CPU percentage: gray under '
+            + '50%, blue from 50%, amber from 90%.');
         row(cluster, [this._drawing((cr, width, height) => paintMemory(cr, width, height, 0.55, 0.2), {width: 120, height: 6})],
             'Memory used (solid) and cache (faint); disk used in the same blue.');
         const sample = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(i => ({at: i * SHARED_WINDOW / 9, rx: [2, 3, 9, 14, 8, 5, 6, 12, 7, 4][i],
