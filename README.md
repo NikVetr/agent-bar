@@ -66,7 +66,8 @@ again, leaving your history and settings (`--purge` deletes those too).
 - **✉ 2**: chats where messages from other agents wait for you to start a turn, with no wake-up coming: waking off,
   a Claude chat idle over 2 hours, or a Codex chat not open in VS Code. Clicking it opens the Messages tab.
 - **Q 2 / 5**: queues finished / outstanding since each project's last turn, with the scheduler integration.
-- **▾**: every window with a chat, with a dot for its most urgent state; click one to bring it forward.
+- **▾**: every window with a chat, with a dot for its most urgent state; click one to bring it forward. Below
+  them, **New VS Code window** opens one maximized on your main display, and **Saved chats** opens History.
 - **Shortcut buttons**: chats needing review get a button that brings them forward, the longest waiting first, as
   many as fit, continuing right of the middle when the left half is full; **+2 more** lists the rest. **Settings › Top bar** sets the most buttons and
   which reasons give one: a finished or failed reply, a question or approval, finished queues.

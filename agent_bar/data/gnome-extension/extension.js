@@ -75,6 +75,8 @@ const SETTINGS = [
         [['default', 'Default'], ['colorblind', 'Color-blind safe']]],
 ];
 const QUEUE_BAR = 180;
+// The most room the focused app's name, left of the tracker, keeps once it has needed it.
+const APP_MENU_MAX = 300;
 // How long the pointer must rest on another top-bar button before an open tracker dropdown gives way to it.
 const MENU_SWITCH_DELAY = 500;
 // History rows shown while searching; folders otherwise build rows only when expanded.
@@ -361,6 +363,23 @@ function clusterTotals(snapshot, scope = 'all') {
         slotted: hosts.length > 0 && hosts.every(host => Number.isInteger(host.slots)),
         memory: memory ? 100 * sum(host => host.memory?.used_bytes) / memory : null,
         down: snapshot.hosts.filter(host => !host.ok || host.mount?.ok === false).map(host => host.id)};
+}
+
+// Keeps a top-bar widget at the widest it has been, so a number changing does not shift what follows it. The
+// width goes in its style, where St raises the natural width with it; a minimum above the natural width set on
+// the actor itself is a fatal error in Clutter's box layout.
+function holdWidth(actor, most = Infinity) {
+    const width = Math.min(most, actor.get_preferred_width(-1)[1]);
+    if (width > (actor._held || 0)) {
+        actor._held = width;
+        restyle(actor, actor._style);
+    }
+}
+
+// Sets an inline style that keeps any held width.
+function restyle(actor, style = '') {
+    actor._style = style;
+    actor.set_style(style + (actor._held ? ` min-width: ${actor._held}px;` : '') || null);
 }
 
 function loadStyle(pct) {
@@ -816,6 +835,7 @@ class Tracker {
         Main.panel.menuManager.addMenu(this._quickMenu);
         this._quickMore.connect('clicked', () => this._toggleQuickMenu());
         this._position();
+        this._holdAppMenu();
         this._loadSettings();
         this._applySettings();
         this._button.menu.box.add_style_class_name('tracker-menu');
@@ -1066,7 +1086,8 @@ class Tracker {
             + 'a Claude chat idle over 2 h, or a Codex chat not open in VS Code. Clicking it opens Messages.');
         row(top, [text('▾', 'tracker-nav-arrow'), ...dots(['attention', 'working', 'waiting', 'failed', 'finished'])],
             'Every VS Code window, terminal session, Codex app and Antigravity window, with a dot for its most urgent chat: '
-            + 'needs review, working, waiting, failed, finished.');
+            + 'needs review, working, waiting, failed, finished. Below them, a new VS Code window on the main display, and '
+            + 'Saved chats, which opens History.');
 
         const chats = card('Chats');
         row(chats, Object.entries(PROVIDERS).map(([key, [symbol]]) => text(symbol, `tracker-${key}`)),
@@ -1160,7 +1181,8 @@ class Tracker {
             + 'a clock marks a host that stopped updating. Snooze keeps one off the top bar until it clears, or for at most '
             + 'a time you type (90m, 120h, 5d, 2w; a bare number is hours); snoozed ones follow, gray.');
         row(cluster, [this._drawing((cr, width, height) => paintCores(cr, width, height, [18, 42, 63, 78, 91, 97, 55, 30]),
-            {width: 120, height: 24})], 'One bar per core, colored like the CPU percentage.');
+            {width: 120, height: 24})], 'One bar per core, its height how busy the core is and its color the same as the CPU '
+            + 'percentage: gray under 50%, blue from 50%, amber from 90%. The color is load, not user against system time.');
         row(cluster, [this._drawing((cr, width, height) => paintMemory(cr, width, height, 0.55, 0.2), {width: 120, height: 6})],
             'Memory used (solid) and cache (faint); disk used in the same blue.');
         const sample = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(i => ({at: i * SHARED_WINDOW / 9, rx: [2, 3, 9, 14, 8, 5, 6, 12, 7, 4][i],
@@ -1286,11 +1308,9 @@ class Tracker {
         this._releaseFocus(this._nav.menu);
         this._nav.menu.removeAll();
         const snapshot = this._snapshot;
-        if (!snapshot || this._error) {
+        if (!snapshot || this._error)
             this._nav.menu.addMenuItem(this._item(this._error || 'Waiting for the agent-bar service', 'tracker-warning'));
-            return;
-        }
-        for (const {window, state, active} of windowSummaries(snapshot, this._setting('windowOrder'))) {
+        for (const {window, state, active} of snapshot && !this._error ? windowSummaries(snapshot, this._setting('windowOrder')) : []) {
             const item = new PopupMenu.PopupBaseMenuItem({style_class: 'tracker-nav-item'});
             item._ornamentLabel?.hide();
             item.add_child(new St.Label({text: '●', y_align: Clutter.ActorAlign.CENTER,
@@ -1312,6 +1332,86 @@ class Tracker {
             });
             this._nav.menu.addMenuItem(item);
         }
+        if (this._nav.menu.numMenuItems) this._nav.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+        const fresh = new PopupMenu.PopupImageMenuItem('New VS Code window', 'window-new-symbolic');
+        fresh.connect('activate', () => this._openVSCode());
+        this._nav.menu.addMenuItem(fresh);
+        const saved = new PopupMenu.PopupImageMenuItem('Saved chats', 'document-open-recent-symbolic');
+        saved.connect('activate', () => this._later(() => {
+            this._openOn = 'history';
+            this._button.menu.open();
+        }));
+        this._nav.menu.addMenuItem(saved);
+    }
+
+    // A fresh VS Code window, maximized on the main display once it has drawn.
+    _openVSCode() {
+        this._stopWatchingNew();
+        const stop = () => this._stopWatchingNew();
+        this._newWindow = {
+            created: global.display.connect('window-created', (_display, win) => {
+                if (!/^code$/i.test(win.get_wm_class() || '')) return;
+                stop();
+                const place = () => {
+                    const area = win.get_work_area_for_monitor(Main.layoutManager.primaryIndex);
+                    win.move_resize_frame(false, area.x, area.y, area.width, area.height);
+                    win.maximize(Meta.MaximizeFlags.BOTH);
+                    Main.activateWindow(win);
+                };
+                const actor = win.get_compositor_private();
+                if (!actor) return place();
+                const drawn = actor.connect('first-frame', () => {
+                    actor.disconnect(drawn);
+                    place();
+                });
+            }),
+            timeout: GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 30, () => {
+                this._newWindow.timeout = 0;
+                stop();
+                return GLib.SOURCE_REMOVE;
+            }),
+        };
+        try { Gio.Subprocess.new(['code', '--new-window'], Gio.SubprocessFlags.NONE); }
+        catch (error) {
+            stop();
+            Main.notifyError('Agent Bar', `Could not start VS Code: ${error.message}`);
+        }
+    }
+
+    _stopWatchingNew() {
+        if (!this._newWindow) return;
+        global.display.disconnect(this._newWindow.created);
+        if (this._newWindow.timeout) GLib.source_remove(this._newWindow.timeout);
+        this._newWindow = null;
+    }
+
+    // The focused app's name, left of the tracker, keeps the widest it has been (to APP_MENU_MAX), and a spacer
+    // keeps that room while no app has focus, so the tracker always starts in the same place.
+    _holdAppMenu() {
+        const menu = Main.panel.statusArea.appMenu?.container;
+        if (!menu) return;
+        this._appSpacer = new St.Widget({visible: false});
+        menu.get_parent().insert_child_above(this._appSpacer, menu);
+        const hold = () => {
+            if (menu.visible) holdWidth(menu, APP_MENU_MAX);
+            const spacer = !menu.visible && !!menu._held;
+            if (this._appSpacer.visible !== spacer) this._appSpacer.visible = spacer;
+            if (spacer && this._appSpacer._held !== menu._held) {
+                this._appSpacer._held = menu._held;
+                restyle(this._appSpacer);
+            }
+        };
+        this._appMenu = {menu, signals: ['notify::visible', 'notify::allocation'].map(name => menu.connect(name, hold))};
+        hold();
+    }
+
+    _releaseAppMenu() {
+        if (!this._appMenu) return;
+        for (const id of this._appMenu.signals) this._appMenu.menu.disconnect(id);
+        this._appMenu.menu._held = 0;
+        restyle(this._appMenu.menu);
+        this._appSpacer.destroy();
+        this._appMenu = this._appSpacer = null;
     }
 
     // A rebuild run from inside a click would destroy the widget still handling that click.
@@ -1415,6 +1515,7 @@ class Tracker {
         setTone(this._clusterMore, tone);
         this._clusterMore.text = warnings.length > 1 ? `+${warnings.length - 1}` : '';
         this._clusterMore.visible = warnings.length > 1;
+        for (const label of [...this._clusterParts, this._clusterMore]) if (label.visible) holdWidth(label);
         this._clusterButton.accessible_name = ['Cluster', ...parts.map(part => `${part.caption || 'cpu'} ${pct(part.value)}`),
             ...warnings.map(warning => `${warning.host} ${warning.text}`), ...!cluster && this._clusterError ? [this._clusterError] : []].join(', ');
     }
@@ -2025,7 +2126,7 @@ class Tracker {
                     const count = providerCounts(snapshot.rows, provider);
                     this._ratios[provider].visible = PINNED.includes(provider) || count.open > 0;
                     this._labels[provider].text = `${count.review} / ${count.open}`;
-                    this._labels[provider].set_style(count.review ? 'color: #f1f3f5; font-weight: bold;' : 'color: #9ca3ad;');
+                    restyle(this._labels[provider], count.review ? 'color: #f1f3f5; font-weight: bold;' : 'color: #9ca3ad;');
                 }
                 this._labels.working.text = `● ${c.working}`;
                 this._labels.waiting.text = `◌ ${c.waiting}`;
@@ -2035,7 +2136,8 @@ class Tracker {
                 this._mailCount.text = `${stranded.length}`;
                 this._labels.queues.visible = this._queuesShown(snapshot);
                 this._labels.queues.text = `Q ${c.done} / ${c.queues}${Date.now() / 1000 - snapshot.queue_updated > 120 ? ' ?' : ''}`;
-                this._labels.queues.set_style(c.done ? 'color: #f1f3f5; font-weight: bold;' : 'color: #9ca3ad;');
+                restyle(this._labels.queues, c.done ? 'color: #f1f3f5; font-weight: bold;' : 'color: #9ca3ad;');
+                for (const label of [...Object.values(this._labels), this._mailCount]) if (label.visible) holdWidth(label);
                 this._renderQuick(snapshot.rows);
                 this._button.accessible_name = `${Object.entries(PROVIDERS).filter(([key]) => c[key])
                     .map(([key, [, name]]) => `${name} ${c[key]}`).join(', ') || 'No chats'}, ${c.working} working, ${c.waiting} waiting, ${c.review} need review, ${c.done} of ${c.queues} queues finished since the last turn`
@@ -3220,6 +3322,8 @@ class Tracker {
         if (this._timer) GLib.source_remove(this._timer);
         this._menuSwitch.restore();
         this._dbus?.unexport();
+        this._stopWatchingNew();
+        this._releaseAppMenu();
         this._quickMenu.destroy();
         this._quickRight.destroy();
         this._quick.destroy();

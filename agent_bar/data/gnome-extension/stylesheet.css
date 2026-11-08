@@ -1,6 +1,8 @@
 .agent-bar { spacing: 12px; }
 .tracker-provider-ratio { spacing: 5px; }
 .tracker-bar-divider { color: #555c67; }
+/* Equal-width digits, so a count changing does not shift the rest of the top bar. */
+.agent-bar, .tracker-cluster-bar { font-feature-settings: "tnum"; }
 .tracker-quick { spacing: 6px; margin-left: 4px; }
 .tracker-quick-right { margin-left: 0; margin-right: 8px; }
 .tracker-nav-arrow { color: #c3cad4; }
