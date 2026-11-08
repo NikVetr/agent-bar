@@ -2011,6 +2011,8 @@ class Tracker {
             const button = new St.Button({label: `${PROVIDERS[row.provider]?.[0] || '•'} ${name}`,
                 style_class: `tracker-quick-button tracker-${row.provider}`, can_focus: true,
                 y_align: Clutter.ActorAlign.CENTER, accessible_name: `Show ${row.project}: ${row.title}`});
+            // Centred when _fitQuick widens the button.
+            button.get_child().x_align = Clutter.ActorAlign.CENTER;
             button.connect('clicked', () => {
                 button.hide();
                 // Rebuild on the next read so a failed activation restores the button.
@@ -2067,6 +2069,12 @@ class Tracker {
             moreRight = false;
         }
         if (squeezed) buttons[left - 1].set_width(squeezed);
+        else if (right) {
+            // The next one did not fit even cut short, so the left half's shortcuts share its leftover width and
+            // the row runs on unbroken into the right half.
+            const extra = leftRoom - usedLeft;
+            for (let i = 0; i < left; i++) buttons[i].set_width(widths[i] + Math.floor(extra * (i + 1) / left) - Math.floor(extra * i / left));
+        }
         // Taking all the room it has, the right half's box starts at the middle, against the left half's shortcuts.
         this._quickRight.visible = right > 0;
         this._quickRight.set_width(right > 0 ? Math.max(0, rightRoom) : -1);
