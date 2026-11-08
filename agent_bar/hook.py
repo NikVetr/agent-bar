@@ -71,6 +71,22 @@ def wait(data, every=3):
         time.sleep(every)
 
 
+def limit_reset(transcript):
+    """When the usage limit that stopped a Claude turn resets (epoch seconds), from the API error that ends its
+    transcript, if Claude Code wrote it before the hook ran."""
+    try:
+        with open(transcript, 'rb') as stream:
+            stream.seek(max(0, stream.seek(0, 2) - 65536))
+            lines = stream.read().splitlines()
+    except (OSError, TypeError): return None
+    for line in reversed(lines):
+        try: entry = json.loads(line)
+        except ValueError: continue
+        if entry.get('type') not in ['assistant', 'user']: continue
+        return (entry.get('quotaLimits') or {}).get('resetsAt') if entry.get('isApiErrorMessage') else None
+    return None
+
+
 def main():
     data = json.load(sys.stdin)
     if sys.argv[1:] == ['wait']:
@@ -94,12 +110,15 @@ def main():
         kind = 'question'
     if event == 'PostToolUse' and asks:
         kind = 'message'  # The user answered it, which acknowledges it like a prompt.
+    if event == 'StopFailure' and data.get('error') == 'rate_limit':
+        kind = 'limit'
     if not kind or not data.get('session_id') or data.get('agent_id'):
         return
     state_root = state()
     record({'provider': provider, 'session': data['session_id'], 'kind': kind,
             'at': time.time(), 'turn': data.get('turn_id'), 'cwd': data.get('cwd'),
-            'transcript': data.get('transcript_path')})
+            'transcript': data.get('transcript_path'),
+            **({'resets': limit_reset(data.get('transcript_path'))} if kind == 'limit' else {})})
     # A turn the waiter woke, or a queued Codex note started, already carries the note.
     if event == 'UserPromptSubmit' and '[agent-bar]' in data.get('prompt', ''):
         from agent_bar import messages

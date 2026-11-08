@@ -5,6 +5,8 @@ const os = require('node:os');
 const crypto = require('node:crypto');
 const {execFile} = require('node:child_process');
 
+const CLAUDE_PANEL = 'mainThreadWebview-claudeVSCodePanel';
+
 // Owner-only files are the transport. No TCP listener, credentials, transcript
 // contents, or arbitrary command execution crosses this interface.
 async function activate(context) {
@@ -89,6 +91,13 @@ async function activate(context) {
             }
             if (vscode.window.tabGroups.activeTabGroup.activeTab !== tab)
                 throw new Error('VS Code did not select the requested tab.');
+            // Claude Code's Focus Input focuses every Claude chat on show, so only with this one alone on show
+            // is its input box surely the one with the cursor.
+            if (action.input && target.viewType === CLAUDE_PANEL && vscode.window.tabGroups.all
+                .filter(g => g.activeTab?.input?.viewType === CLAUDE_PANEL).length === 1) {
+                await vscode.commands.executeCommand('claude-vscode.focus');
+                return {input: true};
+            }
         } else if (target.kind === 'codex-sidebar') {
             // The service only supplies this target for the single known sidebar
             // conversation; it never opens a historical chat in another surface.
@@ -109,10 +118,10 @@ async function activate(context) {
             let result;
             try {
                 if (action.expires < Date.now() / 1000) throw new Error('Navigation expired');
-                if (action.type === 'navigate') await navigate(action);
+                if (action.type === 'navigate') result = {ok: true, ...await navigate(action)};
                 else if (action.type === 'scm') await vscode.commands.executeCommand('workbench.view.scm');
                 else throw new Error('Unsupported action');
-                result = {ok: true};
+                result ??= {ok: true};
             } catch (error) { result = {ok: false, error: String(error.message || error)}; }
             await atomic(path.join(root, 'responses', `${action.id}.json`), result);
             await publish();

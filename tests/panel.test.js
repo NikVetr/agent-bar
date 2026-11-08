@@ -102,6 +102,21 @@ test('top-bar shortcuts list distinct conversations awaiting review, oldest firs
     assert.equal(f.context.readyConversations(rows, []).length, 0);
 });
 
+test('continue lists open VS Code chats a usage limit stopped, Codex first, and asks for the input box only then', async () => {
+    const f = fixture();
+    const limited = {at: 1, resets: null};
+    const rows = [{key: 'claude:a', provider: 'claude', target: {kind: 'tab'}, limited},
+        {key: 'codex:b', provider: 'codex', target: {kind: 'codex-sidebar'}, limited},
+        {key: 'claude:a', provider: 'claude', target: {kind: 'tab'}, limited},
+        {key: 'claude:c', provider: 'claude', target: {kind: 'window'}, limited},
+        {key: 'codex:d', provider: 'codex', target: {kind: 'tab'}, limited: null}];
+    assert.equal(f.context.limitedConversations(rows).map(r => r.key).join(','), 'codex:b,claude:a');
+    f.tracker._run = async args => { f.calls.push(Array.from(args)); return {ok: true, input: args.includes('--input')}; };
+    const result = await f.tracker._activate(f.row, f.snapshot, 'focus', true);
+    assert.deepEqual(f.calls.find(c => c[0] === 'navigate'), ['navigate', 'codex:one', 'window-a', '--input']);
+    assert.equal(result.input, true);
+});
+
 test('another conversation in the same window switches without returning', async () => {
     const f = fixture();
     await f.tracker._activate(f.row, f.snapshot);

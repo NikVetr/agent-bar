@@ -75,7 +75,11 @@ again, leaving your history and settings (`--purge` deletes those too).
 Clicking the counts opens the dropdown, with these tabs:
 
 - **Chats**: open chats grouped by project and window, with sort and filter. Clicking a chat selects it and brings its
-  window forward; clicking again sends the window back.
+  window forward; clicking again sends the window back. When a usage limit stops chats open in VS Code, a line above
+  them names them and when Claude's limit resets; **Continue** queues "Please continue where you left off." in the
+  Codex ones, which start it on their own, and brings each Claude one forward with that text at the end of its input
+  box, after any draft, for you to send. If Agent Bar cannot be sure the cursor is in that box (several Claude chats on
+  show in the window, or a bridge from before this feature), it leaves the text on the clipboard instead.
 - **Queues**: job queues from parallel-workers, by project, with progress, ETA and failed jobs.
 - **Git**: each repository holding an open project, with its branch, uncommitted files, and commits ahead of or
   behind its upstream (as of the last fetch; Agent Bar never fetches or takes git's lock). Clicking one opens VS

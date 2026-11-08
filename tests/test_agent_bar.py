@@ -52,6 +52,53 @@ class TrackerTests(unittest.TestCase):
         self.ledger.event('codex:a', 'complete', 130)
         self.assertEqual(self.ledger.unread('codex:a'), ['Reply finished'])
 
+    def test_a_usage_limit_stop_marks_the_chat_until_its_next_turn_and_continue_goes_by_provider(self):
+        import asyncio
+        from agent_bar import messages, service
+        from agent_bar.providers import Providers
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            # Claude Code's StopFailure, with the API error that ends the transcript naming the reset.
+            transcript = root / 'a.jsonl'
+            transcript.write_text(json.dumps({'type': 'user', 'message': {}}) + '\n' + json.dumps(
+                {'type': 'assistant', 'isApiErrorMessage': True, 'error': 'rate_limit', 'quotaLimits': {'resetsAt': 1794106800}}) + '\n')
+            subprocess.run([sys.executable, '-m', 'agent_bar.hook'], text=True, check=True, input=json.dumps(
+                {'hook_event_name': 'StopFailure', 'session_id': 'a', 'error': 'rate_limit', 'transcript_path': str(transcript)}),
+                env={**os.environ, 'AGENT_BAR_STATE_DIR': str(root / 'state')})
+            event = json.loads(next((root / 'state/events').glob('*.json')).read_text())
+            self.assertEqual((event['kind'], event['resets']), ('limit', 1794106800))
+            # Codex ends the turn with the limit as its error.
+            rollout = root / 'rollout.jsonl'
+            rollout.write_text(json.dumps({'type': 'event_msg', 'timestamp': '2026-11-07T23:24:53.689Z', 'payload': {
+                'type': 'task_complete', 'turn_id': 't1', 'error': {'codex_error_info': 'usage_limit_exceeded'}}}) + '\n')
+            [(kind, _, turn)] = Providers(root).events({'provider': 'codex', 'key': 'codex:b', 'id': 'b', 'path': str(rollout)})
+            self.assertEqual((kind, turn), ('limit', 't1'))
+        self.ledger.event('claude:a', 'message', 110)
+        self.ledger.event('claude:a', 'limit', 120, None, 1794106800)
+        self.assertEqual(self.ledger.conversation('claude:a')['limited'], {'at': 120, 'resets': 1794106800})
+        self.assertEqual((self.ledger.conversation('claude:a')['state'], self.ledger.unread('claude:a')), ('failed', ['Turn failed']))
+        self.ledger.event('claude:a', 'message', 130)
+        self.assertNotIn('limited', self.ledger.conversation('claude:a'))
+        # A limit stop from before the latest turn started, read again later, does not come back.
+        self.ledger.event('claude:a', 'limit', 115)
+        self.assertNotIn('limited', self.ledger.conversation('claude:a'))
+        # Continuing: Codex gets the note queued, a Claude chat gets the text back to paste, and nothing else qualifies.
+        tracker = service.Tracker.__new__(service.Tracker)
+        tracker.ledger = self.ledger
+        tab = {'kind': 'tab'}
+        tracker.rows = [{'key': 'claude:a', 'provider': 'claude', 'id': 'a', 'target': tab},
+                        {'key': 'codex:b', 'provider': 'codex', 'id': 'b', 'target': {'kind': 'codex-sidebar'}},
+                        {'key': 'codex:c', 'provider': 'codex', 'id': 'c', 'target': {'kind': 'window'}}]
+        for key in ['claude:a', 'codex:b', 'codex:c']: self.ledger.event(key, 'limit', 140)
+        queued = []
+        with unittest.mock.patch.object(messages, 'codex_queue', lambda thread, text: queued.append((thread, text))):
+            self.assertEqual(asyncio.run(tracker.go_on('claude:a')), {'ok': True, 'paste': service.CONTINUE})
+            self.assertEqual(asyncio.run(tracker.go_on('codex:b')), {'ok': True, 'queued': True})
+            with self.assertRaisesRegex(ValueError, 'not open in VS Code'): asyncio.run(tracker.go_on('codex:c'))
+            self.ledger.event('codex:b', 'start', 150)
+            with self.assertRaisesRegex(ValueError, 'No usage limit'): asyncio.run(tracker.go_on('codex:b'))
+        self.assertEqual(queued, [('b', service.CONTINUE)])
+
     def test_duplicate_hook_and_transcript_completion_stays_reviewed(self):
         self.ledger.event('codex:a', 'complete', 110, 'turn-1')
         self.ledger.acknowledge('codex:a', 115)

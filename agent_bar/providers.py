@@ -518,6 +518,8 @@ class Providers:
                     'exec_command_begin': 'resume'}.get(payload.get('type'))
             if payload.get('type') == 'agent_message' and payload.get('phase') == 'commentary':
                 kind = 'resume'
+            if kind == 'complete' and (payload.get('error') or {}).get('codex_error_info') == 'usage_limit_exceeded':
+                kind = 'limit'
             if kind:
                 result.append((kind, epoch(data.get('timestamp')), payload.get('turn_id')))
         return result

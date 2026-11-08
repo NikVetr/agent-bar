@@ -148,6 +148,14 @@ function readyConversations(rows, reasons = null) {
     return [...unique.values()].sort((a, b) => completionTime(a) - completionTime(b));
 }
 
+// Open VS Code chats a usage limit stopped, which Continue can have go on; Codex ones first, as they need no window.
+function limitedConversations(rows) {
+    const unique = new Map();
+    for (const row of rows)
+        if (row.limited && ['tab', 'codex-sidebar'].includes(row.target?.kind) && !unique.has(row.key)) unique.set(row.key, row);
+    return [...unique.values()].sort((a, b) => (a.provider !== 'codex') - (b.provider !== 'codex'));
+}
+
 function matchesFilter(row, filter) {
     if (filter in PROVIDERS) return row.provider === filter;
     if (filter === 'review') return row.unread.length > 0;
@@ -1108,6 +1116,10 @@ class Tracker {
         row(chats, [chip('Input needed', 'attention')], 'Asked you a question or for approval to run a tool.');
         row(chats, [chip('Finished', 'finished')], 'The turn ended and you have seen the reply.');
         row(chats, [chip('Failed', 'failed')], 'The turn ended in an error.');
+        row(chats, [text('Continue', 'tracker-filter')],
+            'Above the chats when a usage limit stopped some open in VS Code. Codex ones get "Please continue where you left off." '
+            + 'queued and start it on their own; each Claude one comes forward with it at the end of its input box, for you to send. '
+            + 'When the cursor cannot surely be put in that box, the text is left on the clipboard to paste.');
         row(chats, [chip('Interrupted', 'muted'), chip('Unknown', 'muted')],
             'You stopped the turn, or no status has arrived yet (an older Claude chat may need /hooks).');
 
@@ -2471,6 +2483,8 @@ class Tracker {
             this._renderInfo(snapshot, query);
             return;
         }
+        const limited = limitedConversations(snapshot.rows);
+        if (limited.length) this._section.addMenuItem(this._limitBanner(limited));
         const rows = snapshot.rows.filter(row => matchesFilter(row, this._filter)
             && `${row.title} ${row.project} ${row.provider}`.toLowerCase().includes(query));
         const totals = new Map((this._inventory?.conversations || []).map(row => [row.key, row.active]));
@@ -2504,6 +2518,94 @@ class Tracker {
             this._section.addMenuItem(this._item(warning, 'tracker-warning'));
         if (rows.some(row => row.provider === 'claude' && row.state === 'unknown'))
             this._section.addMenuItem(this._item('Claude status awaits its first lifecycle event; existing chats may need /hooks to load the observer.', 'tracker-warning'));
+    }
+
+    // Above the chats: how many a usage limit stopped, and a button to have them go on.
+    _limitBanner(rows) {
+        const item = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
+        item._ornamentLabel?.hide();
+        const resets = Math.max(0, ...rows.map(row => row.limited.resets || 0));
+        const names = [...new Set(rows.map(row => row.project))].join(', ');
+        const label = new St.Label({x_expand: true, y_align: Clutter.ActorAlign.CENTER, style_class: 'tracker-detail',
+            text: `${rows.length} chat${rows.length === 1 ? '' : 's'} stopped at a usage limit · ${names}${resets ? ` · ${resetTime(resets)}` : ''}`});
+        item.add_child(label);
+        const button = new St.Button({label: 'Continue', can_focus: true, style_class: 'tracker-filter', y_align: Clutter.ActorAlign.CENTER,
+            accessible_name: 'Queue a note to go on in the Codex chats, and put one at the end of each Claude chat\'s input box'});
+        button.connect('clicked', () => this._continueLimited(rows));
+        item.add_child(button);
+        return item;
+    }
+
+    // Codex chats get the note queued and start it themselves; each Claude chat comes forward with the note at the end
+    // of its input box, for the user to send.
+    async _continueLimited(rows) {
+        if (this._continuing) return;
+        this._continuing = true;
+        this._button.menu.close();
+        const problems = [];
+        try {
+            for (const row of rows) {
+                if (!this._enabled) return;
+                try {
+                    const result = await this._run(['continue', row.key]);
+                    if (!result.paste) continue;
+                    // _activate reports its own failures.
+                    const shown = await this._activate(row, this._snapshot, 'focus', true);
+                    if (shown?.ok) await this._appendToInput(row, result.paste, shown.input);
+                } catch (error) { problems.push(`${row.project}: ${error.message}`); }
+            }
+        } finally { this._continuing = false; }
+        if (problems.length && this._enabled) Main.notifyError('Agent Bar', problems.join('\n'));
+    }
+
+    // Puts `text` at the end of the chat's input box, after any draft, by pasting it. The keys reach whichever window
+    // has focus, so they go only while the chat's window, just brought forward with the cursor in its input box, still
+    // has it and nobody is typing; otherwise the text is left on the clipboard to paste.
+    async _appendToInput(row, text, focused) {
+        const clipboard = St.Clipboard.get_default(), CLIPBOARD = St.ClipboardType.CLIPBOARD;
+        const read = () => new Promise(resolve => clipboard.get_text(CLIPBOARD, (_, value) => resolve(value)));
+        const win = this._findWindow(this._snapshot.windows.find(w => w.id === row.window), false);
+        const idle = global.backend.get_core_idle_monitor();
+        for (let i = 0; i < 30 && idle.get_idletime() < 600; i++) await this._delay(100);
+        // Idle for half a second, or, after our own keys, since the last of them.
+        const ready = () => this._enabled && focused && win && global.display.focus_window === win
+            && idle.get_idletime() >= Math.min(500, (GLib.get_monotonic_time() - (this._keysAt || 0)) / 1000 - 30);
+        const leave = () => {
+            clipboard.set_text(CLIPBOARD, text);
+            if (this._enabled) Main.notify('Agent Bar', `${row.project}: "${text}" is on the clipboard; paste it into the chat's input box`);
+        };
+        if (!ready()) return leave();
+        const saved = await read();
+        const marker = `agent-bar:${GLib.uuid_string_random()}`;
+        clipboard.set_text(CLIPBOARD, marker);
+        // Copy the draft, if any, then put the cursor back at its end at once, so it is never left selected.
+        const {KEY_Control_L: CTRL, KEY_Shift_L: SHIFT, KEY_End: END, KEY_Home: HOME} = Clutter;
+        await this._keys([CTRL, END], [CTRL, SHIFT, HOME], [CTRL, Clutter.KEY_c], [CTRL, END]);
+        await this._delay(250);
+        const copied = await read();
+        const draft = copied === marker ? '' : copied || '';
+        if (!ready()) {
+            clipboard.set_text(CLIPBOARD, saved ?? '');
+            return leave();
+        }
+        clipboard.set_text(CLIPBOARD, (!draft.trim() ? '' : draft.endsWith('\n') ? '\n' : '\n\n') + text);
+        await this._delay(50);
+        await this._keys([CTRL, END], [CTRL, Clutter.KEY_v]);
+        await this._delay(300);
+        // Text the clipboard held comes back; anything else it held is gone.
+        clipboard.set_text(CLIPBOARD, saved ?? '');
+    }
+
+    // Key chords pressed as on a keyboard, for the window with focus.
+    async _keys(...chords) {
+        this._keyboard ??= Clutter.get_default_backend().get_default_seat()
+            .create_virtual_device(Clutter.InputDeviceType.KEYBOARD_DEVICE);
+        for (const chord of chords) {
+            for (const key of chord) this._keyboard.notify_keyval(GLib.get_monotonic_time(), key, Clutter.KeyState.PRESSED);
+            for (const key of [...chord].reverse()) this._keyboard.notify_keyval(GLib.get_monotonic_time(), key, Clutter.KeyState.RELEASED);
+            await this._delay(40);
+        }
+        this._keysAt = GLib.get_monotonic_time();
     }
 
     // The tab without parallel-workers: how to get it, or remove the tab (Settings › Integrations restores it).
@@ -3230,7 +3332,8 @@ class Tracker {
     // mode: 'toggle' returns a borrowed window only while it has focus;
     // 'focus' always brings it forward; 'return' only sends it back;
     // 'place' shows the window maximized on the main display without selecting a chat.
-    async _activate(row, snapshot, mode = 'toggle') {
+    // input: also put the cursor in a Claude chat's input box when that can be done surely, saying so as `input`.
+    async _activate(row, snapshot, mode = 'toggle', input = false) {
         if (this._busy || this._error) return {ok: false, error: this._error || 'Navigation already in progress'};
         this._busy = true;
         const focused = this._button.menu.isOpen ? this._menuFocus : global.display.focus_window;
@@ -3310,13 +3413,13 @@ class Tracker {
             if (!this._placed(win))
                 throw new Error('The window did not maximize on the primary display');
             if (mode === 'place') return {ok: true, action: 'placed'};
-            await this._run(['navigate', row.key, row.window]);
+            const shown = await this._run(['navigate', row.key, row.window, ...input ? ['--input'] : []]);
             this._borrowed.get(id).key = row.key;
             await this._run(['save-return', id, JSON.stringify(this._borrowed.get(id))]);
             // The captured cutoff ensures a newer completion remains unread.
             await this._run(['ack', row.key, String(snapshot.cutoff)]);
             this._read();
-            return {ok: true, action: 'focused'};
+            return {ok: true, action: 'focused', input: !!shown.input};
         } catch (error) {
             if (this._enabled) Main.notifyError('Agent Bar', error.message);
             return {ok: false, error: error.message};
@@ -3341,6 +3444,7 @@ class Tracker {
         this._clusterButton.destroy();
         this._button.destroy();
         this._button = null;
+        this._keyboard = null;
     }
 }
 

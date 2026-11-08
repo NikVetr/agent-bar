@@ -17,6 +17,7 @@ from .state import ROOT, Ledger, atomic_json, project_names
 PROVIDERS = ['claude', 'codex', 'copilot', 'antigravity']
 TURNS = {'start', 'message'}  # Any turn start, including automatic continuations.
 QUIET = 300  # An open turn with no activity this long is waiting on something.
+CONTINUE = 'Please continue where you left off.'  # Sent to chats a usage limit stopped.
 GIT_EVERY = 20  # Seconds between git status reads of the open projects' repositories.
 SETTINGS = Path.home() / '.config/agent-bar/settings.json'  # Written by the panel.
 # Replaced atomically by the parallel-workers monitor on each of its refreshes.
@@ -100,7 +101,7 @@ class Tracker:
                     background.read()
                     # A reply to an automatic wake-up while work is still pending is a progress note.
                     if not background.human and background.waiting(event['at']): kind = 'hold'
-                self.ledger.event(key, kind, event['at'], event.get('turn'))
+                self.ledger.event(key, kind, event['at'], event.get('turn'), event.get('resets'))
                 self.ledger.conversation(key)['hook_seen'] = event['at']
                 if event['kind'] in TURNS and event.get('cwd'):
                     self.ledger.turn([event['cwd']], event['at'])
@@ -172,6 +173,7 @@ class Tracker:
                          'completed_at': state.get('completed_at',
                                                    state['state_at'] if state['state'] == 'finished' else 0),
                          'unread': self.ledger.unread(row['key'], queues_at.get(row['key'])),
+                         'limited': state.get('limited'),
                          'queue_counts': {'done': sum(c['done'] for c in matched),
                                           'total': sum(c['total'] for c in matched)}})
         unique = {r['key']: r for r in rows}
@@ -202,7 +204,9 @@ class Tracker:
             self.warnings.append(f'Agent messages unreadable: {error}')
             return None
 
-    async def navigate(self, key, window_id):
+    async def navigate(self, key, window_id, input=False):
+        """Select a conversation in its window; with `input`, also put the cursor in a Claude chat's input box when
+        that can be done surely, saying so as `input`."""
         if window_id in self.navigation: raise ValueError('This window is already navigating')
         matches = [r for r in self.rows if r['key'] == key and r['window'] == window_id]
         if len(matches) != 1 or not matches[0]['target']:
@@ -211,13 +215,24 @@ class Tracker:
         if matches[0]['target']['kind'] == 'window': return {'ok': True}
         window = self.windows.get(window_id)
         row = matches[0]
-        await self.bridge(window_id, {'type': 'navigate', 'target': row['target']})
+        result = await self.bridge(window_id, {'type': 'navigate', 'target': row['target'], 'input': input})
         # Recheck the live source before acknowledging a sidebar.
         if row['target']['kind'] == 'codex-sidebar':
             current = self.providers.codex_open(window)
             if row['id'] not in current:
                 raise ValueError('The sidebar conversation changed during navigation')
-        return {'ok': True}
+        return {'ok': True, 'input': bool(result.get('input'))}
+
+    async def go_on(self, key):
+        """Have an open VS Code chat a usage limit stopped go on: a Codex chat gets CONTINUE queued, which its
+        VS Code starts as a turn; for a Claude chat, the text comes back for the panel to put in its input box."""
+        rows = [row for row in self.rows if row['key'] == key and (row.get('target') or {}).get('kind') in messages.VSCODE]
+        if not rows: raise ValueError('This chat is not open in VS Code')
+        if not self.ledger.conversation(key).get('limited'): raise ValueError('No usage limit stopped this chat')
+        if rows[0]['provider'] == 'claude': return {'ok': True, 'paste': CONTINUE}
+        if rows[0]['provider'] != 'codex': raise ValueError('Only Claude and Codex chats can be continued')
+        await asyncio.to_thread(messages.codex_queue, rows[0]['id'], CONTINUE)
+        return {'ok': True, 'queued': True}
 
     async def show_scm(self, window_id):
         window = self.windows.get(window_id)
@@ -253,7 +268,8 @@ class Tracker:
     async def dispatch(self, command):
         op = command.get('op')
         if op == 'snapshot': return self.snapshot()
-        if op == 'navigate': return await self.navigate(command['key'], command['window'])
+        if op == 'navigate': return await self.navigate(command['key'], command['window'], command.get('input', False))
+        if op == 'continue': return await self.go_on(command['key'])
         if op == 'show-scm': return await self.show_scm(command['window'])
         if op == 'ack':
             if command['key'] not in self.ledger.data['conversations']:

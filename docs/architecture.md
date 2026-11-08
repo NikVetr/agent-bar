@@ -44,7 +44,9 @@ state and unread reasons stay separate in the data.
 - **Ledger** (`state.py`): per chat, its state, unread reasons and the acknowledgment cutoff; per folder name, the
   latest turn start; per queue, when it was first seen finished. A project's queue count includes running queues and
   those finished after its last turn; when all of them have finished, its most recently active open chat gets a
-  "Queues finished" reason.
+  "Queues finished" reason. A turn a usage limit stopped (Claude's StopFailure with `rate_limit`, with the reset time
+  from the transcript's closing API error; Codex's `task_complete` with `usage_limit_exceeded`) marks the chat
+  `limited` until its next turn starts.
 - **Inventory** (`inventory.py`): every saved Claude and Codex chat, rescanned daily at idle priority, reading only
   appended transcript data.
 - **Git** (`git.py`): every 20 s, off the collection loop, the `git status` of each repository holding an open folder,
@@ -82,12 +84,21 @@ reveal the exact tab or sidebar; only a confirmed navigation acknowledges the ch
 returns the window. Menus are rebuilt after the click that asked for it finishes, and keyboard focus moves off any
 widget before it is destroyed: GNOME Shell 42 crashed in `Main.pushModal` reading a freed key-focus actor.
 
+Continue, for chats a usage limit stopped, runs `agent-bar continue <key>`: the service queues the note for a Codex chat
+with `codex queue`, or returns it for a Claude chat. The panel then brings the Claude chat forward with
+`navigate --input`, and pastes the note at the end of the input box through a virtual keyboard: copy the draft and put
+the cursor back at its end, then paste the note after a blank line. The keys reach whichever window has focus, so they
+go only while the chat's window has it and no other input has come since. Otherwise the note stays on the clipboard;
+the clipboard's earlier text is restored.
+
 The extension exports `io.github.nikvetr.AgentBar` at `/org/gnome/Shell/Extensions/AgentBar` on the session bus
 (`Inspect`, `Show`, `Hide`, `Activate`), sharing the panel's navigation code, for tests and automation.
 
 ## VS Code bridge
 
 `agent_bar/data/vscode-bridge` is a dependency-free extension running once per window. It publishes the window's
-state, answers navigation and Source Control requests through per-window request and response files, and claims
+state, answers navigation and Source Control requests through per-window request and response files (a navigation
+with `input` also runs Claude's Focus Input, but only when no other Claude chat is on show, since that command focuses
+every one on show), and claims
 `agent-bar resume` requests for its folder, opening the session through Claude's `claude-vscode.editor.open` command or
 Codex's `openai-codex://route/local/<id>` editor.

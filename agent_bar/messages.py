@@ -82,15 +82,24 @@ def wake_codex(key, root=ROOT):
     rows = [row for row in snapshot(root)['rows'] if row['key'] == key]
     if not waking() or not any((row.get('target') or {}).get('kind') in VSCODE for row in rows): return 'at its next turn'
     if codex_pending(key, root): return 'with the wake-up already queued'
-    codex, note = shutil.which('codex'), notice(key, root)
-    if not codex or not note: return 'at its next turn' + ('' if codex else ' (no codex command to wake it)')
+    note = notice(key, root)
+    if not note: return 'at its next turn'
     # Marked as an agent message, so the turn-start hook takes it for an automatic turn, not the user's.
-    command = [codex, 'queue', '--thread', key.split(':', 1)[1], '--message', f'<agent-message>{note}</agent-message>']
-    try: result = subprocess.run(command, capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL)
-    except (OSError, subprocess.TimeoutExpired) as error: return f'at its next turn (codex queue failed: {error})'
-    if result.returncode: return f'at its next turn (codex queue failed: {(result.stderr or result.stdout).strip()[-200:]})'
+    try: codex_queue(key.split(':', 1)[1], f'<agent-message>{note}</agent-message>')
+    except ValueError as error: return f'at its next turn ({error})'
     queued_file(key, root).write_text(str(time.time()))
     return 'by a queued wake-up turn'
+
+
+def codex_queue(thread, text):
+    """Queue `text` for a Codex thread; the VS Code window that has it open runs it as a turn once any turn in
+    progress ends."""
+    codex = shutil.which('codex')
+    if not codex: raise ValueError('no codex command to queue it with')
+    command = [codex, 'queue', '--thread', thread, '--message', text]
+    try: result = subprocess.run(command, capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.TimeoutExpired) as error: raise ValueError(f'codex queue failed: {error}') from error
+    if result.returncode: raise ValueError(f'codex queue failed: {(result.stderr or result.stdout).strip()[-200:]}')
 
 
 def number(path):

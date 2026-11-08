@@ -50,8 +50,16 @@ class Ledger:
             'state': 'unknown', 'state_at': 0, 'ack': 0, 'reasons': {}, 'turn': None,
         })
 
-    def event(self, key, kind, at, turn=None):
+    def event(self, key, kind, at, turn=None, resets=None):
+        """kind 'limit': a turn a usage limit stopped, which resets at `resets` (epoch seconds) if known."""
         row = self.conversation(key)
+        # The chat stays stopped by the limit until its next turn starts.
+        if kind in ['message', 'start']:
+            row['began'] = max(at, row.get('began', 0))
+            if row.get('limited', {}).get('at', at) < at: del row['limited']
+        if kind == 'limit':
+            if at >= row.get('began', 0): row['limited'] = {'at': at, 'resets': resets}
+            kind = 'failure'
         # A provider hook and its transcript can report the same completion.
         # Preserve the original notification timestamp after it was reviewed.
         seen = row.setdefault('seen', {})
