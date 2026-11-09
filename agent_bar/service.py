@@ -99,14 +99,17 @@ class Tracker:
                 background = self.providers.backgrounds.get(event['session']) if event['provider'] == 'claude' else None
                 if kind == 'complete' and background:
                     background.read()
-                    # A reply to an automatic wake-up while work is still pending is a progress note.
-                    if not background.human and background.waiting(event['at']): kind = 'hold'
+                    # A reply to an automatic wake-up while work is still pending is a progress note, unless the
+                    # turn read agent messages: then the reply answers them.
+                    began = self.ledger.conversation(key).get('began', event['at'])
+                    if (not background.human and background.waiting(event['at'])
+                            and not messages.read_since(key, began, self.root)): kind = 'hold'
                 self.ledger.event(key, kind, event['at'], event.get('turn'), event.get('resets'))
                 self.ledger.conversation(key)['hook_seen'] = event['at']
                 if event['kind'] in TURNS and event.get('cwd'):
                     self.ledger.turn([event['cwd']], event['at'])
                 consumed.append(path)
-            except (OSError, ValueError, KeyError) as error:
+            except (OSError, ValueError, KeyError, sqlite3.Error) as error:
                 warnings.append(f'Hook event error: {error}')
         # The monitor owns collection. We read only its local snapshot, never SMB
         # queue directories or worker logs, and only when it has changed.

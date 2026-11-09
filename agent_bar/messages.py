@@ -232,6 +232,14 @@ def inbox(recipient, root=ROOT, peek=False, now=None):
                     '`agent-bar send <sender> "..."` only if it serves your user\'s current request.'}
 
 
+def read_since(recipient, at, root=ROOT):
+    """Whether a conversation read messages at `at` or later."""
+    if not (Path(root) / 'messages.sqlite').exists(): return False
+    with connect(root) as connection:
+        return connection.execute('SELECT 1 FROM messages WHERE recipient=? AND read_at>=? LIMIT 1',
+                                  (recipient, at)).fetchone() is not None
+
+
 def notice(recipient, root=ROOT):
     """The note for a conversation with unread messages, or None."""
     if not enabled() or not (Path(root) / 'messages.sqlite').exists(): return None

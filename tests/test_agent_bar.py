@@ -560,6 +560,31 @@ class TrackerTests(unittest.TestCase):
         self.assertEqual((row['state'], row['completed_at']), ('waiting', 120))
         self.assertFalse(self.ledger.unread('claude:a'))
 
+    def test_an_automatic_turn_that_read_agent_messages_is_a_reply_to_review(self):
+        from types import SimpleNamespace
+        from agent_bar import messages, service
+        with tempfile.TemporaryDirectory() as root:
+            tracker = service.Tracker(Path(root) / 'state')
+            tracker.ledger.data['since'] = 0
+            # Automatic turns with background work still pending.
+            tracker.providers.backgrounds['a'] = SimpleNamespace(read=lambda: None, human=False, waiting=lambda at: True)
+            def turn(began, ended):
+                for kind, at in [('start', began), ('complete', ended)]:
+                    (tracker.root / 'events' / f'{at}.json').write_text(json.dumps(
+                        {'provider': 'claude', 'session': 'a', 'kind': kind, 'at': at}))
+                    tracker.collect()
+            with messages.connect(tracker.root) as connection:
+                connection.execute("INSERT INTO messages (at, sender, recipient, body, read_at) "
+                                   "VALUES (100, 'codex:b', 'claude:a', 'hi', 105)")
+            turn(110, 120)
+            self.assertEqual(tracker.ledger.conversation('claude:a')['state'], 'waiting')
+            self.assertFalse(tracker.ledger.unread('claude:a'))
+            with messages.connect(tracker.root) as connection:
+                connection.execute("INSERT INTO messages (at, sender, recipient, body, read_at) "
+                                   "VALUES (200, 'codex:b', 'claude:a', 'hi', 215)")
+            turn(210, 220)
+            self.assertEqual(tracker.ledger.unread('claude:a'), ['Reply finished'])
+
     def test_codex_view_state_survives_log_rotation(self):
         with tempfile.TemporaryDirectory() as root:
             logs = Path(root) / 'openai.chatgpt'; logs.mkdir()

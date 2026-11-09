@@ -40,7 +40,7 @@ state and unread reasons stay separate in the data.
 - **Turns:** provider hooks write one small event file per lifecycle event; the collector also tails open Codex
   rollouts and Copilot event logs with bounded reads. For open Claude chats it tails the transcript for unfinished
   background work, a scheduled wake-up, and whether the latest prompt came from a person, so a reply to an automatic
-  wake-up with work still pending holds as waiting instead of needing review.
+  wake-up with work still pending holds as waiting instead of needing review, unless its turn read agent messages.
 - **Ledger** (`state.py`): per chat, its state, unread reasons and the acknowledgment cutoff; per folder name, the
   latest turn start; per queue, when it was first seen finished. A project's queue count includes running queues and
   those finished after its last turn; when all of them have finished, its most recently active open chat gets a
