@@ -181,6 +181,17 @@ class TrackerTests(unittest.TestCase):
                 unread = {r['key']: r['unread'] for r in tracker.snapshot()['rows']}
             self.assertEqual(unread, {'claude:a': [], 'codex:b': ['Queues finished'], 'claude:c': []})
 
+    def test_clearing_a_projects_queues_drops_only_its_finished_ones(self):
+        import asyncio
+        from agent_bar.service import Tracker
+        with tempfile.TemporaryDirectory() as root:
+            tracker = Tracker(root)
+            for id, state in [('a', 'COMPLETED'), ('b', 'RUNNING')]:
+                tracker.ledger.queue({'id': id, 'project': 'code', 'state': state}, 100)
+            asyncio.run(tracker.dispatch({'op': 'clear-queues', 'project': 'code'}))
+            self.assertEqual(tracker.ledger.queue_counts(), {'code': {'done': 0, 'total': 1}})
+            with self.assertRaises(ValueError): asyncio.run(tracker.dispatch({'op': 'clear-queues', 'project': 'other'}))
+
     def test_tracker_runs_without_or_with_the_scheduler_turned_off(self):
         from agent_bar import service
         from agent_bar.providers import Providers

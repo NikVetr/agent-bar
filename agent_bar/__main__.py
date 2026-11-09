@@ -25,6 +25,8 @@ def main():
     save.add_argument('window'); save.add_argument('record')
     clear = subs.add_parser('clear-return')
     clear.add_argument('window')
+    seen = subs.add_parser('clear-queues', help="mark a project's finished queues seen, as a turn there would")
+    seen.add_argument('project')
     scm = subs.add_parser('show-scm', help="show a VS Code window's Source Control view")
     scm.add_argument('window')
     subs.add_parser('install', help='set up the service, provider hooks, VS Code bridge and GNOME extension')

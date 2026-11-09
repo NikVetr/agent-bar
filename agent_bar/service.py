@@ -286,6 +286,12 @@ class Tracker:
             self.ledger.data.setdefault('returns', {})[command['window']] = value
         elif op == 'clear-return':
             self.ledger.data.setdefault('returns', {}).pop(command['window'], None)
+        elif op == 'clear-queues':
+            # The user marks a project's finished queues seen, as a turn there would.
+            if not any(queue['project'] == command['project'] for queue in self.ledger.data['queues'].values()):
+                raise ValueError('No queues for that project')
+            turns = self.ledger.data['project_turns']
+            turns[command['project']] = max(time.time(), turns.get(command['project'], 0))
         else:
             raise ValueError(f'Unsupported operation: {op}')
         atomic_json(self.state_file, self.ledger.data)

@@ -1186,6 +1186,8 @@ class Tracker {
             'Jobs that ended without a done marker and are not yet rerun, with the time of the newest.');
         row(queues, [text('Q 2 / 5', 'tracker-attention tracker-project-total')],
             'A project\'s queues finished / outstanding since its last turn. A new turn there, from either provider, drops queues that already finished; other filters show those dimmed.');
+        row(queues, [text('Clear', 'tracker-filter')],
+            'Beside a project with finished queues: drops them as a new turn there would; running ones stay.');
 
         const cluster = card('Cluster dropdown');
         row(cluster, dots(['finished', 'attention', 'failed']),
@@ -2655,9 +2657,17 @@ class Tracker {
             // Other filters can list queues that finished before the project's last turn.
             const earlier = items.filter(queue => !queue.counted).length;
             const window = projectWindow(snapshot.windows, project);
+            const controls = new St.BoxLayout({y_align: Clutter.ActorAlign.CENTER});
+            if (count.done) {
+                const clear = new St.Button({label: 'Clear', can_focus: true, style_class: 'tracker-filter',
+                    y_align: Clutter.ActorAlign.CENTER, accessible_name: `Clear ${project}'s finished queues`});
+                clear.connect('clicked', () => this._clearQueues(project));
+                controls.add_child(clear);
+            }
+            if (window) controls.add_child(this._windowControls(window.id, snapshot));
             const body = this._projectSection(`queue:${project}`, project, 'since last turn',
                 `${count.done} / ${count.total} finished${earlier ? ` · ${earlier} earlier` : ''}`, !!count.done,
-                window ? this._windowControls(window.id, snapshot) : null);
+                controls.get_n_children() ? controls : null);
             for (const queue of items) {
                 const item = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
                 item._ornamentLabel?.hide();
@@ -2779,6 +2789,20 @@ class Tracker {
                 });
                 body.addMenuItem(item);
             }
+        }
+    }
+
+    async _clearQueues(project) {
+        try {
+            await this._run(['clear-queues', project]);
+            this._read();
+            await this._delay(500);
+            if (this._enabled && this._button.menu.isOpen) {
+                this._menuSnapshot = this._snapshot;
+                this._buildMenu();
+            }
+        } catch (error) {
+            if (this._enabled) Main.notifyError('Agent Bar', error.message);
         }
     }
 

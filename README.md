@@ -80,7 +80,8 @@ Clicking the counts opens the dropdown, with these tabs:
   Codex ones, which start it on their own, and brings each Claude one forward with that text at the end of its input
   box, after any draft, for you to send. If Agent Bar cannot be sure the cursor is in that box (several Claude chats on
   show in the window, or a bridge from before this feature), it leaves the text on the clipboard instead.
-- **Queues**: job queues from parallel-workers, by project, with progress, ETA and failed jobs.
+- **Queues**: job queues from parallel-workers, by project, with progress, ETA and failed jobs. A project's finished
+  queues count until a chat there starts a turn, or until you press Clear beside the project.
 - **Git**: each repository holding an open project, with its branch, uncommitted files, and commits ahead of or
   behind its upstream (as of the last fetch; Agent Bar never fetches or takes git's lock). Clicking one opens VS
   Code's Source Control for it.
