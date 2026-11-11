@@ -11,6 +11,14 @@ import re
 from pathlib import Path
 
 WAIT = 7200 - 60  # Inside the installed hook's two-hour timeout.
+# How prompts no person typed begin: task and subagent notifications, Agent Bar's queued notes, Claude's messages
+# from its other sessions, and its own continuation. A person's prompt may quote these further in.
+AUTOMATIC = re.compile(r'\s*(?:<(?:task-notification|subagent_notification|system-reminder|agent-notification|agent-message)\b'
+                       r'|Another Claude session sent a message:|Continue from where you left off\.$)')
+
+
+def automatic(prompt):
+    return bool(AUTOMATIC.match(prompt or ''))
 
 
 def state():
@@ -44,7 +52,7 @@ def headless():
     return False
 
 
-def wait(data, every=3):
+def wait(data, every=3.0):
     """Watch for a message to this idle chat after its turn ended; wake it once for each new one."""
     from agent_bar import messages
     if not data.get('session_id') or data.get('agent_id') or not messages.waking() or headless(): return
@@ -88,6 +96,7 @@ def limit_reset(transcript):
 
 
 def main():
+    os.umask(0o077)  # Event and wake files are the user's alone.
     data = json.load(sys.stdin)
     if sys.argv[1:] == ['wait']:
         wait(data)
@@ -100,9 +109,7 @@ def main():
              'ElicitationResult': 'resume', 'PostToolUse': 'resume', 'SessionEnd': 'interrupted',
              'Interrupt': 'interrupted'}
     kind = kinds.get(event)
-    if event == 'UserPromptSubmit' and re.search(
-            r'<(?:task-notification|subagent_notification|system-reminder|agent-notification|agent-message)\b'
-            r'|^Continue from where you left off\.$', data.get('prompt', '')):
+    if event == 'UserPromptSubmit' and automatic(data.get('prompt')):
         kind = 'start'  # An automatic continuation is not a human acknowledgment.
     asks = data.get('tool_name') == 'AskUserQuestion' or 'request_user_input' in data.get('tool_name', '')
     # Claude Code also reports a question as a permission request; it is still only a question.
@@ -120,7 +127,7 @@ def main():
             'transcript': data.get('transcript_path'),
             **({'resets': limit_reset(data.get('transcript_path'))} if kind == 'limit' else {})})
     # A turn the waiter woke, or a queued Codex note started, already carries the note.
-    if event == 'UserPromptSubmit' and '[agent-bar]' in data.get('prompt', ''):
+    if event == 'UserPromptSubmit' and kind == 'start' and '[agent-bar]' in data.get('prompt', ''):
         from agent_bar import messages
         messages.queued_file(f'{provider}:{data["session_id"]}', state_root).unlink(missing_ok=True)
     elif event == 'UserPromptSubmit':

@@ -96,7 +96,8 @@ async function activate(context) {
             if (action.input && target.viewType === CLAUDE_PANEL && vscode.window.tabGroups.all
                 .filter(g => g.activeTab?.input?.viewType === CLAUDE_PANEL).length === 1) {
                 await vscode.commands.executeCommand('claude-vscode.focus');
-                return {input: true};
+                // Only while this window, and this chat's tab in it, still have focus did the cursor land there.
+                return {input: vscode.window.state.focused && vscode.window.tabGroups.activeTabGroup.activeTab === tab};
             }
         } else if (target.kind === 'codex-sidebar') {
             // The service only supplies this target for the single known sidebar

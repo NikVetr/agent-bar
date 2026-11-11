@@ -7,6 +7,8 @@ from pathlib import Path
 ROOT = Path.home() / '.local/state/agent-bar'
 # UNLISTED: the queue monitor stopped listing an active queue, so its outcome is unknown but it is no longer running.
 TERMINAL = {'COMPLETED', 'FINISHED_INCOMPLETE', 'FAILED', 'KILLED', 'UNLISTED'}
+KEEP_QUEUES = 7 * 86400  # A finished queue no count includes, and the monitor no longer lists, is kept this long.
+KEEP_CHATS = 30 * 86400  # A closed chat with no activity this long is forgotten.
 
 
 def project_names(paths, home=None):
@@ -24,14 +26,23 @@ def project_names(paths, home=None):
     return names
 
 
-def atomic_json(path, value):
+def atomic_json(path, value, indent=None):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     temporary = path.with_name(path.name + '.next')
     with temporary.open('w') as stream:
         os.chmod(temporary, 0o600)
-        json.dump(value, stream, ensure_ascii=False, separators=(',', ':'))
+        json.dump(value, stream, ensure_ascii=False, indent=indent, separators=None if indent else (',', ':'))
+        if indent: stream.write('\n')
     temporary.replace(path)
+
+
+def ended(queue):
+    """When a finished queue ended: the monitor's end time, or when the tracker saw it end if that was sooner. The
+    tracker sees an end only at the monitor's next refresh, so a turn after the monitor's own end time, such as an
+    agent woken by that end, has already answered it."""
+    finished = queue['finished_at']
+    return min(queue.get('ended') or finished, finished)
 
 
 class Ledger:
@@ -65,7 +76,10 @@ class Ledger:
         seen = row.setdefault('seen', {})
         identity = turn or (row.get('turn') if kind != 'message' else None)
         # 'hold': the turn ended, but the agent will be woken for pending work, so it is no reply to review.
-        if kind in ['complete', 'failure', 'hold'] and identity and seen.get(kind) == identity:
+        # A completion is a duplicate only if the chat did nothing since the last one; otherwise its turn's start
+        # was missed and it carries the previous turn's identity.
+        if (kind in ['complete', 'failure', 'hold'] and identity and seen.get(kind) == identity
+                and (kind == 'failure' or row.get('completed_at', 0) >= row['state_at'])):
             return
         if kind in ['complete', 'failure', 'hold'] and identity:
             seen[kind] = identity
@@ -97,16 +111,31 @@ class Ledger:
         row = self.conversation(key)
         row['ack'] = max(row['ack'], cutoff)
 
-    def unread(self, key, queues_at=None):
-        """Unread reasons; queues_at: when this conversation's project last had all its queues finish."""
+    def pending(self, key, queues_at=None):
+        """Unread reasons and when each arrived; queues_at: when this conversation's project last had all its
+        queues finish."""
         row = self.conversation(key)
-        reasons = [name for name, at in row['reasons'].items() if at > row['ack']]
-        return reasons + ['Queues finished'] if queues_at and queues_at > row['ack'] else reasons
+        reasons = {name: at for name, at in row['reasons'].items() if at > row['ack']}
+        if queues_at and queues_at > row['ack']: reasons['Queues finished'] = queues_at
+        return reasons
+
+    def unread(self, key, queues_at=None):
+        return list(self.pending(key, queues_at))
 
     def queue(self, value, observed):
-        finished = self.data['queues'].get(value['id'], {}).get('finished_at')
-        if value['state'] not in TERMINAL: finished = None
-        elif finished is None: finished = observed
+        previous = self.data['queues'].get(value['id'], {})
+        finished = previous.get('finished_at')
+        counts = lambda queue: [queue.get(name) for name in ['done', 'total', 'failed', 'rerun']]
+        changed = 'done' in previous and counts(value) != counts(previous)
+        if value['state'] not in TERMINAL:
+            # parallel-workers flips some finished batches to DRAINING and back with no worker running and nothing
+            # done, so such a report keeps the finish; running workers or new counts reopen the queue.
+            idle = not sum(int(n) for n in (value.get('workers') or '').split(' ')[0].split('-') if n.isdigit())
+            if finished is not None and previous['state'] != 'UNLISTED' and idle and not changed:
+                value = {**value, 'state': previous['state'], 'ended': previous.get('ended')}
+            else: finished = None
+        # A finished queue with new counts (a rerun inside one monitor refresh, or jobs added) has finished again.
+        elif finished is None or changed: finished = observed
         self.data['queues'][value['id']] = {**value, 'observed': observed, 'finished_at': finished}
 
     def unlisted(self, listed, observed):
@@ -120,9 +149,8 @@ class Ledger:
             turns[name] = max(at, turns.get(name, 0))
 
     def counted(self, queue):
-        """Whether a queue is outstanding or finished since its project's last turn."""
-        finished = queue.get('finished_at')
-        return finished is None or finished > self.data['project_turns'].get(queue['project'], 0)
+        """Whether a queue is outstanding or ended since its project's last turn."""
+        return queue.get('finished_at') is None or ended(queue) > self.data['project_turns'].get(queue['project'], 0)
 
     def queue_counts(self):
         """Per queue project: queues finished since its last turn / queues not yet seen finished."""
@@ -134,17 +162,26 @@ class Ledger:
         return counts
 
     def queues_finished(self):
-        """Per queue project whose queues since its last turn have all finished: when the tracker saw the last.
-        The tracker sees an end only at the monitor's next refresh, so a turn after the monitor's own end time, such as
-        an agent woken by that end, has already answered it."""
+        """Per queue project whose queues since its last turn have all finished: when the tracker saw the last."""
         projects = {}
         for queue in filter(self.counted, self.data['queues'].values()):
             projects.setdefault(queue['project'], []).append(queue)
-        result = {}
-        for project, queues in projects.items():
-            if any(queue.get('finished_at') is None for queue in queues): continue
-            ended = max(min(queue.get('ended') or queue['finished_at'], queue['finished_at']) for queue in queues)
-            if ended > self.data['project_turns'].get(project, 0):
-                result[project] = max(queue['finished_at'] for queue in queues)
-        return result
+        return {project: max(queue['finished_at'] for queue in queues) for project, queues in projects.items()
+                if all(queue.get('finished_at') is not None for queue in queues)}
+
+    def prune(self, now, listed, open_keys):
+        """Forget finished queues that no count includes and the monitor no longer lists (`listed`, None when not yet
+        known), KEEP_QUEUES after they finished, and closed chats with no activity for KEEP_CHATS."""
+        for id, queue in list(self.data['queues'].items()) if listed is not None else []:
+            finished = queue.get('finished_at')
+            if id not in listed and finished is not None and finished < now - KEEP_QUEUES and not self.counted(queue):
+                del self.data['queues'][id]
+        for key, row in list(self.data['conversations'].items()):
+            last = max([row['state_at'], row['ack']] + [row.get(name, 0) for name in ['human_at', 'hook_seen', 'began']])
+            if key in open_keys or last >= now - KEEP_CHATS: continue
+            if key.startswith('claude:'): del self.data['conversations'][key]
+            # Other providers' events are reread from their logs when the chat opens again; only the cutoff that
+            # keeps those already reviewed is kept.
+            elif row['reasons'] or row['state_at'] or set(row) - {'state', 'state_at', 'ack', 'reasons', 'turn'}:
+                self.data['conversations'][key] = {'state': 'unknown', 'state_at': 0, 'ack': last, 'reasons': {}, 'turn': None}
 

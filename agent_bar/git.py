@@ -2,9 +2,11 @@
 import os
 import re
 import subprocess
+import time
 from pathlib import Path
 
 TIMEOUT = 10
+RECHECK = 300  # Seconds before a folder found outside any repository is checked again.
 # Background readers must not take index.lock, which would make an agent's own git command fail.
 ENV = {**os.environ, 'GIT_OPTIONAL_LOCKS': '0', 'LC_ALL': 'C', 'GIT_TERMINAL_PROMPT': '0'}
 OPERATIONS = [('rebase-merge', 'rebasing'), ('rebase-apply', 'rebasing'), ('MERGE_HEAD', 'merging'),
@@ -68,13 +70,16 @@ def status(top):
 
 class Repositories:
     def __init__(self):
-        self.tops = {}  # Folder -> its repository's top level, or None outside any.
+        self.tops = {}  # Folder -> (its repository's top level, or None outside any; when that was found).
 
     def top(self, folder):
-        if folder not in self.tops:
-            try: self.tops[folder] = git(folder, 'rev-parse', '--show-toplevel').strip() or None
-            except (ValueError, OSError, subprocess.TimeoutExpired): self.tops[folder] = None
-        return self.tops[folder]
+        # A folder outside any repository may become one (git init, or a timeout that passes), so ask again later.
+        top, at = self.tops.get(folder, (None, None))
+        if at is None or (top is None and time.time() - at > RECHECK):
+            try: top = git(folder, 'rev-parse', '--show-toplevel').strip() or None
+            except (ValueError, OSError, subprocess.TimeoutExpired): top = None
+            self.tops[folder] = top, time.time()
+        return top
 
     def read(self, folders):
         """Status of each repository holding one of these folders, with the folders it holds."""

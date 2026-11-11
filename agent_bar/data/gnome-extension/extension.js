@@ -139,13 +139,19 @@ function completionTime(row) {
     return row.completed_at || (row.state === 'finished' ? row.state_at : 0);
 }
 
-// Open chats needing review for one of `reasons` (any, when null), the longest waiting first.
+// Open chats needing review for one of `reasons` (any, when null), the longest waiting first: since the oldest of
+// those reasons arrived.
 function readyConversations(rows, reasons = null) {
     const unique = new Map();
+    const counts = reason => !reasons || reasons.includes(reason);
     for (const row of rows)
-        if (row.target && !unique.has(row.key) && row.unread.some(reason => !reasons || reasons.includes(reason)))
+        if (row.target && !unique.has(row.key) && row.unread.some(counts))
             unique.set(row.key, row);
-    return [...unique.values()].sort((a, b) => completionTime(a) - completionTime(b));
+    const since = row => {
+        const times = Object.entries(row.unread_at || {}).filter(([reason]) => counts(reason)).map(([, at]) => at);
+        return times.length ? Math.min(...times) : completionTime(row);
+    };
+    return [...unique.values()].sort((a, b) => since(a) - since(b));
 }
 
 // Open VS Code chats a usage limit stopped, which Continue can have go on; Codex ones first, as they need no window.
@@ -833,6 +839,8 @@ class Tracker {
         this._quickRight = new St.BoxLayout({style_class: 'tracker-quick tracker-quick-right'});
         this._quickButtons = [];
         this._quickHidden = [];
+        // Chat key -> after what snapshot time its clicked shortcut may show again (Infinity while it is brought forward).
+        this._quickPending = new Map();
         this._quickMore = new St.Button({style_class: 'tracker-quick-button tracker-quick-more', can_focus: true,
             visible: false, y_align: Clutter.ActorAlign.CENTER});
         this._quick.add_child(this._quickMore);
@@ -2007,7 +2015,8 @@ class Tracker {
     }
 
     _renderQuick(rows) {
-        const ready = readyConversations(rows, this._setting('quickReasons'));
+        for (const [key, after] of this._quickPending) if ((this._snapshot?.updated ?? 0) > after) this._quickPending.delete(key);
+        const ready = readyConversations(rows, this._setting('quickReasons')).filter(row => !this._quickPending.has(row.key));
         const limit = this._setting('quickLimit'), chars = this._setting('quickChars');
         const shown = ready.slice(0, limit);
         const signature = JSON.stringify(shown.map(row => [row.key, row.window, row.project]));
@@ -2029,9 +2038,7 @@ class Tracker {
             button.get_child().x_align = Clutter.ActorAlign.CENTER;
             button.connect('clicked', () => {
                 button.hide();
-                // Rebuild on the next read so a failed activation restores the button.
-                this._quickSignature = null;
-                this._activate(row, this._snapshot, 'focus');
+                this._openShortcut(row);
             });
             // _fitQuick puts it in its place.
             this._quick.add_child(button);
@@ -2121,10 +2128,21 @@ class Tracker {
             const title = row.title.length > 48 ? `${row.title.slice(0, 47)}…` : row.title;
             const item = new PopupMenu.PopupMenuItem(`${PROVIDERS[row.provider]?.[0] || '•'} ${row.project} · ${title}`);
             item.label.add_style_class_name(`tracker-${row.provider}`);
-            item.connect('activate', () => this._activate(row, this._snapshot, 'focus'));
+            item.connect('activate', () => this._openShortcut(row));
             this._quickMenu.addMenuItem(item);
         }
         this._quickMenu.open();
+    }
+
+    // Brings a shortcut's chat forward. A snapshot from before its acknowledgment still lists it, so its shortcut
+    // stays away until a later one, or returns on the next read if bringing it forward failed.
+    _openShortcut(row) {
+        this._quickPending.set(row.key, Infinity);
+        this._quickSignature = null;
+        this._activate(row, this._snapshot, 'focus').then(result => {
+            if (result?.ok) this._quickPending.set(row.key, Date.now() / 1000);
+            else this._quickPending.delete(row.key);
+        });
     }
 
     _read() {
@@ -2792,11 +2810,20 @@ class Tracker {
         }
     }
 
+    // Reads snapshots until one taken after `since` (seconds) arrives, for at most `seconds`.
+    async _snapshotAfter(since, seconds = 5) {
+        for (let i = 0; i < seconds * 5 && this._enabled && !(this._snapshot?.updated > since); i++) {
+            this._read();
+            await this._delay(200);
+        }
+    }
+
     async _clearQueues(project) {
         try {
+            const asked = Date.now() / 1000;
             await this._run(['clear-queues', project]);
-            this._read();
-            await this._delay(500);
+            // The service writes a snapshot with the change before it answers.
+            await this._snapshotAfter(asked);
             if (this._enabled && this._button.menu.isOpen) {
                 this._menuSnapshot = this._snapshot;
                 this._buildMenu();
@@ -2809,9 +2836,8 @@ class Tracker {
     async _resetLimit(pair) {
         try {
             await this._run(['reset-limit', ...pair]);
-            this._read();
             // The service's next snapshot drops the hold.
-            await this._delay(3500);
+            await this._snapshotAfter(Date.now() / 1000);
             if (this._enabled && this._button.menu.isOpen) {
                 this._menuSnapshot = this._snapshot;
                 this._buildMenu();

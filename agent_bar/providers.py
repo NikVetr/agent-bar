@@ -8,6 +8,8 @@ import sqlite3
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
+from .hook import automatic
+
 UUID = re.compile(r'^[0-9a-f]{8}-[0-9a-f-]{27}$', re.I)
 CODEX_ROLLOUT = re.compile(r'/rollout-[0-9T-]+-([0-9a-f]{8}-[0-9a-f-]{27})\.jsonl$', re.I)
 CODEX_APP = '/usr/lib/chatgpt/'  # The ChatGPT desktop app's bundled Codex server.
@@ -478,7 +480,7 @@ class Providers:
             meta = metadata.get(sid, {})
             target = {'kind': 'tab', **custom[sid]} if sid in custom else (
                 {'kind': 'codex-sidebar'} if len(sidebars) == 1 else None)
-            rows.append({'provider': 'codex', 'id': sid, 'title': meta.get('title', sid[:8]),
+            rows.append({'provider': 'codex', 'id': sid, 'title': meta.get('title') or sid[:8],
                          'target': target, 'path': meta.get('path')})
         for row in rows:
             row.update(key=f'{row["provider"]}:{row["id"]}', window=window['id'],
@@ -518,6 +520,8 @@ class Providers:
                     'exec_command_begin': 'resume'}.get(payload.get('type'))
             if payload.get('type') == 'agent_message' and payload.get('phase') == 'commentary':
                 kind = 'resume'
+            # A queued Agent Bar note starts a turn, but no person wrote it.
+            if kind == 'message' and automatic(payload.get('message')): kind = 'start'
             if kind == 'complete' and (payload.get('error') or {}).get('codex_error_info') == 'usage_limit_exceeded':
                 kind = 'limit'
             if kind:

@@ -27,8 +27,10 @@ QUEUED_HOLD = 2 * 3600  # A queued Codex note whose turn has not started in this
 
 
 def setting(key, default):
-    try: return json.loads(SETTINGS.read_text()).get(key, default)
+    try: saved = json.loads(SETTINGS.read_text())
     except FileNotFoundError: return default
+    if not isinstance(saved, dict): raise ValueError(f'{SETTINGS} is not a JSON object')
+    return saved.get(key, default)
 
 
 def enabled():
@@ -129,7 +131,13 @@ def stranded(unread, rows, root=ROOT, now=None):
 
 
 def connect(root=ROOT):
-    connection = sqlite3.connect(Path(root) / 'messages.sqlite', timeout=2)
+    database = Path(root) / 'messages.sqlite'
+    # Files made before Agent Bar set an owner-only umask.
+    for path in [database, database.with_name('messages.sqlite-wal'), database.with_name('messages.sqlite-shm')]:
+        try:
+            if path.stat().st_mode & 0o077: os.chmod(path, 0o600)
+        except FileNotFoundError: pass
+    connection = sqlite3.connect(database, timeout=2)
     connection.row_factory = sqlite3.Row
     connection.execute('PRAGMA journal_mode=WAL')
     connection.execute('''CREATE TABLE IF NOT EXISTS messages (
@@ -194,7 +202,9 @@ def send(sender, recipient, body, root=ROOT, now=None, urgent=False):
                              'Ask your user before sending more; they can also reset the limit in Agent Bar\'s Messages tab.'
                              if peer >= PEER_LIMIT else f'Loop guard: {hourly} messages sent in the last hour. Ask your user before sending more.')
         mine = open_rows.get(sender, {})
-        connection.execute('DELETE FROM messages WHERE read_at IS NOT NULL AND at<?', (now - KEEP,))
+        # The newest row stays, so ids keep rising: wake marks compare them.
+        connection.execute('DELETE FROM messages WHERE read_at IS NOT NULL AND at<? AND id<(SELECT max(id) FROM messages)',
+                           (now - KEEP,))
         connection.execute('DELETE FROM refusals WHERE at<?', (now - KEEP,))
         cursor = connection.execute(
             'INSERT INTO messages (at, sender, recipient, sender_title, sender_project, recipient_title, recipient_project, body, urgent)'

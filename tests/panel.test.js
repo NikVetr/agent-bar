@@ -100,6 +100,41 @@ test('top-bar shortcuts list distinct conversations awaiting review, oldest firs
     // Only the reasons picked in settings give a shortcut.
     assert.equal(f.context.readyConversations(rows, ['Input needed']).map(r => r.key).join(','), 'a');
     assert.equal(f.context.readyConversations(rows, []).length, 0);
+    // A question that came after an older reply waits since it asked, not since that reply; only the reasons that
+    // give shortcuts count.
+    rows[1].unread_at = {'Input needed': 25, 'Queues finished': 1};
+    assert.equal(f.context.readyConversations(rows, ['Reply finished', 'Input needed']).map(r => r.key).join(','), 'b,a');
+    assert.equal(f.context.readyConversations(rows).map(r => r.key).join(','), 'a,b');
+});
+
+test('a clicked shortcut stays away until a snapshot after its acknowledgment, or returns if that failed', async () => {
+    const f = fixture();
+    const row = {key: 'k', window: 'w', target: {}, unread: ['Reply finished'], project: 'p'};
+    const shown = [];
+    f.tracker._setting = key => ({quickReasons: null, quickLimit: 6, quickChars: 16})[key];
+    f.tracker._buildQuick = (signature, rows) => {
+        f.tracker._quickSignature = signature;
+        shown.push(rows.map(r => r.key).join(','));
+    };
+    f.tracker._fitQuick = () => {};
+    f.tracker._quickPending = new Map();
+    let finish;
+    f.tracker._activate = () => new Promise(resolve => { finish = resolve; });
+    f.tracker._snapshot = {updated: 100, rows: [row]};
+    f.tracker._openShortcut(row);
+    f.tracker._renderQuick([row]);  // A read while it is brought forward.
+    finish({ok: true});
+    await new Promise(resolve => setImmediate(resolve));
+    f.tracker._renderQuick([row]);  // The snapshot written with the acknowledgment predates the answer.
+    f.tracker._snapshot = {updated: Date.now() / 1000 + 1, rows: [row]};
+    f.tracker._renderQuick([row]);  // Still unread after that: a new reason, so it shows again.
+    assert.deepEqual(shown, ['', 'k']);
+    f.tracker._activate = async () => ({ok: false});
+    f.tracker._openShortcut(row);
+    await new Promise(resolve => setImmediate(resolve));
+    f.tracker._quickSignature = null;
+    f.tracker._renderQuick([row]);
+    assert.equal(shown.at(-1), 'k');
 });
 
 test('continue lists open VS Code chats a usage limit stopped, Codex first, and asks for the input box only then', async () => {

@@ -43,8 +43,11 @@ state and unread reasons stay separate in the data.
   wake-up with work still pending holds as waiting instead of needing review, unless its turn read agent messages.
 - **Ledger** (`state.py`): per chat, its state, unread reasons and the acknowledgment cutoff; per folder name, the
   latest turn start; per queue, when it was first seen finished. A project's queue count includes running queues and
-  those finished after its last turn; when all of them have finished, its most recently active open chat gets a
-  "Queues finished" reason. A turn a usage limit stopped (Claude's StopFailure with `rate_limit`, with the reset time
+  those that ended after its last turn (the monitor's end time, or when the tracker saw the end if sooner); when all
+  of them have finished, its most recently active open chat gets a "Queues finished" reason. A finished queue the
+  monitor reports active again with no new jobs done stays finished. Each hour the service forgets finished queues
+  a week after they finished once no count includes them and the monitor no longer lists them, closed chats idle for
+  30 days, and files left by closed windows. A turn a usage limit stopped (Claude's StopFailure with `rate_limit`, with the reset time
   from the transcript's closing API error; Codex's `task_complete` with `usage_limit_exceeded`) marks the chat
   `limited` until its next turn starts.
 - **Inventory** (`inventory.py`): every saved Claude and Codex chat, rescanned daily at idle priority, reading only

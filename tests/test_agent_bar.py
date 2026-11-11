@@ -260,8 +260,8 @@ class TrackerTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'Loop guard'): messages.send('claude:a', 'codex:b', 'more', root, now=210)
                 for bad in ['claude:a', 'codex:gone']:
                     with self.assertRaises(ValueError): messages.send('claude:a', bad, 'x', root, now=211)
-                self.assertIn('3 unread messages', messages.notice('codex:b', root))
-                self.assertIn('"Fix login"', messages.notice('codex:b', root))
+                self.assertIn('3 unread messages', messages.notice('codex:b', root) or '')
+                self.assertIn('"Fix login"', messages.notice('codex:b', root) or '')
                 self.assertEqual(messages.summary(root)['unread'], {'codex:b': 3})
                 self.assertEqual(len(messages.inbox('codex:b', root, peek=True)['messages']), 3)
                 self.assertEqual([m['body'] for m in messages.inbox('codex:b', root)['messages']], ['note 0', 'note 1', 'note 2'])
@@ -532,6 +532,171 @@ class TrackerTests(unittest.TestCase):
         self.assertEqual(queues['q1']['state'], 'PENDING')
         self.assertEqual(queues['q2']['finished_at'], 101)
         self.assertEqual(self.ledger.queue_counts(), {'demo': {'done': 2, 'total': 3}})
+
+    def test_a_finished_queue_reported_active_again_without_progress_stays_finished(self):
+        def queue(state, at, id='q', done=9, workers='0-0-0 P50 CLOSED'):
+            self.ledger.queue({'id': id, 'project': 'demo', 'state': state, 'done': done, 'total': 10, 'failed': 1, 'rerun': 0,
+                               'workers': workers, 'ended': at if state != 'DRAINING' else None}, at)
+        queue('RUNNING', 101, done=5, workers='2-1-0 P50')
+        queue('FINISHED_INCOMPLETE', 110)
+        self.ledger.data['project_turns']['demo'] = 120  # Cleared, or a turn there.
+        # parallel-workers flips it to DRAINING and back with nothing running or done: the same finish, still seen.
+        for at in [130, 140, 150]: queue('DRAINING' if at == 140 else 'FINISHED_INCOMPLETE', at)
+        record = self.ledger.data['queues']['q']
+        self.assertEqual((record['state'], record['finished_at']), ('FINISHED_INCOMPLETE', 110))
+        self.assertEqual((self.ledger.queue_counts(), self.ledger.queues_finished()), ({}, {}))
+        # A rerun reopens it, even with nothing done yet; finishing again needs review.
+        queue('RUNNING', 160, workers='1-0-0 P50')
+        self.assertEqual(self.ledger.queue_counts(), {'demo': {'done': 0, 'total': 1}})
+        queue('COMPLETED', 170, done=10)
+        self.assertEqual(self.ledger.queues_finished(), {'demo': 170})
+        # A rerun inside one monitor refresh still shows as new counts.
+        self.ledger.data['project_turns']['demo'] = 180
+        queue('COMPLETED', 190, done=10, id='r')
+        self.ledger.queue({**self.ledger.data['queues']['r'], 'total': 12, 'done': 12}, 200)
+        self.assertEqual(self.ledger.queues_finished(), {'demo': 200})
+        # A queue the monitor dropped for a refresh and lists again is running, not finished.
+        self.ledger.data['project_turns']['demo'] = 210
+        queue('RUNNING', 211, id='u', workers='1-0-0 P50')
+        self.ledger.unlisted(set(), 220)
+        queue('RUNNING', 230, id='u', workers='1-0-0 P50')
+        self.assertEqual(self.ledger.data['queues']['u']['finished_at'], None)
+
+    def test_queue_counts_and_queues_finished_agree_on_when_a_queue_ended(self):
+        self.ledger.queue({'id': 'q', 'project': 'demo', 'state': 'RUNNING'}, 50)
+        # The agent woken by the queue's end (100) starts a turn before the tracker sees the end (120).
+        self.ledger.data['project_turns']['demo'] = 110
+        self.ledger.queue({'id': 'q', 'project': 'demo', 'state': 'COMPLETED', 'ended': 100}, 120)
+        self.assertEqual((self.ledger.queue_counts(), self.ledger.queues_finished()), ({}, {}))
+
+    def test_a_completion_after_activity_is_new_even_without_its_turn_start(self):
+        self.ledger.event('claude:a', 'message', 110)
+        self.ledger.event('claude:a', 'complete', 120)
+        self.ledger.acknowledge('claude:a', 125)
+        # An automatic turn whose start never arrived: tools ran, then it stopped again.
+        self.ledger.event('claude:a', 'resume', 130)
+        self.ledger.event('claude:a', 'complete', 140)
+        self.assertEqual(self.ledger.unread('claude:a'), ['Reply finished'])
+        self.ledger.event('claude:a', 'question', 150)
+        self.assertEqual(self.ledger.pending('claude:a', 145), {'Reply finished': 140, 'Input needed': 150, 'Queues finished': 145})
+
+    def test_prompts_are_automatic_only_when_they_begin_as_one(self):
+        from agent_bar.hook import automatic
+        from agent_bar.providers import Providers
+        for prompt in ['<task-notification>\n<summary>done</summary>', '  <agent-message>[agent-bar] 1 unread',
+                       'Another Claude session sent a message: <agent-message from="x">', 'Continue from where you left off.']:
+            self.assertTrue(automatic(prompt), prompt)
+        for prompt in ['why does <system-reminder> show here?', '<pasted_content>log: <task-notification>', 'Continue from where you left off. Then stop.']:
+            self.assertFalse(automatic(prompt), prompt)
+        # Codex's rollout records a queued note as a user message; no person wrote it.
+        with tempfile.TemporaryDirectory() as root:
+            rollout = Path(root) / 'rollout.jsonl'
+            rollout.write_text(''.join(json.dumps({'timestamp': f'2026-11-10T00:00:0{n}Z', 'type': 'event_msg', 'payload': {
+                'type': 'user_message', 'message': text}}) + '\n' for n, text in enumerate(['fix it', '<agent-message>[agent-bar] 1 unread'])))
+            kinds = [kind for kind, _, _ in Providers(root).events({'provider': 'codex', 'key': 'codex:a', 'id': 'a', 'path': str(rollout)})]
+            self.assertEqual(kinds, ['message', 'start'])
+
+    def test_broken_inputs_are_reported_without_stopping_the_snapshots(self):
+        from agent_bar import messages, service
+        from agent_bar.providers import Providers
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            (root / 'proc').mkdir()
+            settings, queues = root / 'settings.json', root / 'parallel-workers/queue-progress.tsv'
+            queues.parent.mkdir()
+            with unittest.mock.patch.object(service, 'SETTINGS', settings), unittest.mock.patch.object(messages, 'SETTINGS', settings), \
+                    unittest.mock.patch.object(service, 'QUEUES', queues):
+                tracker = service.Tracker(root / 'state')
+                tracker.providers = Providers(root, str(root / 'proc'))
+                bad = root / 'state/events/bad.json'
+                bad.write_text(json.dumps({'provider': 'gemini', 'session': 's', 'kind': 'start', 'at': 1}))
+                queues.write_text('')  # The monitor lists no queues: a fresh snapshot all the same.
+                settings.write_text('[]')
+                tracker.collect()
+                warnings = json.loads((root / 'state/snapshot.json').read_text())['warnings']
+                self.assertFalse(bad.exists())
+                self.assertTrue(any('discarded' in w for w in warnings) and any('not a JSON object' in w for w in warnings))
+                self.assertFalse(any('stale' in w for w in warnings))
+                # Unread mail makes the snapshot read the wake setting.
+                rows = [{'key': key, 'provider': 'claude', 'title': key, 'project': 'p', 'state': 'finished'} for key in ['claude:a', 'claude:b']]
+                (root / 'state/snapshot.json').write_text(json.dumps({'rows': rows}))
+                settings.write_text('{}')
+                messages.send('claude:a', 'claude:b', 'hi', root / 'state')
+                settings.write_text('{"wake": true,')
+                self.assertIsNone(tracker.message_summary(rows))
+                self.assertTrue(any('Agent messages unreadable' in w for w in tracker.warnings))
+
+    def test_message_ids_keep_rising_after_old_ones_are_pruned(self):
+        from agent_bar import messages
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            rows = [{'key': key, 'provider': 'claude', 'title': key, 'project': 'p', 'state': 'finished'} for key in ['claude:a', 'claude:b']]
+            (root / 'snapshot.json').write_text(json.dumps({'rows': rows}))
+            (root / 'ledger.json').write_text(json.dumps({'conversations': {}}))
+            with unittest.mock.patch.object(messages, 'SETTINGS', root / 'settings.json'):
+                old = [messages.send('claude:a', 'claude:b', f'm{n}', root, now=100 + n)['id'] for n in range(2)]
+                messages.inbox('claude:b', root, now=110)
+                self.assertGreater(messages.send('claude:a', 'claude:b', 'much later', root, now=110 + messages.KEEP + 1)['id'], max(old))
+            self.assertEqual((root / 'messages.sqlite').stat().st_mode & 0o777, 0o600)
+
+    def test_codex_usage_comes_from_the_newest_rollout_with_limit_windows(self):
+        from agent_bar import info
+        with tempfile.TemporaryDirectory() as home:
+            folder = Path(home) / '.codex/sessions/2026/11/10'; folder.mkdir(parents=True)
+            for n, limits in enumerate([{'primary': {'used_percent': 40, 'window_minutes': 300, 'resets_at': 5}},
+                                        {'limit_id': 'premium', 'primary': None, 'secondary': None}, None]):
+                path = folder / f'rollout-{n}.jsonl'
+                path.write_text(json.dumps({'timestamp': f'2026-11-10T0{n}:00:00Z', 'payload': {'rate_limits': limits}},
+                                           separators=(',', ':')) + '\n')  # As Codex writes it.
+                os.utime(path, (100 + n, 100 + n))
+            self.assertEqual(info.usage(Path(home))['codex'], {'as_of': '2026-11-10T00:00:00Z', 'limits': [
+                {'name': '5-hour', 'percent': 40, 'resets_at': 5}]})
+
+    def test_hook_install_edits_a_linked_settings_file_where_it_lives(self):
+        from agent_bar import hooks
+        with tempfile.TemporaryDirectory() as home, unittest.mock.patch('pathlib.Path.home', return_value=Path(home)):
+            real = Path(home) / 'dotfiles/settings.json'; real.parent.mkdir()
+            real.write_text(json.dumps({'model': 'opus'}))
+            (Path(home) / '.claude').mkdir()
+            link = Path(home) / '.claude/settings.json'; link.symlink_to(real)
+            hooks.install('claude')
+            self.assertTrue(link.is_symlink())
+            self.assertTrue(real.read_text().startswith('{\n  "model": "opus"'))
+            self.assertEqual(hooks.installed('claude'), {'observer': True, 'waiter': True})
+
+    def test_pruning_forgets_only_what_nothing_uses(self):
+        from agent_bar import service
+        day = 86400
+        with tempfile.TemporaryDirectory() as root:
+            tracker = service.Tracker(root)
+            ledger, now = tracker.ledger, 100 * day
+            for id, finished in [('old', now - 8 * day), ('listed', now - 8 * day), ('recent', now - day)]:
+                ledger.data['queues'][id] = {'id': id, 'project': 'demo', 'state': 'COMPLETED', 'finished_at': finished}
+            ledger.data['project_turns']['demo'] = now
+            for key, at in [('claude:closed', now - 31 * day), ('claude:open', now - 31 * day), ('claude:fresh', now - day),
+                            ('codex:closed', now - 31 * day)]:
+                ledger.event(key, 'complete', at)
+            stale = Path(root) / 'windows/gone.json'; stale.write_text('{}'); os.utime(stale, (0, 0))
+            ledger.data['returns'] = {'gone': {}, 'terminal:999999999': {}}
+            tracker.rows = [{'key': 'claude:open'}]
+            tracker.prune(now)  # Before the monitor's first listing: chats only.
+            self.assertEqual(len(ledger.data['queues']), 3)
+            tracker.listed = {'listed'}
+            tracker.prune(now)
+            self.assertEqual(sorted(ledger.data['queues']), ['listed', 'recent'])
+            self.assertEqual(sorted(ledger.data['conversations']), ['claude:fresh', 'claude:open', 'codex:closed'])
+            self.assertEqual((stale.exists(), ledger.data['returns']), (False, {}))
+            # A Codex chat's log is reread when it opens again, so its reviewed cutoff stays.
+            ledger.event('codex:closed', 'complete', now - 31 * day, 'replayed')
+            self.assertEqual(ledger.unread('codex:closed'), [])
+
+    def test_a_folder_outside_git_is_checked_again_later(self):
+        from agent_bar import git
+        with tempfile.TemporaryDirectory() as root, unittest.mock.patch.object(git, 'RECHECK', 0):
+            repositories = git.Repositories()
+            self.assertEqual(repositories.read([root]), [])
+            subprocess.run(['git', 'init', '-q', root], check=True)
+            self.assertEqual([repo['top'] for repo in repositories.read([root])], [str(Path(root).resolve())])
 
     def test_background_work_pending_until_notified_stopped_or_due(self):
         def use(id, name, **args):

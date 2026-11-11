@@ -68,19 +68,31 @@ def usage(home):
     for path in rollouts:
         try: text = tail(path)
         except OSError: continue
-        at = text.rfind('"rate_limits":')
-        if at < 0: continue
-        start = at + len('"rate_limits":')
+        found = codex_limits(text)
+        if found:
+            stamp, windows = found
+            result['codex'] = {'as_of': stamp or path.stat().st_mtime, 'limits': [
+                {'name': '5-hour' if window.get('window_minutes') == 300 else 'Weekly' if window.get('window_minutes') == 10080
+                 else f'{window.get("window_minutes")}-minute', 'percent': window.get('used_percent'), 'resets_at': window.get('resets_at')}
+                for window in windows]}
+            break
+    return result
+
+
+def codex_limits(text):
+    """The latest rate-limit windows in a rollout's text, and the timestamp before them; Codex also writes entries
+    with no windows (null), which are skipped."""
+    marker, at = '"rate_limits":', len(text)
+    while (at := text.rfind(marker, 0, at)) >= 0:
+        start = at + len(marker)
         try: limits, _ = json.JSONDecoder().raw_decode(text, start + len(text[start:]) - len(text[start:].lstrip()))
         except ValueError: continue
-        stamp = re.findall(r'"timestamp":"([^"]+)"', text[max(0, at - 4000):at])
-        windows = [limits.get(key) for key in ['primary', 'secondary'] if limits.get(key)]
-        result['codex'] = {'as_of': stamp[-1] if stamp else path.stat().st_mtime, 'limits': [
-            {'name': '5-hour' if window.get('window_minutes') == 300 else 'Weekly' if window.get('window_minutes') == 10080
-             else f'{window.get("window_minutes")}-minute', 'percent': window.get('used_percent'), 'resets_at': window.get('resets_at')}
-            for window in windows]}
-        break
-    return result
+        windows = [limits.get(key) for key in ['primary', 'secondary']] if isinstance(limits, dict) else []
+        windows = [window for window in windows if isinstance(window, dict)]
+        if windows:
+            stamp = re.findall(r'"timestamp":"([^"]+)"', text[max(0, at - 4000):at])
+            return (stamp[-1] if stamp else None), windows
+    return None
 
 
 def health(root, home):

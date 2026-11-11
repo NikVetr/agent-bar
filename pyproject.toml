@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-bar"
-version = "0.1.0"
+version = "0.2.0"
 description = "Your open AI coding agent chats in your menu bar: which need review, which are working, and their queues, repositories and messages."
 readme = "README.md"
 license = {text = "GPL-2.0-or-later"}

@@ -10,6 +10,7 @@ from .state import ROOT
 
 
 def main():
+    os.umask(0o077)  # Messages and state are the user's alone.
     parser = argparse.ArgumentParser(prog='agent-bar', description='Tracks open AI agent chats for the desktop top bar (JSON output)')
     subs = parser.add_subparsers(dest='command', required=True)
     for name in ['serve', 'status', 'queues', 'git']:
@@ -60,7 +61,7 @@ def main():
             elif name == 'reset-limit':
                 # The loop guard is the user's to lift. Agents' tools name their session; the panel's command does not.
                 if os.environ.get('CLAUDE_CODE_SESSION_ID') or os.environ.get('CODEX_THREAD_ID'):
-                    raise ValueError("Only the user resets the loop guard, from the tracker's Messages tab")
+                    raise ValueError("Only the user resets the loop guard, from Agent Bar's Messages tab")
                 result = messages.reset_limit(args['first'], args['second'])
             else: result = messages.inbox(messages.caller(args['sender']), peek=args['peek'])
         except (OSError, ValueError, KeyError, sqlite3.Error) as error: result = {'ok': False, 'error': str(error)}
@@ -97,7 +98,7 @@ def main():
             client.sendall((json.dumps(command) + '\n').encode())
             with client.makefile('r') as stream:
                 result = json.loads(stream.readline())
-        if name in ['queues', 'git']: result = result[name]
+        if name in ['queues', 'git'] and result.get('ok') is not False: result = result[name]
     except (OSError, ValueError) as error:
         result = {'ok': False, 'error': str(error)}
     print(json.dumps(result, ensure_ascii=False))

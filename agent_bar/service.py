@@ -19,6 +19,8 @@ TURNS = {'start', 'message'}  # Any turn start, including automatic continuation
 QUIET = 300  # An open turn with no activity this long is waiting on something.
 CONTINUE = 'Please continue where you left off.'  # Sent to chats a usage limit stopped.
 GIT_EVERY = 20  # Seconds between git status reads of the open projects' repositories.
+PRUNE_EVERY = 3600  # Seconds between clean-ups of what closed chats, windows and old queues left behind.
+STALE_WINDOW = 86400  # A VS Code bridge silent this long has gone with its window.
 SETTINGS = Path.home() / '.config/agent-bar/settings.json'  # Written by the panel.
 # Replaced atomically by the parallel-workers monitor on each of its refreshes.
 QUEUES = Path(os.environ.get('PARALLEL_WORKERS_QUEUE_SNAPSHOT')
@@ -26,7 +28,7 @@ QUEUES = Path(os.environ.get('PARALLEL_WORKERS_QUEUE_SNAPSHOT')
 
 
 class Tracker:
-    def __init__(self, root=ROOT):
+    def __init__(self, root: 'str | Path' = ROOT):
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         os.chmod(self.root, 0o700)
@@ -44,6 +46,8 @@ class Tracker:
         self.queue_mtime = max((q.get('observed', 0) for q in self.ledger.data['queues'].values()), default=0)
         self.last_saved = None
         self.navigation = set()
+        # Queue ids in the monitor's latest snapshot, once read; pruning keeps every listed queue.
+        self.listed, self.pruned_at = None, 0
 
     def collect(self):
         now = time.time()
@@ -52,6 +56,7 @@ class Tracker:
             stamp = SETTINGS.stat().st_mtime
             if stamp != self.settings_stamp:
                 saved = json.loads(SETTINGS.read_text())
+                if not isinstance(saved, dict): raise ValueError('not a JSON object')
                 self.quiet = int(saved.get('quietMinutes', QUIET // 60)) * 60
                 self.scheduler = saved.get('scheduler', True) is not False
                 self.git_enabled = saved.get('git', True) is not False
@@ -92,10 +97,17 @@ class Tracker:
         consumed = []
         for path in sorted((self.root / 'events').glob('*.json'), key=lambda p: p.stat().st_mtime):
             try:
-                event = json.loads(path.read_text())
-                key = f'{event["provider"]}:{event["session"]}'
-                if event['provider'] not in ['claude', 'codex']: raise ValueError('Unknown hook provider')
-                kind = event['kind']
+                try:
+                    event = json.loads(path.read_text())
+                    key = f'{event["provider"]}:{event["session"]}'
+                    if event['provider'] not in ['claude', 'codex']: raise ValueError('Unknown hook provider')
+                    kind, _ = event['kind'], float(event['at'])
+                except (ValueError, KeyError, TypeError) as error:
+                    # Hooks write each file whole, so a malformed one stays malformed: report it once and drop it.
+                    print(f'Discarded hook event {path.name}: {type(error).__name__}: {error}', flush=True)
+                    warnings.append(f'Hook event discarded: {error}')
+                    consumed.append(path)
+                    continue
                 background = self.providers.backgrounds.get(event['session']) if event['provider'] == 'claude' else None
                 if kind == 'complete' and background:
                     background.read()
@@ -118,15 +130,16 @@ class Tracker:
             if self.scheduler_status != 'on': raise FileNotFoundError
             stamp = QUEUES.stat().st_mtime
             values = queue_snapshot(QUEUES) if stamp > self.queue_mtime else None
-            # An empty snapshot is not evidence that the listed queues ended.
+            # An empty snapshot is not evidence that the listed queues ended, but it is a fresh one.
             if values:
                 for value in values:
                     if (value['state'] not in ['COMPLETED', 'FAILED', 'KILLED'] or
                             value['started'] > self.ledger.data['since'] - 86400 or
                             value['id'] in self.ledger.data['queues']):
                         self.ledger.queue(value, stamp)
-                self.ledger.unlisted({value['id'] for value in values}, stamp)
-                self.queue_mtime = stamp
+                self.listed = {value['id'] for value in values}
+                self.ledger.unlisted(self.listed, stamp)
+            if values is not None: self.queue_mtime = stamp
         except FileNotFoundError:
             pass  # Reported below as a stale snapshot.
         except (OSError, ValueError) as error:
@@ -134,6 +147,7 @@ class Tracker:
         if self.scheduler_status == 'on' and now - self.queue_mtime > 120:
             warnings.append('Queue snapshot stale; start the parallel-workers monitor to refresh it')
         self.windows, self.rows, self.warnings = windows, rows, warnings
+        if now - self.pruned_at > PRUNE_EVERY: self.prune(now)
         snapshot = self.snapshot()
         atomic_json(self.root / 'snapshot.json', snapshot)
         serialized = json.dumps(self.ledger.data, sort_keys=True)
@@ -142,6 +156,23 @@ class Tracker:
             self.last_saved = serialized
         for path in consumed:
             path.unlink(missing_ok=True)
+
+    def prune(self, now):
+        """Drop what closed chats, gone windows and long-seen queues leave behind, keeping anything still in use."""
+        self.pruned_at = now
+        self.ledger.prune(now, self.listed, {row['key'] for row in self.rows})
+        for path in [*(self.root / 'windows').glob('*.json'), *(self.root / 'windows').glob('*.next')]:
+            with contextlib.suppress(OSError):
+                if now - path.stat().st_mtime > STALE_WINDOW: path.unlink()
+        # A return record outlives its window only while that window could come back.
+        returns = self.ledger.data.get('returns', {})
+        for id in list(returns):
+            pid = id.split(':', 1)[1] if ':' in id else None
+            gone = not Path(f'/proc/{pid}').exists() if pid else not (self.root / 'windows' / f'{id}.json').exists()
+            if id not in self.windows and gone: del returns[id]
+        for path in (self.root / 'wake').glob('*'):
+            with contextlib.suppress(OSError):
+                if now - path.stat().st_mtime > messages.KEEP: path.unlink()
 
     def snapshot(self):
         rows, now = [], time.time()
@@ -170,12 +201,15 @@ class Tracker:
             elif shown == 'waiting' and not pending: shown = 'finished'
             names = project_names(row['roots']) | {row['project']}
             matched = [projects[name] for name in names if name in projects]
+            pending = self.ledger.pending(row['key'], queues_at.get(row['key']))
             rows.append({**{k: v for k, v in row.items() if k != 'path'},
                          'state': shown,
                          'state_at': state['state_at'], 'turn': state['turn'],
                          'completed_at': state.get('completed_at',
                                                    state['state_at'] if state['state'] == 'finished' else 0),
-                         'unread': self.ledger.unread(row['key'], queues_at.get(row['key'])),
+                         'unread': list(pending),
+                         # When each reason arrived, for the longest-waiting order.
+                         'unread_at': pending,
                          'limited': state.get('limited'),
                          'queue_counts': {'done': sum(c['done'] for c in matched),
                                           'total': sum(c['total'] for c in matched)}})
@@ -203,7 +237,7 @@ class Tracker:
         try:
             summary = messages.summary(self.root, human)
             return {**summary, 'stranded': messages.stranded(summary['unread'], rows, self.root)}
-        except (OSError, sqlite3.Error) as error:
+        except (OSError, ValueError, sqlite3.Error) as error:
             self.warnings.append(f'Agent messages unreadable: {error}')
             return None
 
@@ -241,7 +275,7 @@ class Tracker:
         window = self.windows.get(window_id)
         if not window or window.get('kind'): raise ValueError('Not a VS Code window')
         if not window.get('scm'):
-            raise ValueError("This VS Code window's tracker bridge predates Source Control; reload the window")
+            raise ValueError("This VS Code window's Agent Bar bridge predates Source Control; reload the window")
         return await self.bridge(window_id, {'type': 'scm'})
 
     async def bridge(self, window_id, action):

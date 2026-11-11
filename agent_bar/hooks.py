@@ -44,7 +44,9 @@ def write(path, data, before):
         backup = path.with_name(f'{path.name}.before-agent-bar-{int(time.time())}')
         shutil.copy2(path, backup)
         print(f'Backup: {backup}')
-    atomic_json(path, data)
+    # A settings file linked from elsewhere, such as a dotfiles folder, is edited where it lives, indented as the
+    # tools write it.
+    atomic_json(path.resolve(), data, indent=2)
     return True
 
 
