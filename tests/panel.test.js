@@ -346,9 +346,10 @@ test('cluster totals count busy cores over cores for hosts in scope and flag unr
     assert.equal(`${all.slots} ${all.busy} ${all.cpu} ${all.memory} ${all.slotted} ${all.down.join(',')}`, '40 20 50 50 false b,down');
     assert.equal(f.context.clusterTotals(snapshot, 'workers').cpu, 50);
     assert.equal(f.context.clusterTotals({hosts: [host('x', 4, 25, {local: true})]}, 'workers').cpu, null);
-    // Job slots replace cores, and a host past its slots counts only as full.
-    const slotted = f.context.clusterTotals({hosts: [host('a', 10, 30, {slots: 6}), host('desk', 32, 50, {local: true, slots: 8})]});
+    // Job slots replace cores; the reserved cores take a host's load first, and a host past its slots counts only as full.
+    const slotted = f.context.clusterTotals({hosts: [host('a', 10, 70, {slots: 6}), host('desk', 32, 100, {local: true, slots: 8})]});
     assert.equal(`${slotted.slots} ${slotted.busy} ${slotted.cpu} ${slotted.slotted}`, '14 11 78.57142857142857 true');
+    assert.equal(f.context.clusterTotals({hosts: [host('desk', 32, 50, {local: true, slots: 8})]}).busy, 0);
     assert.equal([0, 1536, 5 * 1024 ** 3].map(f.context.bytes).join(','), '0 B,1.5 KB,5.0 GB');
 });
 

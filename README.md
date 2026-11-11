@@ -120,7 +120,8 @@ The Queues tab, the Q count and the cluster indicator read the files the paralle
 `~/.local/state/parallel-workers`. Without it they stay out of the way; **Settings › Integrations** turns them off
 entirely.
 
-The cluster indicator shows any of the cluster's CPU, memory and fullest disk. When a host is under memory pressure,
+The cluster indicator shows any of the cluster's CPU, memory and fullest disk. CPU counts the cores each host
+allots to jobs (its job slots); its other cores are reserved and take its load first. When a host is under memory pressure,
 has a drive nearly full, or is unreachable or without the shared mount, it adds a small sign for that kind of
 warning, amber or red when critical, with a count of any others. **Settings › Cluster** picks what it shows and the
 warning thresholds; with only warnings picked, it appears just when one fires. Its dropdown names each warning's

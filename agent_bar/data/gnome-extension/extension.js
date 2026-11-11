@@ -362,16 +362,18 @@ function bytes(value) {
     return `${value >= 10 || i === 0 ? Math.round(value) : value.toFixed(1)} ${units[i]}`;
 }
 
-// Busy cores over the job slots parallel-workers allows each host (its cores when the snapshot
-// gives none), and memory used over total, for reachable hosts in scope. A host counts at most its
-// slots busy, so work outside the cluster cannot fill it past full. `slotted` says every counted
-// host had slots; `down` names every host that is unreachable or has lost the shared mount.
+// Busy allotted cores over allotted cores, and memory used over total, for reachable hosts in scope. A host's
+// allotted cores are the job slots parallel-workers allows it (its cores when the snapshot gives none); the rest are
+// reserved, and take the host's load first, so only load beyond them keeps allotted cores busy, up to all of them.
+// `slotted` says every counted host had slots; `down` names every host that is unreachable or has lost the shared
+// mount.
 function clusterTotals(snapshot, scope = 'all') {
     const hosts = snapshot.hosts.filter(host => host.ok && host.cpu && (scope === 'all' || !host.local));
     const sum = value => hosts.reduce((n, host) => n + (value(host) || 0), 0);
     const limit = host => (Number.isInteger(host.slots) ? host.slots : host.cpu.cores);
     const slots = sum(limit);
-    const busy = sum(host => Math.min(limit(host), host.cpu.cores * host.cpu.busy_pct / 100));
+    const busy = sum(host => Math.min(limit(host),
+        Math.max(0, host.cpu.cores * host.cpu.busy_pct / 100 - (host.cpu.cores - limit(host)))));
     const memory = sum(host => host.memory?.total_bytes);
     return {slots, busy, cpu: slots ? 100 * busy / slots : null,
         slotted: hosts.length > 0 && hosts.every(host => Number.isInteger(host.slots)),
@@ -1090,7 +1092,8 @@ class Tracker {
                 + 'chat forward and clears it. They continue right of the middle when the left half is full; +2 more lists the rest.'
             : 'Review shortcuts are off (Settings › Top bar).');
         if (scheduler) row(top, [text('23%', 'tracker-muted'), text('64%', 'tracker-working'), text('94%', 'tracker-attention')],
-            'Cluster CPU: busy cores over the job slots each host allows, a host counting at most full. '
+            'Cluster CPU: busy cores over the cores allotted to jobs (each host\'s job slots). A host\'s other cores are '
+            + 'reserved and take its load first; only load beyond them counts, up to full. '
             + 'Gray under 50%, blue from 50%, amber from 90%. Settings › Cluster adds memory and the fullest disk.'
             + (this._cluster ? '' : ' Shown once the parallel-workers collector runs.'));
         if (scheduler) row(top, [this._glyph('disk', 0.92), this._glyph('memory'), this._glyph('down', null, 'failed'),
