@@ -990,54 +990,57 @@ class Tracker {
         this._bar = new St.BoxLayout({style_class: 'agent-bar'});
         this._labels = {};
         this._ratios = {};
-        for (const [key, style, initial] of [
-            ...Object.keys(PROVIDERS).map(provider => [provider, 'tracker-quiet', '… / …']),
-            ['working', 'tracker-working', '● …'], ['waiting', 'tracker-waiting', ''],
-            ['queues', 'tracker-muted', 'Q …'],
-        ]) {
-            const label = new St.Label({text: initial, style_class: style,
-                y_align: Clutter.ActorAlign.CENTER});
-            this._labels[key] = label;
-            if (key in PROVIDERS) {
-                const badge = new St.BoxLayout({style_class: 'tracker-provider-ratio', visible: PINNED.includes(key)});
-                badge.add_child(new St.Label({text: PROVIDERS[key][0],
-                    style_class: `tracker-${key}`, y_align: Clutter.ActorAlign.CENTER}));
-                badge.add_child(label);
-                this._ratios[key] = badge;
-                this._bar.add_child(badge);
-            } else {
-                if (key === 'working') {
-                    // What is left of each provider's weekly limit, after the chat counts.
-                    this._quota = new St.BoxLayout({style_class: 'tracker-quota-bar', visible: false, y_align: Clutter.ActorAlign.CENTER});
-                    this._bar.add_child(this._quota);
-                    this._bar.add_child(new St.Label({text: '│', style_class: 'tracker-bar-divider', y_align: Clutter.ActorAlign.CENTER}));
-                }
-                this._bar.add_child(label);
-            }
-        }
-        this._labels.waiting.visible = false;
-        // Chats whose agent mail waits for you to start a turn there; clicking it opens the dropdown on Messages.
-        this._mail = new St.BoxLayout({style_class: 'tracker-mail', reactive: true, visible: false, y_align: Clutter.ActorAlign.CENTER});
-        this._mail.add_child(this._glyph('mail'));
-        this._mailCount = new St.Label({style_class: 'tracker-attention', y_align: Clutter.ActorAlign.CENTER});
-        this._mail.add_child(this._mailCount);
-        this._bar.insert_child_above(this._mail, this._labels.waiting);
-        // Each part opens the dropdown on its tab. The press reaches the part before the button that opens the menu;
-        // an open menu's grab takes the press first and only closes it, as on any top-bar button.
-        const opens = (actor, tab) => {
+        // The top bar is a row of parts, each highlighted on its own and opening the dropdown on its tab, as separate
+        // top-bar buttons would: the chat counts, the limits left, working and waiting, agent mail, and queues.
+        this._parts = [];
+        const part = (actor, tab) => {
+            actor.add_style_class_name('agent-bar-part');
             actor.reactive = true;
+            actor.track_hover = true;
+            // The press reaches the part before the button that opens the menu; an open menu's grab takes the press
+            // first and only closes it, as on any top-bar button.
             actor.connect('button-press-event', () => {
                 this._openOn = tab;
                 return Clutter.EVENT_PROPAGATE;
             });
+            this._parts.push([actor, tab]);
+            this._bar.add_child(actor);
+            return actor;
         };
-        for (const badge of Object.values(this._ratios)) opens(badge, 'conversations');
-        opens(this._labels.working, 'conversations');
-        opens(this._labels.waiting, 'conversations');
-        opens(this._labels.queues, 'queues');
-        opens(this._mail, 'messages');
-        opens(this._quota, 'quota');
+        const label = (key, style, initial) => {
+            this._labels[key] = new St.Label({text: initial, style_class: style, y_align: Clutter.ActorAlign.CENTER});
+            return this._labels[key];
+        };
+        const chats = part(new St.BoxLayout({style_class: 'tracker-bar-chats', y_align: Clutter.ActorAlign.CENTER}), 'conversations');
+        for (const provider of Object.keys(PROVIDERS)) {
+            const badge = new St.BoxLayout({style_class: 'tracker-provider-ratio', visible: PINNED.includes(provider)});
+            const symbol = new St.Label({text: PROVIDERS[provider][0], style_class: `tracker-${provider}`, y_align: Clutter.ActorAlign.CENTER});
+            // Never shortened to an ellipsis when the top bar is crowded.
+            symbol.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+            badge.add_child(symbol);
+            badge.add_child(label(provider, 'tracker-quiet', '… / …'));
+            this._ratios[provider] = badge;
+            chats.add_child(badge);
+        }
+        // What is left of each provider's weekly limit, after the chat counts.
+        this._quota = part(new St.BoxLayout({style_class: 'tracker-quota-bar', visible: false, y_align: Clutter.ActorAlign.CENTER}), 'quota');
         this._tooltip(this._quota, () => quotaTooltip(this._snapshot?.usage));
+        this._bar.add_child(new St.Label({text: '│', style_class: 'tracker-bar-divider', y_align: Clutter.ActorAlign.CENTER}));
+        const states = part(new St.BoxLayout({style_class: 'tracker-bar-states', y_align: Clutter.ActorAlign.CENTER}), 'conversations');
+        states.add_child(label('working', 'tracker-working', '● …'));
+        states.add_child(label('waiting', 'tracker-waiting', ''));
+        this._labels.waiting.visible = false;
+        // Chats whose agent mail waits for you to start a turn there.
+        this._mail = part(new St.BoxLayout({style_class: 'tracker-mail', visible: false, y_align: Clutter.ActorAlign.CENTER}), 'messages');
+        this._mail.add_child(this._glyph('mail'));
+        this._mailCount = new St.Label({style_class: 'tracker-attention', y_align: Clutter.ActorAlign.CENTER});
+        this._mail.add_child(this._mailCount);
+        // Each part is a box around its labels: the labels keep the widths they have needed, and the part's padding
+        // must stay out of those.
+        this._queuePart = part(new St.BoxLayout({y_align: Clutter.ActorAlign.CENTER}), 'queues');
+        this._queuePart.add_child(label('queues', 'tracker-muted', 'Q …'));
+        // The button's own highlight gives way to its parts'.
+        this._button.add_style_class_name('agent-bar-button');
         this._button.add_child(this._bar);
         Main.panel.addToStatusArea('agent-bar', this._button, 2, 'left');
         this._nav = new PanelMenu.Button(0.0, 'Project windows');
@@ -1096,6 +1099,7 @@ class Tracker {
         this._button.menu.connect('open-state-changed', (_menu, open) => {
             const tab = this._openOn;
             this._openOn = null;
+            if (!open) this._markPart();
             if (open) {
                 // Each opening starts on a list, the last tab used unless settings say Conversations.
                 this._page = null;
@@ -1237,7 +1241,7 @@ class Tracker {
             if (this._setting('palette') === 'colorblind') actor.add_style_class_name('tracker-colorblind');
             else actor.remove_style_class_name('tracker-colorblind');
         }
-        this._labels.queues.visible = this._queuesShown(this._snapshot);
+        this._queuePart.visible = this._labels.queues.visible = this._queuesShown(this._snapshot);
         if (this._clusterButton) this._renderClusterBar();
         this._quickSignature = null;
         if (this._snapshot && !this._error) this._renderQuick(this._snapshot.rows);
@@ -2435,7 +2439,7 @@ class Tracker {
                 const stranded = snapshot.messages?.stranded || [];
                 this._mail.visible = stranded.length > 0;
                 this._mailCount.text = `${stranded.length}`;
-                this._labels.queues.visible = this._queuesShown(snapshot);
+                this._queuePart.visible = this._labels.queues.visible = this._queuesShown(snapshot);
                 this._labels.queues.text = `Q ${c.done} / ${c.queues}${Date.now() / 1000 - snapshot.queue_updated > 120 ? ' ?' : ''}`;
                 this._renderQuotaBar(snapshot.usage);
                 restyle(this._labels.queues, c.done ? 'color: #f1f3f5; font-weight: bold;' : 'color: #9ca3ad;');
@@ -2486,7 +2490,17 @@ class Tracker {
         return item;
     }
 
+    // While the dropdown is open, the top-bar part for the tab it shows stays highlighted.
+    _markPart() {
+        const open = this._button.menu.isOpen && !this._page;
+        for (const [actor, tab] of this._parts) {
+            if (open && tab === this._view && actor.visible) actor.add_style_class_name('agent-bar-part-open');
+            else actor.remove_style_class_name('agent-bar-part-open');
+        }
+    }
+
     _buildMenu() {
+        this._markPart();
         this._releaseFocus(this._button.menu);
         // removeAll() only drops menu items; the list body is a plain actor.
         this._body?.destroy();

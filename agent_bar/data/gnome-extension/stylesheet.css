@@ -1,4 +1,14 @@
-.agent-bar { spacing: 12px; }
+.agent-bar { spacing: 2px; }
+/* Each part of the top bar highlights alone, like the theme's own buttons; the button around them does not. */
+#panel .panel-button.agent-bar-button { -natural-hpadding: 0; -minimum-hpadding: 0; }
+#panel .panel-button.agent-bar-button:hover, #panel .panel-button.agent-bar-button:active, #panel .panel-button.agent-bar-button:checked,
+#panel .panel-button.agent-bar-button:focus, #panel .panel-button.agent-bar-button:overview { box-shadow: none; }
+.agent-bar-part { padding: 0 9px; border-radius: 99px; transition-duration: 150ms; }
+#panel .agent-bar-part:hover { background-color: rgba(242, 242, 242, 0.15); }
+#panel .agent-bar-part-open { background-color: rgba(242, 242, 242, 0.2); }
+#panel .agent-bar-part-open:hover { background-color: rgba(242, 242, 242, 0.25); }
+.tracker-bar-chats { spacing: 12px; }
+.tracker-bar-states { spacing: 10px; }
 .tracker-provider-ratio { spacing: 5px; }
 .tracker-bar-divider { color: #555c67; }
 /* Equal-width digits, so a count changing does not shift the rest of the top bar. */
@@ -231,7 +241,7 @@
 .tracker-copy-content { spacing: 5px; }
 
 /* Usage limits: the top bar's section and the Quota tab */
-.tracker-quota-bar { spacing: 8px; padding-left: 2px; }
+.tracker-quota-bar { spacing: 8px; }
 .tracker-quota-part { spacing: 3px; }
 .tracker-quota-muted { color: #c3cad4; }
 .tracker-quota-attention { color: #f4c36a; font-weight: bold; }
