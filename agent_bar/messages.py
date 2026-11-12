@@ -6,9 +6,7 @@ VS Code by a note queued with `codex queue`, which VS Code's Codex runs as a tur
 The loop guard bounds how much two agents can say to each other before either user writes again or resets it."""
 import json
 import os
-import shutil
 import sqlite3
-import subprocess
 import time
 from pathlib import Path
 
@@ -96,6 +94,9 @@ def wake_codex(key, root=ROOT):
 def codex_queue(thread, text):
     """Queue `text` for a Codex thread; the VS Code window that has it open runs it as a turn once any turn in
     progress ends."""
+    # Imported here: the week-long wake waiter loads this module and never queues for Codex.
+    import shutil
+    import subprocess
     codex = shutil.which('codex')
     if not codex: raise ValueError('no codex command to queue it with')
     command = [codex, 'queue', '--thread', thread, '--message', text]

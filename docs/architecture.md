@@ -63,7 +63,7 @@ state and unread reasons stay separate in the data.
 `python -m agent_bar.hook` is the metadata-only observer Claude Code and Codex run on lifecycle events. It records the
 event kind, session, time and folder, never prompt or tool text, and never blocks a turn. Its only output is a note
 about unread agent messages (`additionalContext` on `UserPromptSubmit`). For Claude, a second Stop hook,
-`python -m agent_bar.hook wait`, runs in the background (`asyncRewake`, two-hour timeout); with waking on, it exits 2
+`python -m agent_bar.hook wait`, runs in the background (`asyncRewake`, one-week timeout); with waking on, it exits 2
 once per new message, which Claude Code turns into a wake. `agent-bar install` adds both and removes hooks left by an
 earlier installation's interpreter.
 

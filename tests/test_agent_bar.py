@@ -4,6 +4,7 @@ import tempfile
 import unittest
 import unittest.mock
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -342,7 +343,7 @@ class TrackerTests(unittest.TestCase):
                 settings.write_text(json.dumps({'wake': True}))
                 self.assertEqual(messages.stranded(unread, rows, root), ['codex:c', 'claude:idle', 'claude:used'])
                 # A waiter past the hook's lifetime is gone, even if its pid is reused.
-                old = time.time() - 3 * 3600
+                old = time.time() - 8 * 86400
                 os.utime(messages.wake_files('claude:live', root)[2], (old, old))
                 self.assertEqual(messages.stranded(unread, rows, root), ['codex:c', 'claude:idle', 'claude:live', 'claude:used'])
 
@@ -370,8 +371,8 @@ class TrackerTests(unittest.TestCase):
             settings, calls = root / 'settings.json', []
             run = lambda command, **_: calls.append(command) or subprocess.CompletedProcess(command, 0, 'Queued', '')
             with unittest.mock.patch.object(messages, 'SETTINGS', settings), \
-                    unittest.mock.patch.object(messages.shutil, 'which', lambda name: '/bin/codex'), \
-                    unittest.mock.patch.object(messages.subprocess, 'run', run), \
+                    unittest.mock.patch.object(shutil, 'which', lambda name: '/bin/codex'), \
+                    unittest.mock.patch.object(subprocess, 'run', run), \
                     unittest.mock.patch.dict(os.environ, {'AGENT_BAR_STATE_DIR': str(root)}):
                 self.assertEqual(messages.send('claude:a', 'codex:v', 'one', root)['delivery'], 'at its next turn')
                 settings.write_text(json.dumps({'wake': True}))

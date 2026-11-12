@@ -69,7 +69,7 @@ const SETTINGS = [
         [[true, 'On'], [false, 'Off']]],
     ['Integrations', 'messages', 'Agent messages', 'Chats can message one open chat; it sees an unread count at its next turn start', true,
         [[true, 'On'], [false, 'Off']]],
-    ['Integrations', 'wake', 'Wake idle chats', 'A message starts a turn in an idle Claude Code chat (up to 2 h after its last turn), or in a Codex chat open in VS Code once any turn in progress ends', false,
+    ['Integrations', 'wake', 'Wake idle chats', 'A message starts a turn in an idle Claude Code chat (up to a week after its last turn), or in a Codex chat open in VS Code once any turn in progress ends', false,
         [[true, 'On'], [false, 'Off']]],
     ['Integrations', 'midturn', 'Messages to a busy Claude chat', 'With waking on, whether a message can arrive during its turn instead of right after it', 'after',
         [['after', 'After its turn'], ['urgent', 'Urgent mid-turn'], ['always', 'Mid-turn']]],
@@ -1257,7 +1257,7 @@ class Tracker {
             + 'or the shared drive unmounted. Red when critical; +1 counts the others. The dropdown names the hosts.');
         if (this._setting('messages')) row(top, [this._glyph('mail', null, 'attention'), text('2', 'tracker-attention')],
             'Messages from other agents wait in 2 chats until you start a turn there, with no wake-up coming: waking off, '
-            + 'a Claude chat idle over 2 h, or a Codex chat not open in VS Code. Clicking it opens Messages.');
+            + 'a Claude chat idle over a week, or a Codex chat not open in VS Code. Clicking it opens Messages.');
         row(top, [text('▾', 'tracker-nav-arrow'), ...dots(['attention', 'working', 'waiting', 'failed', 'finished'])],
             'Every VS Code window, terminal session, Codex app and Antigravity window, with a dot for its most urgent chat: '
             + 'needs review, working, waiting, failed, finished. Below them, a new VS Code window on the main display, and '
@@ -1328,7 +1328,7 @@ class Tracker {
             row(letters, [reset], 'When a pair reaches that limit, its header says so and how many sends were held back; the sending agent is told '
                 + 'to ask you. Reset limit allows another round without writing to either chat.');
             row(letters, [text(this._setting('wake') ? 'Wake: on' : 'Wake: off', 'tracker-detail')], 'With Settings › Integrations › Wake idle '
-                + 'chats on, a message starts a turn in an idle Claude Code chat (up to 2 h after its last turn), once per message, and in a Codex '
+                + 'chats on, a message starts a turn in an idle Claude Code chat (up to a week after its last turn), once per message, and in a Codex '
                 + 'chat open in VS Code, once any turn in progress ends.');
         }
 

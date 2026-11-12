@@ -10,7 +10,7 @@ import uuid
 import re
 from pathlib import Path
 
-WAIT = 7200 - 60  # Inside the installed hook's two-hour timeout.
+WAIT = 604800 - 60  # Inside the installed hook's one-week timeout.
 # How prompts no person typed begin: task and subagent notifications, Agent Bar's queued notes, Claude's messages
 # from its other sessions, and its own continuation. A person's prompt may quote these further in.
 AUTOMATIC = re.compile(r'\s*(?:<(?:task-notification|subagent_notification|system-reminder|agent-notification|agent-message)\b'
@@ -39,7 +39,7 @@ def record(item):
 
 def headless():
     """Whether this hook runs for a non-interactive Claude Code session (print mode or the Agent SDK). Such a
-    session waits for its background hooks before it exits, so a waiter would hold it open for two hours."""
+    session waits for its background hooks before it exits, so a waiter would hold it open for a week."""
     if os.environ.get('CLAUDE_CODE_ENTRYPOINT', '').startswith('sdk'): return True
     pid = os.getppid()
     try:

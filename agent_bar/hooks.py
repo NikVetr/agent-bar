@@ -29,8 +29,9 @@ def wanted(provider):
     hooks = [(event, matcher, {'type': 'command', 'command': observer, 'timeout': 3})
              for event, matcher in EVENTS[provider].items()]
     if provider == 'claude':
-        # Runs in the background after each turn and wakes the chat for a new agent message when waking is on.
-        hooks.append(('Stop', None, {'type': 'command', 'command': f'{base} wait', 'asyncRewake': True, 'timeout': 7200}))
+        # Runs in the background after each turn and wakes the chat for a new agent message when waking is on, for up
+        # to a week; exec leaves no shell waiting beside it.
+        hooks.append(('Stop', None, {'type': 'command', 'command': f'exec {base} wait', 'asyncRewake': True, 'timeout': 604800}))
     return hooks
 
 
