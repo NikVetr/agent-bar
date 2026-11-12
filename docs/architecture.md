@@ -104,7 +104,10 @@ shown, so the scheduler refuses one made meanwhile, and answers in JSON either w
 bounds and required fields itself, and holds a control as applied until a description read after the change arrives.
 
 The extension exports `io.github.nikvetr.AgentBar` at `/org/gnome/Shell/Extensions/AgentBar` on the session bus
-(`Inspect`, `Show`, `Hide`, `Activate`), sharing the panel's navigation code, for tests and automation.
+(`Inspect`, `Show`, `Hide`, `Activate`, `Reload`), sharing the panel's navigation code, for tests and automation.
+`agent-bar install` calls `Reload` after copying the extension: the running copy rereads the installed `extension.js`
+and stylesheet into GNOME Shell 42, which otherwise keeps an extension's first code until the next login, and keeps
+the running code if the new one fails to load or start.
 
 ## VS Code bridge
 

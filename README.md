@@ -81,8 +81,8 @@ Clicking the counts opens the dropdown, with these tabs:
   box, after any draft, for you to send. If Agent Bar cannot be sure the cursor is in that box (several Claude chats on
   show in the window, or a bridge from before this feature), it leaves the text on the clipboard instead.
 - **Queues**: job queues from parallel-workers, by project, with progress, ETA and failed jobs. A project's finished
-  queues count until a chat there starts a turn, or until you press Clear beside the project. **Controls** on a queue,
-  and under **Pool and hosts**, change what the scheduler offers there (see below).
+  queues count until a chat there starts a turn, or until you press Clear beside the project. **Adjust** on a queue,
+  and under **Pool and hosts**, changes what the scheduler offers there (see below).
 - **Git**: each repository holding an open project, with its branch, uncommitted files, and commits ahead of or
   behind its upstream (as of the last fetch; Agent Bar never fetches or takes git's lock). Clicking one opens VS
   Code's Source Control for it.
@@ -133,11 +133,12 @@ window forward. The shared drive's card names the host serving it and shows the 
 the drive's throughput and that host's network over the last 10 minutes.
 
 When parallel-workers' `pw-control` command is installed (on `PATH` or in `~/.local/bin`), the Queues tab also changes
-the scheduler. **Controls** opens what `pw-control describe` offers for a queue, the pool or a host, such as pausing a
-queue, its priority, worker cap and memory, a host's budget, or draining the pool; ones unavailable now say why.
-**Apply** sends one change through `pw-control apply`, with the value shown, so a change made meanwhile is refused.
-Irreversible ones, such as Drain, ask again before they go. A change shows once the collector next reads the
-scheduler, within about 30 s.
+the scheduler. **Adjust** opens what `pw-control describe` offers for a queue, the pool or a host: actions such as
+pausing a queue or draining the pool as buttons, and settings such as priority, worker cap, memory and a host's budget
+one to a row. Hovering a setting's ⓘ or a button says what it does, or why it is unavailable now. Edited settings go
+together with **Apply**, each through `pw-control apply` with the value shown, so one changed meanwhile is refused.
+Irreversible actions, such as Drain, ask first. A change shows once the collector next reads the scheduler, within
+about 30 s.
 
 ## Command line
 

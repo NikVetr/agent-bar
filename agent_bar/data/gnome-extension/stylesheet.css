@@ -71,24 +71,53 @@
 .tracker-window-control:hover { background-color: #455061; }
 .tracker-queue-row { padding: 10px 12px; border-top: 1px solid #3b414a; }
 .tracker-queue-earlier { opacity: 150; }
-.tracker-control-toggle { padding: 3px 9px; font-size: 12px; }
-.tracker-control { padding: 6px 12px 6px 28px; background-color: #22262c; }
-.tracker-control-box { spacing: 5px; }
+.tracker-control-toggle { padding: 3px 10px; font-size: 12px; }
+/* Scheduler controls, opened under a queue, the pool or a host. */
+.tracker-control { padding: 2px 12px 10px 24px; }
+.tracker-control-panel { width: 592px; spacing: 10px; padding: 12px 14px; border: 1px solid #3b414a; border-radius: 8px; background-color: #1d2126; }
+.tracker-control-fact { font-size: 11px; color: #b9c1cc; background-color: rgba(146, 156, 174, 0.12); padding: 3px 9px; border-radius: 10px; }
+.tracker-control-setting { spacing: 5px; }
 .tracker-control-line { spacing: 8px; }
-.tracker-control-field { padding-left: 12px; }
-.tracker-control-label { min-width: 140px; font-size: 12px; color: #d5dbe3; }
-.tracker-control-heading { font-weight: bold; }
-.tracker-control-help { color: #8f98a6; }
-/* Wrapped lines in a control get a set width, which the menu's 680 px leaves room for; otherwise they widen it. */
-.tracker-control-wrap { width: 580px; }
-.tracker-control-buttons { spacing: 4px; }
-.tracker-control-apply { background-color: #343a44; color: #eef2f7; padding: 4px 11px; }
-.tracker-control-apply:hover { background-color: #404957; }
-.tracker-control-choices { spacing: 4px; }
+.tracker-control-actions { spacing: 6px; }
+.tracker-control-name { spacing: 5px; min-width: 150px; }
+.tracker-control-label { font-size: 13px; color: #dfe4ea; }
+.tracker-control-label-off { color: #8f98a6; }
+.tracker-control-edited { color: #83bafa; }
+.tracker-control-sub { font-size: 11px; color: #a6afbd; }
+.tracker-control-value { font-size: 12px; }
+.tracker-control-reason { font-size: 11px; color: #8f98a6; font-style: italic; }
+.tracker-control-info { width: 12px; height: 12px; border: 1px solid #8f98a6; border-radius: 7px; color: #a6afbd;
+    font-size: 9px; font-weight: bold; }
+.tracker-control-info:hover, .tracker-control-info:focus { border-color: #eef2f7; color: #eef2f7; }
+.tracker-control-facts { spacing: 6px; }
+.tracker-control-note { font-size: 11px; color: #a7d797; }
+.tracker-control-question { font-size: 12px; color: #dfe4ea; }
+.tracker-control-wrap { width: 560px; }
+.tracker-control-action, .tracker-control-primary, .tracker-control-danger, .tracker-control-choice {
+    padding: 5px 12px; border-radius: 6px; font-size: 12px; }
+.tracker-control-action { background-color: #343a44; color: #eef2f7; }
+.tracker-control-action:hover, .tracker-control-action:focus { background-color: #404957; }
+.tracker-control-risky { color: #f2a49d; }
+.tracker-control-disabled, .tracker-control-disabled:hover { background-color: #262a30; color: #6f7884; }
+.tracker-control-primary { background-color: #3a6aa8; color: #ffffff; }
+.tracker-control-primary:hover, .tracker-control-primary:focus { background-color: #4a7cc0; }
+.tracker-control-danger { background-color: #9b3530; color: #ffffff; }
+.tracker-control-danger:hover, .tracker-control-danger:focus { background-color: #b2413b; }
+.tracker-control-choices { spacing: 2px; padding: 2px; border-radius: 7px; background-color: #262a30; }
+.tracker-control-choice { color: #b4bbc5; padding: 3px 10px; }
+.tracker-control-choice:checked { background-color: #404957; color: #f3f5f8; }
+.tracker-control-confirm { spacing: 8px; padding: 10px 12px; border-radius: 6px; background-color: rgba(186, 72, 67, 0.12); }
+.tracker-control-expander { padding: 2px 6px; border-radius: 4px; }
+.tracker-control-expander:hover, .tracker-control-expander:focus { background-color: #2c3138; }
+.tracker-control-more { spacing: 6px; padding: 2px 0 2px 24px; }
+.tracker-control-field { min-width: 132px; }
 .tracker-control-hosts { spacing: 4px; }
 .tracker-control-host { min-width: 44px; text-align: right; }
-.tracker-control-entry { margin: 0; padding: 3px 8px; width: 64px; font-size: 12px; }
-.tracker-control-text { width: 220px; }
+.tracker-control-entry { margin: 0; padding: 3px 8px; width: 64px; font-size: 12px; border-radius: 5px; }
+.tracker-control-text { width: 240px; }
+.tracker-control-footer { spacing: 6px; padding-top: 8px; border-top: 1px solid #343a44; }
+.tracker-tooltip { font-size: 12px; color: #eef2f7; background-color: #121519; border: 1px solid #4a515c; border-radius: 6px;
+    padding: 6px 9px; max-width: 360px; }
 .tracker-progress-line { spacing: 12px; }
 .tracker-progress { width: 180px; height: 8px; border-radius: 4px; background-color: #3a404a; }
 .tracker-progress-fill { height: 8px; border-radius: 4px; background-color: #a6afbd; }

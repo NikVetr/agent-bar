@@ -98,7 +98,12 @@ def install():
         if target.exists(): shutil.rmtree(target)
         shutil.copytree(EXTENSION, target)
         enabled = run(['gnome-extensions', 'enable', UUID], check=False).returncode == 0
-        print(f'GNOME Shell extension installed in {target}' + ('' if enabled else
+        # A running copy rereads the installed files itself; one from before that method needs a new login.
+        reloaded = enabled and shutil.which('gdbus') and run(
+            ['gdbus', 'call', '--session', '--dest', 'org.gnome.Shell', '--object-path', '/org/gnome/Shell/Extensions/AgentBar',
+             '--method', 'io.github.nikvetr.AgentBar.Reload'], check=False).returncode == 0
+        print(f'GNOME Shell extension installed in {target}' + ('; the running top bar reloaded it' if reloaded
+              else '' if enabled else
               '; log out and back in (or press Alt+F2, type r, Enter on X11) so GNOME Shell finds it, then run agent-bar install again'))
     else:
         print('GNOME Shell not found: the service and CLI work, but there is no top bar on this desktop yet')

@@ -606,3 +606,31 @@ test('an applied control sends what was shown as expected, and a refusal comes b
     assert.deepEqual(JSON.parse(JSON.stringify(await f.tracker._applyControl({kind: 'pool', id: 'pool-1'}, control, null))),
         {ok: false, error: {code: 'failed', message: 'pw-control is not installed'}});
 });
+
+test('scheduler controls lay out as actions or settings, and only a real change counts as one', () => {
+    const f = fixture();
+    const {controlIsAction, groupFields, controlChange} = f.context;
+    const integer = name => ({name, label: name, kind: 'integer', min: 0, max: null, value: 1, enabled: true});
+    const text = name => ({name, label: name, kind: 'text', value: null, enabled: true});
+    assert.equal(controlIsAction({kind: 'action'}), true);
+    assert.equal(controlIsAction({kind: 'group', fields: [text('reason')]}), true);
+    assert.equal(controlIsAction({kind: 'group', fields: [integer('a'), text('b')]}), false);
+    const names = control => groupFields(control).map(part => part.map(field => field.name).join(',')).join(' | ');
+    assert.equal(names({kind: 'group', fields: [integer('cpu'), integer('memory')]}), 'cpu,memory | ');
+    assert.equal(names({kind: 'group', fields: [integer('floor'), integer('jobs'), integer('seconds')]}), 'floor | jobs,seconds');
+    assert.equal(names({kind: 'group', fields: [integer('default'), {name: 'hosts', kind: 'host-map'}]}), 'default | hosts');
+    assert.equal(names(integer('cap')), 'cap | ');
+    // Host overrides typed in another order than the scheduler lists them are the same value.
+    const priority = {name: 'priority', label: 'Priority', kind: 'group', value: {default: 90, hosts: {desktop: 'off', mba: 'off'}},
+        fields: [{...integer('default'), value: 90}, {name: 'hosts', label: 'Per host', kind: 'host-map', hosts: ['mba', 'mm1', 'desktop'],
+            min: null, max: null, value: {desktop: 'off', mba: 'off'}}]};
+    assert.equal(controlChange(priority, {default: '90', hosts: {mba: 'off', mm1: '', desktop: 'off'}}).changed, false);
+    assert.equal(controlChange(priority, {default: '91', hosts: {mba: 'off', mm1: '', desktop: 'off'}}).changed, true);
+    assert.match(controlChange(priority, {default: 'x', hosts: {}}).error, /whole number/);
+});
+
+test('fact chips wrap into lines that fit the panel', () => {
+    const f = fixture();
+    const lines = f.context.chipLines(['a'.repeat(30), 'b'.repeat(30), 'c'.repeat(30), 'd'], 70);
+    assert.equal(lines.map(line => line.map(t => t[0]).join('')).join(' '), 'ab cd');
+});

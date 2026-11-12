@@ -11,7 +11,9 @@ const INTERFACE = `<node><interface name="io.github.nikvetr.AgentBar">
 <method name="Inspect"><arg type="s" direction="out"/></method>
 <method name="Show"/><method name="Hide"/>
 <method name="Activate"><arg type="s" direction="in"/><arg type="s" direction="in"/><arg type="s" direction="out"/></method>
+<method name="Reload"/>
 </interface></node>`;
+const UUID = 'agent-bar@nikvetr.github.io';
 const EMPTY = 'Empty window';  // The bridge's workspace name for a window without a folder.
 const CONFIG = GLib.build_filenamev([GLib.get_home_dir(), '.config/agent-bar/settings.json']);
 // Written by the parallel-workers collector; the panel never contacts cluster hosts itself.
@@ -817,6 +819,45 @@ function controlSummary(control) {
     return one(control.value);
 }
 
+// A control laid out as an action (a button, perhaps asking for a note first) rather than a row of inputs: an action,
+// or a group of text fields only, such as a reason to record.
+function controlIsAction(control) {
+    return control.kind === 'action' || control.kind === 'group' && control.fields.every(field => field.kind === 'text');
+}
+
+// A setting's fields shown on its row, and the ones folded under it: all of one or two whole numbers or choices,
+// otherwise the first.
+function groupFields(control) {
+    if (control.kind !== 'group') return [[control], []];
+    const short = control.fields.length <= 2 && control.fields.every(field => ['integer', 'choice'].includes(field.kind));
+    const shown = short ? control.fields.length : 1;
+    return [control.fields.slice(0, shown), control.fields.slice(shown)];
+}
+
+// Facts split into lines of chips that fit a control panel, judged by their length in characters.
+function chipLines(texts, room = 96) {
+    const lines = [];
+    for (const text of texts) {
+        const line = lines.at(-1);
+        if (line && line.reduce((n, t) => n + t.length + 4, 0) + text.length <= room) line.push(text);
+        else lines.push([text]);
+    }
+    return lines;
+}
+
+// A value as text with object keys sorted, so equal values compare equal.
+function controlKey(value) {
+    const sorted = v => v && typeof v === 'object' && !Array.isArray(v)
+        ? Object.fromEntries(Object.keys(v).sort().map(key => [key, sorted(v[key])])) : v;
+    return JSON.stringify(sorted(value ?? null));
+}
+
+// What `typed` would send for a control: {value, changed}, or {error}.
+function controlChange(control, typed) {
+    const result = controlValue(control, typed);
+    return result.error ? result : {value: result.value, changed: controlKey(result.value) !== controlKey(control.value)};
+}
+
 // The apply request for one change. `expect` carries what the user saw, so a change made meanwhile is refused.
 function controlRequest(target, control, value, poolId, requestId) {
     return {protocol: CONTROL_PROTOCOL, request_id: requestId, source: 'agent-bar', target, control: control.name, value,
@@ -861,6 +902,9 @@ class Tracker {
         this._openControls = new Set();
         this._controlInputs = new Map();
         this._controlApplied = new Map();
+        // Refusals shown beside their control, and settings whose other fields are unfolded.
+        this._controlErrors = new Map();
+        this._controlFolds = new Set();
         // History folders start collapsed the first time they appear.
         this._historySeen = new Set();
         this._view = 'conversations';
@@ -995,6 +1039,13 @@ class Tracker {
                         borrowed: this._borrowed.get(w.id)};
                 })}),
             Show: () => this._button.menu.open(), Hide: () => this._button.menu.close(),
+            // After `agent-bar install`: the installed code and stylesheet replace these, once this call has answered.
+            Reload: () => {
+                GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+                    reloadInstalled();
+                    return GLib.SOURCE_REMOVE;
+                });
+            },
             ActivateAsync: ([key, window], invocation) => {
                 const row = this._snapshot?.rows.find(r => r.key === key && r.window === window);
                 const action = row ? this._activate(row, this._snapshot) : Promise.resolve({ok: false, error: 'Conversation is not open'});
@@ -1303,10 +1354,11 @@ class Tracker {
             'A project\'s queues finished / outstanding since its last turn. A new turn there, from either provider, drops queues that already finished; other filters show those dimmed.');
         row(queues, [text('Clear', 'tracker-filter')],
             'Beside a project with finished queues: drops them as a new turn there would; running ones stay.');
-        row(queues, [text('Controls', 'tracker-filter')],
-            'On a queue, the pool or a host the scheduler can still change: what it offers (pause, priority, worker cap, memory, '
-            + 'host budgets, drain), described by parallel-workers\' pw-control. Apply sends one change with the value shown; '
-            + 'a change made meanwhile is refused. Irreversible ones ask again. Applied changes show within about 30 s.');
+        row(queues, [text('Adjust', 'tracker-filter')],
+            'On a queue, the pool or a host the scheduler can still change: what parallel-workers\' pw-control offers there, '
+            + 'such as pausing, priority, worker cap, memory, host budgets and drain. Hover a name\'s ⓘ or a button for what it does, '
+            + 'or why it is unavailable now. Edited settings turn blue and go together with Apply, each with the value shown, '
+            + 'so one changed meanwhile is refused; irreversible actions ask first. Applied changes show within about 30 s.');
 
         const cluster = card('Cluster dropdown');
         row(cluster, dots(['finished', 'attention', 'failed']),
@@ -2818,7 +2870,7 @@ class Tracker {
                 const entity = controlled.get(queue.id);
                 const editor = new PopupMenu.PopupMenuSection();
                 if (entity) {
-                    line.add_child(this._controlsToggle(`queue:${entity.id}`, queue.label, editor,
+                    line.add_child(this._controlsToggle(`queue:${entity.id}`, queue.label, entity, editor,
                         section => this._fillControls(section, {kind: 'queue', id: entity.id}, entity, true)));
                 }
                 line.add_child(new St.Label({text: queue.state, style_class: `tracker-chip tracker-chip-${stateStyle(queue.state)}`}));
@@ -2864,16 +2916,17 @@ class Tracker {
         line.add_child(facts);
         const editor = new PopupMenu.PopupMenuSection();
         if (entity.controls?.length)
-            line.add_child(this._controlsToggle(`${target.kind}:${target.id}`, title, editor, section => this._fillControls(section, target, entity, false)));
+            line.add_child(this._controlsToggle(`${target.kind}:${target.id}`, title, entity, editor, section => this._fillControls(section, target, entity, false)));
         item.add_child(line);
         body.addMenuItem(item);
         if (entity.controls?.length) body.addMenuItem(editor);
     }
 
     // A button that opens or closes an entity's controls in `editor`, filled the first time it opens.
-    _controlsToggle(key, name, editor, fill) {
-        const button = new St.Button({label: 'Controls', can_focus: true, toggle_mode: true, y_align: Clutter.ActorAlign.CENTER,
-            style_class: 'tracker-filter tracker-control-toggle', accessible_name: `Scheduler controls for ${name}`});
+    _controlsToggle(key, name, entity, editor, fill) {
+        const button = new St.Button({label: 'Adjust', can_focus: true, toggle_mode: true, y_align: Clutter.ActorAlign.CENTER,
+            style_class: 'tracker-filter tracker-control-toggle', accessible_name: `Adjust ${name} in the scheduler`});
+        this._tooltip(button, `Change in the scheduler: ${entity.controls.map(control => control.label).join(', ')}`);
         const show = () => {
             const open = this._openControls.has(key);
             button.set_checked(open);
@@ -2892,155 +2945,351 @@ class Tracker {
         return button;
     }
 
-    _fillControls(editor, target, entity, facts) {
-        if (facts && entity.facts?.length) {
-            const item = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
-            item._ornamentLabel?.hide();
-            item.add_style_class_name('tracker-control');
-            const label = new St.Label({text: entity.facts.map(fact => `${fact.label} ${fact.value}`).join(' · '),
-                style_class: 'tracker-detail tracker-control-wrap'});
-            label.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
-            label.clutter_text.line_wrap = true;
-            item.add_child(label);
-            editor.addMenuItem(item);
-        }
-        for (const control of entity.controls) editor.addMenuItem(this._controlItem(target, control));
+    // Hovering or focusing `actor` shows `text` in a small box under it after a moment.
+    _tooltip(actor, text) {
+        if (!text) return actor;
+        actor.reactive = true;
+        actor.track_hover = true;
+        let tip = null, timer = 0;
+        const hide = () => {
+            if (timer) GLib.source_remove(timer);
+            timer = 0;
+            tip?.destroy();
+            tip = null;
+        };
+        const show = () => {
+            if (tip || timer) return;
+            timer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 350, () => {
+                timer = 0;
+                if (!actor.mapped || !(actor.hover || actor.has_key_focus())) return GLib.SOURCE_REMOVE;
+                tip = new St.Label({text, style_class: 'tracker-tooltip'});
+                tip.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+                tip.clutter_text.line_wrap = true;
+                Main.layoutManager.uiGroup.add_child(tip);
+                const [x, y] = actor.get_transformed_position();
+                const [, height] = actor.get_transformed_size();
+                const [, tipWidth] = tip.get_preferred_width(-1);
+                const [, tipHeight] = tip.get_preferred_height(tipWidth);
+                const monitor = Main.layoutManager.findMonitorForActor(actor) || Main.layoutManager.primaryMonitor;
+                const left = Math.min(Math.max(x, monitor.x + 8), monitor.x + monitor.width - tipWidth - 8);
+                const top = y + height + tipHeight + 6 > monitor.y + monitor.height ? y - tipHeight - 6 : y + height + 6;
+                tip.set_position(Math.round(left), Math.round(top));
+                return GLib.SOURCE_REMOVE;
+            });
+        };
+        actor.connect('notify::hover', () => (actor.hover ? show() : hide()));
+        actor.connect('key-focus-in', show);
+        actor.connect('key-focus-out', hide);
+        actor.connect('notify::mapped', () => actor.mapped || hide());
+        actor.connect('destroy', hide);
+        return actor;
     }
 
-    // One control: its inputs and button; or, while it is unavailable or a change to it has yet to show, its value
-    // and why. An irreversible one asks again, with the scheduler's own question, before it applies.
-    _controlItem(target, control) {
-        const key = `${target.kind}:${target.id}:${control.name}`;
+    // A small circled i, drawn like the header's ?, whose tooltip is `text`.
+    _helpIcon(text) {
+        const mark = new St.Bin({style_class: 'tracker-control-info', y_align: Clutter.ActorAlign.CENTER, can_focus: true,
+            accessible_name: text, child: new St.Label({text: 'i', x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER})});
+        return this._tooltip(mark, text);
+    }
+
+    // An entity's controls, opened under its row: its facts as chips, its actions as a row of buttons, and its settings
+    // one to a row with their help behind ⓘ. Edited settings collect into one Apply; irreversible actions ask first.
+    _fillControls(editor, target, entity, facts) {
         const item = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
         item._ornamentLabel?.hide();
         item.add_style_class_name('tracker-control');
-        const box = new St.BoxLayout({vertical: true, x_expand: true, style_class: 'tracker-control-box'});
-        item.add_child(box);
-        const label = (text, style) => new St.Label({text, style_class: style, y_align: Clutter.ActorAlign.CENTER});
-        const wrapped = (text, style) => {
-            const result = label(text, `${style} tracker-control-wrap`);
-            result.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
-            result.clutter_text.line_wrap = true;
-            return result;
+        const panel = new St.BoxLayout({vertical: true, style_class: 'tracker-control-panel'});
+        item.add_child(panel);
+        editor.addMenuItem(item);
+        // Redrawn in place after a change or Revert; what was typed is kept by control.
+        const rebuild = () => {
+            this._releaseFocus(this._button.menu, editor.actor);
+            editor.removeAll();
+            this._fillControls(editor, target, entity, facts);
         };
-        const head = new St.BoxLayout({style_class: 'tracker-control-line'});
-        box.add_child(head);
+        if (facts && entity.facts?.length) {
+            const chips = new St.BoxLayout({vertical: true, style_class: 'tracker-control-facts'});
+            for (const line of chipLines(entity.facts.map(fact => `${fact.label}: ${fact.value}`))) {
+                const row = new St.BoxLayout({style_class: 'tracker-control-actions'});
+                for (const text of line) row.add_child(new St.Label({text, style_class: 'tracker-control-fact'}));
+                chips.add_child(row);
+            }
+            panel.add_child(chips);
+        }
+        const actions = entity.controls.filter(controlIsAction);
+        if (actions.length) panel.add_child(this._controlActions(target, actions, rebuild));
+        let update = () => {};
+        const rows = entity.controls.filter(control => !controlIsAction(control))
+            .map(control => this._settingRow(target, control, () => update()));
+        for (const row of rows) panel.add_child(row.actor);
+        if (!rows.some(row => row.editable)) return;
+        const footer = new St.BoxLayout({style_class: 'tracker-control-footer'});
+        const summary = new St.Label({x_expand: true, style_class: 'tracker-detail', y_align: Clutter.ActorAlign.CENTER});
+        summary.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+        const button = (label, style, name) => new St.Button({label, can_focus: true, style_class: style, accessible_name: name,
+            y_align: Clutter.ActorAlign.CENTER});
+        const revert = button('Revert', 'tracker-control-action', 'Put back the values the scheduler shows');
+        const apply = button('Apply', 'tracker-control-primary', 'Send the changed settings to the scheduler');
+        footer.add_child(summary);
+        footer.add_child(revert);
+        footer.add_child(apply);
+        panel.add_child(footer);
+        const enable = (actor, on) => {
+            actor.reactive = on;
+            actor.opacity = on ? 255 : 110;
+        };
+        update = () => {
+            const states = rows.map(row => row.state());
+            const changed = states.filter(state => state.changed).length;
+            const invalid = states.find(state => state.error);
+            footer.visible = changed > 0 || !!invalid;
+            summary.text = invalid ? invalid.error : `${changed} setting${changed === 1 ? '' : 's'} changed`;
+            summary.style_class = invalid ? 'tracker-warning' : 'tracker-detail';
+            apply.label = changed > 1 ? `Apply ${changed} changes` : 'Apply';
+            enable(apply, !invalid && changed > 0);
+        };
+        revert.connect('clicked', () => {
+            for (const control of entity.controls) this._controlInputs.delete(`${target.kind}:${target.id}:${control.name}`);
+            rebuild();
+        });
+        apply.connect('clicked', async () => {
+            enable(apply, false);
+            enable(revert, false);
+            summary.text = 'Applying…';
+            // One request per setting, in order; each keeps its own result.
+            for (const row of rows) if (row.state().changed) await row.apply();
+            if (this._enabled) rebuild();
+        });
+        update();
+    }
+
+    // The values a change is sent with, and whether it went: success holds the control until the scheduler shows it;
+    // a refusal stays beside the control until it is edited or sent again.
+    async _sendControl(target, control, value) {
+        const key = `${target.kind}:${target.id}:${control.name}`;
+        const answer = await this._applyControl(target, control, value);
+        if (answer.ok) {
+            this._controlApplied.set(key, {at: Date.now() / 1000, message: answer.message});
+            this._controlInputs.delete(key);
+            this._controlErrors.delete(key);
+        } else {
+            const error = answer.error || {};
+            const message = error.message || 'The scheduler refused the change';
+            this._controlErrors.set(key, message[0].toUpperCase() + message.slice(1)
+                + (error.code === 'conflict' ? '. It changed since this was shown; the values here update within about 30 s.'
+                    : error.retryable ? '. Try again shortly.' : ''));
+        }
+        return answer;
+    }
+
+    // Whether a change to this control was applied and the description read since does not show it yet.
+    _controlWaiting(key) {
         const applied = this._controlApplied.get(key);
         if (applied && (this._controls?.as_of ?? 0) >= applied.at) this._controlApplied.delete(key);
-        const waiting = this._controlApplied.get(key);
-        const note = text => `Applied${text ? `: ${text}` : ''}. Shown here once the scheduler's next state arrives, within about 30 s.`;
+        return this._controlApplied.get(key) || null;
+    }
+
+    // Action buttons in one row; one that is irreversible, or needs a note, opens a confirmation under the row first.
+    _controlActions(target, controls, rebuild) {
+        const box = new St.BoxLayout({vertical: true, style_class: 'tracker-control-setting'});
+        const line = new St.BoxLayout({style_class: 'tracker-control-actions'});
+        box.add_child(line);
+        const confirm = new St.BoxLayout({vertical: true, style_class: 'tracker-control-confirm', visible: false});
+        box.add_child(confirm);
+        const notes = new St.BoxLayout({vertical: true});
+        box.add_child(notes);
+        const note = (text, style) => {
+            const label = new St.Label({text, style_class: `${style} tracker-control-wrap`});
+            label.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+            label.clutter_text.line_wrap = true;
+            notes.add_child(label);
+            return label;
+        };
+        const run = async (control, value) => {
+            notes.destroy_all_children();
+            note(`${control.label}: applying…`, 'tracker-control-note');
+            await this._sendControl(target, control, value);
+            if (this._enabled) rebuild();
+        };
+        for (const control of controls) {
+            const key = `${target.kind}:${target.id}:${control.name}`;
+            const waiting = this._controlWaiting(key);
+            const usable = control.enabled && !waiting;
+            const danger = control.danger === 'irreversible';
+            const button = new St.Button({label: control.label, can_focus: true, accessible_name: control.label,
+                style_class: `tracker-control-action${danger ? ' tracker-control-risky' : ''}${usable ? '' : ' tracker-control-disabled'}`});
+            this._tooltip(button, !control.enabled ? `Not now: ${control.disabled_reason || 'unavailable'}`
+                : waiting ? 'Applied; shown here once the scheduler next reports, within about 30 s' : control.help);
+            line.add_child(button);
+            if (waiting) this._tooltip(note(`✓ ${control.label} applied; shown here once the scheduler next reports, within about 30 s.`,
+                'tracker-control-note'), waiting.message);
+            const error = this._controlErrors.get(key);
+            if (error) note(`${control.label}: ${error}`, 'tracker-warning');
+            if (!usable) continue;
+            button.connect('clicked', () => {
+                if (control.kind === 'action' && !danger) {
+                    run(control, null);
+                    return;
+                }
+                // Ask: the scheduler's question, any note it records, then Cancel or go ahead.
+                confirm.destroy_all_children();
+                confirm.show();
+                const question = new St.Label({text: control.confirm || control.help || `${control.label}?`,
+                    style_class: `tracker-control-question tracker-control-wrap${danger ? ' tracker-attention' : ''}`});
+                question.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+                question.clutter_text.line_wrap = true;
+                confirm.add_child(question);
+                const typed = {value: controlTyped(control)};
+                for (const field of control.kind === 'group' ? control.fields : []) {
+                    const row = new St.BoxLayout({style_class: 'tracker-control-line'});
+                    row.add_child(new St.Label({text: field.label, style_class: 'tracker-control-sub', y_align: Clutter.ActorAlign.CENTER}));
+                    row.add_child(this._controlInput(field, typed.value, field.name, () => {}));
+                    confirm.add_child(row);
+                }
+                const buttons = new St.BoxLayout({style_class: 'tracker-control-actions', x_align: Clutter.ActorAlign.END});
+                const cancel = new St.Button({label: 'Cancel', can_focus: true, style_class: 'tracker-control-action'});
+                const go = new St.Button({label: control.label, can_focus: true, accessible_name: `${control.label}, confirmed`,
+                    style_class: danger ? 'tracker-control-danger' : 'tracker-control-primary'});
+                buttons.add_child(cancel);
+                buttons.add_child(go);
+                confirm.add_child(buttons);
+                cancel.connect('clicked', () => {
+                    this._releaseFocus(this._button.menu, confirm);
+                    confirm.destroy_all_children();
+                    confirm.hide();
+                });
+                go.connect('clicked', () => {
+                    const result = controlValue(control, typed.value);
+                    if (result.error) {
+                        notes.destroy_all_children();
+                        note(result.error, 'tracker-warning');
+                        return;
+                    }
+                    run(control, result.value);
+                });
+                global.stage.set_key_focus(cancel);
+            });
+        }
+        return box;
+    }
+
+    // One setting: its name (help behind ⓘ), its first inputs on the row, any others folded under it. Returns its
+    // actor, whether it can be edited now, its state ({changed, value} or {error}) and how to send it.
+    _settingRow(target, control, onChange) {
+        const key = `${target.kind}:${target.id}:${control.name}`;
+        const actor = new St.BoxLayout({vertical: true, style_class: 'tracker-control-setting'});
+        const line = new St.BoxLayout({style_class: 'tracker-control-line'});
+        actor.add_child(line);
+        const name = new St.BoxLayout({style_class: 'tracker-control-name', y_align: Clutter.ActorAlign.CENTER});
+        const title = new St.Label({text: control.label, style_class: 'tracker-control-label', y_align: Clutter.ActorAlign.CENTER});
+        name.add_child(title);
+        const help = [control.help, control.effect === 'next-job' ? 'Applies to jobs that start afterwards.' : null].filter(Boolean).join(' ');
+        if (help) name.add_child(this._helpIcon(help));
+        line.add_child(name);
+        const label = (text, style) => {
+            const result = new St.Label({text, style_class: style, y_align: Clutter.ActorAlign.CENTER});
+            result.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+            return result;
+        };
+        const note = (text, style) => {
+            const result = new St.Label({text, style_class: `${style} tracker-control-wrap`});
+            result.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+            result.clutter_text.line_wrap = true;
+            actor.add_child(result);
+            return result;
+        };
+        const waiting = this._controlWaiting(key);
+        const fixed = {actor, editable: false, state: () => ({changed: false}), apply: async () => {}};
         if (!control.enabled || waiting) {
-            head.add_child(label(control.label, 'tracker-control-label'));
-            const summary = new St.Label({text: controlSummary(control), x_expand: true, style_class: 'tracker-detail', y_align: Clutter.ActorAlign.CENTER});
-            summary.clutter_text.ellipsize = Pango.EllipsizeMode.END;
-            head.add_child(summary);
-            box.add_child(wrapped(waiting ? note(waiting.message) : control.disabled_reason || 'Unavailable now', 'tracker-detail tracker-control-help'));
-            return item;
+            title.add_style_class_name('tracker-control-label-off');
+            const value = label(controlSummary(control), 'tracker-detail tracker-control-value');
+            value.x_expand = true;
+            line.add_child(value);
+            if (waiting) this._tooltip(note(`✓ Applied; shown here once the scheduler next reports, within about 30 s.`, 'tracker-control-note'),
+                waiting.message);
+            else line.add_child(this._tooltip(label(`Not now: ${control.disabled_reason || 'unavailable'}`, 'tracker-control-reason'),
+                control.disabled_reason));
+            return fixed;
         }
         // What was typed survives the list redrawing, until the value it was typed over changes.
-        const base = JSON.stringify(control.value);
+        const base = controlKey(control.value);
         let saved = this._controlInputs.get(key);
         if (!saved || saved.base !== base) {
             saved = {base, typed: {value: controlTyped(control)}};
             this._controlInputs.set(key, saved);
         }
         const typed = saved.typed;
-        const verb = control.kind === 'action' ? control.label : 'Apply';
-        const button = new St.Button({label: verb, can_focus: true, y_align: Clutter.ActorAlign.CENTER,
-            style_class: 'tracker-filter tracker-control-apply', accessible_name: `${verb} ${control.kind === 'action' ? '' : control.label}`.trim()});
-        const cancel = new St.Button({label: 'Cancel', can_focus: true, visible: false, y_align: Clutter.ActorAlign.CENTER,
-            style_class: 'tracker-filter', accessible_name: `Do not ${control.label.toLowerCase()}`});
-        const buttons = new St.BoxLayout({style_class: 'tracker-control-buttons', y_align: Clutter.ActorAlign.CENTER});
-        buttons.add_child(button);
-        buttons.add_child(cancel);
-        const fill = () => new St.Widget({x_expand: true});
-        if (control.kind === 'action') {
-            head.add_child(buttons);
-        } else if (control.kind === 'group') {
-            head.add_child(label(control.label, 'tracker-control-label tracker-control-heading'));
-            head.add_child(fill());
-            head.add_child(buttons);
-            for (const field of control.fields) {
-                const line = new St.BoxLayout({style_class: 'tracker-control-line tracker-control-field'});
-                line.add_child(label(field.label, 'tracker-control-label'));
-                line.add_child(field.enabled ? this._controlInput(field, typed.value, field.name)
-                    : label(`${controlSummary(field)} · ${field.disabled_reason || 'unavailable'}`, 'tracker-detail'));
-                if (field.unit && field.enabled && field.kind !== 'host-map') line.add_child(label(field.unit, 'tracker-detail'));
-                box.add_child(line);
+        const state = () => controlChange(control, typed.value);
+        const changed = () => {
+            this._controlErrors.delete(key);
+            if (state().changed) title.add_style_class_name('tracker-control-edited');
+            else title.remove_style_class_name('tracker-control-edited');
+            onChange();
+        };
+        const [shown, more] = groupFields(control);
+        const field = (part, into) => {
+            const [holder, name] = control.kind === 'group' ? [typed.value, part.name] : [typed, 'value'];
+            if (!part.enabled) {
+                into.add_child(label(`${controlSummary(part)} · ${part.disabled_reason || 'unavailable'}`, 'tracker-detail'));
+                return;
             }
-        } else {
-            head.add_child(label(control.label, 'tracker-control-label'));
-            head.add_child(this._controlInput(control, typed, 'value'));
-            if (control.unit && control.kind !== 'host-map') head.add_child(label(control.unit, 'tracker-detail'));
-            head.add_child(fill());
-            head.add_child(buttons);
-        }
-        if (control.help) box.add_child(wrapped(control.help, 'tracker-detail tracker-control-help'));
-        const status = wrapped('', 'tracker-detail');
-        status.hide();
-        box.add_child(status);
-        const show = (text, style = 'tracker-detail') => {
-            status.text = text;
-            status.style_class = `${style} tracker-control-wrap`;
-            status.visible = !!text;
+            into.add_child(this._controlInput(part, holder, name, changed));
+            if (part.unit && part.kind !== 'host-map') into.add_child(label(part.unit, 'tracker-control-sub'));
         };
-        let armed = false;
-        const disarm = () => {
-            armed = false;
-            button.label = verb;
-            cancel.hide();
-        };
-        cancel.connect('clicked', () => {
-            disarm();
-            show('');
+        shown.forEach(part => {
+            if (control.kind === 'group' && shown.length > 1) line.add_child(label(part.label, 'tracker-control-sub'));
+            field(part, line);
         });
-        button.connect('clicked', async () => {
-            const result = controlValue(control, typed.value);
-            if (result.error) {
-                show(result.error, 'tracker-warning');
-                return;
-            }
-            if (control.danger === 'irreversible' && !armed) {
-                armed = true;
-                button.label = 'Confirm';
-                cancel.show();
-                show(control.confirm || 'This cannot be undone.', 'tracker-detail tracker-attention');
-                return;
-            }
-            disarm();
-            const ready = on => {
-                button.reactive = on;
-                button.opacity = on ? 255 : 110;
+        if (more.length) {
+            // The other fields fold under a line that summarizes them.
+            const open = this._controlFolds.has(key);
+            const body = new St.BoxLayout({vertical: true, style_class: 'tracker-control-more', visible: open});
+            const fold = new St.Button({can_focus: true, x_expand: true, style_class: 'tracker-control-expander',
+                accessible_name: `More ${control.label} settings`});
+            const text = label('', 'tracker-control-sub');
+            const describe = () => {
+                text.text = `${this._controlFolds.has(key) ? '⌄' : '›'}  ${more.map(part => `${part.label} ${controlSummary(part)}`).join(' · ')}`;
             };
-            ready(false);
-            show('Applying…');
-            const answer = await this._applyControl(target, control, result.value);
-            if (!this._enabled) return;
-            if (answer.ok) {
-                // The description lags the scheduler by up to one collector read, so the control waits for it.
-                this._controlApplied.set(key, {at: Date.now() / 1000, message: answer.message});
-                this._controlInputs.delete(key);
-                show(note(answer.message));
-                return;
+            describe();
+            fold.set_child(text);
+            fold.connect('clicked', () => {
+                if (this._controlFolds.has(key)) this._controlFolds.delete(key);
+                else this._controlFolds.add(key);
+                body.visible = this._controlFolds.has(key);
+                describe();
+            });
+            line.add_child(fold);
+            for (const part of more) {
+                // A host map's grid is as wide as the row, and its name is on the line that unfolds it.
+                const row = new St.BoxLayout({style_class: 'tracker-control-line'});
+                if (part.kind !== 'host-map') row.add_child(label(part.label, 'tracker-control-sub tracker-control-field'));
+                field(part, row);
+                body.add_child(row);
             }
-            ready(true);
-            const error = answer.error || {};
-            show((error.message || 'The scheduler refused the change') + (error.code === 'conflict' ? '. It changed since this was shown; '
-                + 'the shown values update within about 30 s.' : error.retryable ? '. Try again shortly.' : ''), 'tracker-warning');
-        });
-        return item;
+            actor.add_child(body);
+        } else {
+            line.add_child(new St.Widget({x_expand: true}));
+        }
+        const error = this._controlErrors.get(key);
+        if (error) note(error, 'tracker-warning');
+        if (state().changed) title.add_style_class_name('tracker-control-edited');
+        return {actor, editable: true, state, apply: async () => {
+            const result = state();
+            if (result.changed) await this._sendControl(target, control, result.value);
+        }};
     }
 
-    // An input for one control or group field, writing what is typed into holder[key].
-    _controlInput(control, holder, key) {
+    // An input for one control or group field, writing what is typed into holder[key] and calling onChange.
+    _controlInput(control, holder, key, onChange) {
         if (control.kind === 'choice') {
             const box = new St.BoxLayout({style_class: 'tracker-control-choices'});
             const buttons = control.choices.map(choice => {
-                const button = new St.Button({label: choice.label, can_focus: true, toggle_mode: true, style_class: 'tracker-filter',
+                const button = new St.Button({label: choice.label, can_focus: true, toggle_mode: true, style_class: 'tracker-control-choice',
                     accessible_name: `${control.label} ${choice.label}`});
                 button.connect('clicked', () => {
                     holder[key] = choice.value;
                     buttons.forEach((other, index) => other.set_checked(control.choices[index].value === choice.value));
+                    onChange();
                 });
                 box.add_child(button);
                 return button;
@@ -3054,20 +3303,22 @@ class Tracker {
             let line = null;
             control.hosts.forEach((host, index) => {
                 if (index % 3 === 0) box.add_child(line = new St.BoxLayout({style_class: 'tracker-control-line'}));
-                line.add_child(new St.Label({text: host, style_class: 'tracker-detail tracker-control-host', y_align: Clutter.ActorAlign.CENTER}));
-                line.add_child(this._controlEntry(holder[key], host, '—', `${control.label} on ${host}: a number, off, or blank for none`));
+                line.add_child(new St.Label({text: host, style_class: 'tracker-control-sub tracker-control-host', y_align: Clutter.ActorAlign.CENTER}));
+                line.add_child(this._controlEntry(holder[key], host, 'default', `${control.label} on ${host}: a number, off, or blank for the default`,
+                    onChange));
             });
             return box;
         }
-        return this._controlEntry(holder, key, control.optional ? 'none' : '', control.label,
+        return this._controlEntry(holder, key, control.optional ? 'none' : '', control.label, onChange,
             control.kind === 'text' ? 'tracker-control-text' : '');
     }
 
-    _controlEntry(holder, key, hint, name, style = '') {
+    _controlEntry(holder, key, hint, name, onChange, style = '') {
         const entry = new St.Entry({text: holder[key] ?? '', hint_text: hint, can_focus: true, accessible_name: name,
             style_class: `tracker-search tracker-control-entry ${style}`.trim(), y_align: Clutter.ActorAlign.CENTER});
         entry.clutter_text.connect('text-changed', () => {
             holder[key] = entry.get_text();
+            onChange();
         });
         return entry;
     }
@@ -3916,6 +4167,36 @@ class Tracker {
         this._button = null;
         this._keyboard = null;
     }
+}
+
+// Rereads the installed extension.js and stylesheet into the running GNOME Shell 42, which otherwise keeps an
+// extension's first code until the next login. Code that fails to load or enable leaves the running one in place.
+function reloadInstalled() {
+    const extension = Main.extensionManager.lookup(UUID);
+    const old = extension.stateObj;
+    let fresh;
+    try {
+        const [, bytes] = GLib.file_get_contents(GLib.build_filenamev([extension.path, 'extension.js']));
+        fresh = new Function(`${ByteArray.toString(bytes)}\nreturn init();`)();
+    } catch (error) {
+        logError(error, 'Agent Bar: the installed code did not load; keeping the running one');
+        return;
+    }
+    old.disable();
+    try {
+        extension.stateObj = fresh;
+        fresh.enable();
+    } catch (error) {
+        logError(error, 'Agent Bar: the installed code did not start; restoring the running one');
+        try { fresh.disable(); } catch (_) {}
+        extension.stateObj = old;
+        old.enable();
+        return;
+    }
+    const theme = St.ThemeContext.get_for_stage(global.stage).get_theme();
+    if (extension.stylesheet) theme.unload_stylesheet(extension.stylesheet);
+    extension.stylesheet = Gio.File.new_for_path(GLib.build_filenamev([extension.path, 'stylesheet.css']));
+    theme.load_stylesheet(extension.stylesheet);
 }
 
 function init() { return new Tracker(); }
