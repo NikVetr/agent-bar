@@ -653,6 +653,55 @@ class TrackerTests(unittest.TestCase):
                 'five_hour': {'utilization': 26, 'resets_at': '2026-11-04T18:30:00+00:00'}, 'seven_day': {'utilization': 33}}}}))
             self.assertEqual([(l['key'], l['percent']) for l in usage.claude(Path(home))['limits']], [('session', 26), ('weekly', 33)])
 
+    def test_claude_reads_are_opt_in_never_renew_the_sign_in_and_wait_longer_after_failures(self):
+        from agent_bar import usage
+        import urllib.error
+        with tempfile.TemporaryDirectory() as root:
+            home, state = Path(root) / 'home', Path(root) / 'state'
+            (home / '.claude').mkdir(parents=True); state.mkdir()
+            now = 1_800_000_000.0
+            credentials = home / '.claude/.credentials.json'
+            credentials.write_text(json.dumps({'claudeAiOauth': {'accessToken': 'secret', 'expiresAt': (now + 3600) * 1000}}))
+            reading = {'limits': [{'kind': 'weekly_all', 'group': 'weekly', 'percent': 99, 'resets_at': '2027-01-15T03:00:00+00:00'}]}
+            sent = []
+
+            class Answer(io.BytesIO):
+                def __enter__(self): return self
+                def __exit__(self, *_): return False
+
+            def opened(request, timeout):
+                sent.append((request.full_url, request.get_header('Authorization'), timeout))
+                return Answer(json.dumps(reading).encode())
+            with unittest.mock.patch('urllib.request.urlopen', opened):
+                usage.refresh(home, state, now=now)
+                self.assertEqual(sent, [])  # Off unless the user turns it on.
+                summary = usage.refresh(home, state, now=now, fetch=True)
+                self.assertEqual(sent, [(usage.USAGE_URL, 'Bearer secret', 10)])
+                self.assertEqual(summary['claude']['limits'][0]['percent'], 99)
+                self.assertEqual((summary['claude']['as_of'], summary['claude']['fetch']['ok']), (now, True))
+                usage.refresh(home, state, now=now + 60, fetch=True)
+                self.assertEqual(len(sent), 1)  # Not again until FETCH_EVERY has passed.
+                # An expired sign-in is left for Claude Code to renew, and nothing is sent.
+                credentials.write_text(json.dumps({'claudeAiOauth': {'accessToken': 'secret', 'expiresAt': now * 1000}}))
+                summary = usage.refresh(home, state, now=now + usage.FETCH_EVERY, fetch=True)
+                self.assertEqual(len(sent), 1)
+                self.assertIn('expired', summary['claude']['fetch']['error'])
+                self.assertEqual(summary['claude']['limits'][0]['percent'], 99)  # The last reading stays.
+            credentials.write_text(json.dumps({'claudeAiOauth': {'accessToken': 'secret', 'expiresAt': (now + 86400) * 1000}}))
+
+            def refused(request, timeout):
+                raise urllib.error.HTTPError(request.full_url, 401, 'Unauthorized', {}, None)
+            with unittest.mock.patch('urllib.request.urlopen', refused):
+                waits = []
+                # The expired sign-in already doubled the wait to 20 minutes; each refusal doubles it, up to an hour.
+                at = usage.load(state)['fetch']['next']
+                for _ in range(3):
+                    fetch = usage.refresh(home, state, now=at, fetch=True)['claude']['fetch']
+                    waits.append(fetch['next'] - at)
+                    at = fetch['next']
+                self.assertIn('refused', fetch['error'])
+                self.assertEqual(waits, [2400, 3600, 3600])
+
     def test_codex_limit_history_reads_new_rollout_lines_and_keeps_changes(self):
         from agent_bar import usage
         with tempfile.TemporaryDirectory() as root:

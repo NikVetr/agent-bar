@@ -96,8 +96,9 @@ Clicking the counts opens the dropdown, with these tabs:
   5-hour one, and a weekly limit for one model such as Fable, with that model's share. Each shows what is left, when it
   resets, its pace over the last day (or this window's average), when that pace would use the rest and how that compares
   with the reset, and, for the weekly limit, the points used each day, split by model where Claude Code reports a share.
-  Claude Code refreshes its figures only when it fetches them, as `/usage` does, so they can be hours old; Codex records
-  its own as it works. Copilot and Antigravity record none on this computer.
+  Claude Code refreshes its figures only when it fetches them, as `/usage` does, so they can be hours old; with
+  **Settings › Integrations › Read Claude limits** on, Agent Bar reads them itself every 10 minutes. Codex records its
+  own as it works. Copilot and Antigravity record none on this computer.
 - **Info**: your skills (start a new chat with one), the health of Agent Bar's own hooks and bridges, and the AGENTS.md
   or CLAUDE.md files each project uses.
 
@@ -167,7 +168,11 @@ agent-bar resume <key>  # reopen a saved chat in VS Code
 ## Privacy
 
 On Linux, Agent Bar keeps its state in `~/.local/state/agent-bar` and its settings in `~/.config/agent-bar`, readable
-only by you. Its hooks record when turns start and end, never prompt or reply text. It contacts no server.
+only by you. Its hooks record when turns start and end, never prompt or reply text. It contacts no server, unless you
+turn on **Read Claude limits**: then every 10 minutes it asks Anthropic's usage endpoint (`api.anthropic.com`, the one
+Claude Code's `/usage` reads, which is undocumented) for your limits, sending Claude Code's sign-in token from
+`~/.claude/.credentials.json`. It never renews or changes that sign-in; when it has expired, Agent Bar waits for Claude
+Code to renew it.
 
 ## Development
 

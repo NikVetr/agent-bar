@@ -73,6 +73,9 @@ const SETTINGS = [
         [[true, 'On'], [false, 'Off']]],
     ['Integrations', 'wake', 'Wake idle chats', 'A message starts a turn in an idle Claude Code chat (up to a week after its last turn), or in a Codex chat open in VS Code once any turn in progress ends', false,
         [[true, 'On'], [false, 'Off']]],
+    ['Integrations', 'claudeUsage', 'Read Claude limits', 'Every 10 minutes, ask Claude for your usage limits with Claude Code\'s sign-in, '
+        + 'as /usage does (an undocumented endpoint); otherwise they update only when Claude Code fetches them', false,
+        [[true, 'On'], [false, 'Off']]],
     ['Integrations', 'midturn', 'Messages to a busy Claude chat', 'With waking on, whether a message can arrive during its turn instead of right after it', 'after',
         [['after', 'After its turn'], ['urgent', 'Urgent mid-turn'], ['always', 'Mid-turn']]],
     ['Appearance', 'palette', 'State colors', 'Colors for review, working, waiting, failed and finished', 'default',
@@ -2781,7 +2784,7 @@ class Tracker {
             history: 'Saved conversations, rescanned daily · click one to resume it in its folder',
             messages: 'A chat sees its unread count at its next turn start · at most 3 to one chat between your prompts',
             info: 'Read from local files when this tab opens, and again after 30 s · nothing polls in the background',
-            quota: 'As Claude Code and Codex record them on this computer, read each minute · Copilot and Antigravity record none here',
+            quota: `As Claude Code and Codex record them here, read each minute${this._setting('claudeUsage') ? ', and from Claude every 10 min' : ''} · Copilot and Antigravity record none here`,
             git: `Read-only git status of open projects${snapshot.git ? `, ${age(snapshot.git.updated)}` : ''} · ↑↓ as of the last fetch · click for Source Control`,
         }[this._view] || `Top bar: needs review / open chats${this._queuesShown(snapshot) ? '   ·   Q finished / outstanding since last turn' : ''}`;
         if (this._view === 'queues') {
@@ -3680,9 +3683,14 @@ class Tracker {
             const weekly = quotaLeft(usage, provider, now);
             const body = this._projectSection(`quota:${provider}`, PROVIDERS[provider][1], `reading ${age(value.as_of)}`,
                 weekly ? `${Math.floor(weekly.left)}% of the week left` : '', !!weekly && weekly.left < 25);
-            if (now - value.as_of > QUOTA_STALE) {
+            if (value.fetch?.error) {
+                const next = value.fetch.next ? `; trying again in ${duration(Math.max(60, Math.round(value.fetch.next - now)))}` : '';
+                body.addMenuItem(this._quotaNote(`Agent Bar's last read of Claude's limits failed: ${value.fetch.error}${next}.`,
+                    'tracker-detail tracker-attention'));
+            } else if (now - value.as_of > QUOTA_STALE) {
                 body.addMenuItem(this._quotaNote(provider === 'claude'
-                    ? 'Claude Code updates these figures only when it fetches them, as /usage does; run /usage in a Claude chat for a fresh reading.'
+                    ? 'Claude Code updates these figures only when it fetches them, as /usage does. Settings › Integrations › '
+                        + 'Read Claude limits has Agent Bar read them every 10 minutes.'
                     : 'Codex records these as it works; they update with its next turn.', 'tracker-detail tracker-attention'));
             }
             for (const limit of [...value.limits].sort((a, b) => order(a) - order(b))) body.addMenuItem(this._quotaLimit(limit, value.as_of, now));

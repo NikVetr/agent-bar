@@ -1,12 +1,15 @@
 """Provider usage limits: what Claude Code and Codex last recorded on this computer, a history of those readings, and
 what the history implies: the recent pace, when a limit would run out at that pace, and how much went each day.
-Nothing here contacts a provider.
+Nothing here contacts a provider unless the user turns on Claude reads.
 
 Claude Code caches its limits in ~/.claude.json when it fetches them (as /usage does), including weekly limits
-scoped to a model such as Fable. Codex writes its limits into its session logs as it works, so its history is read
-back from them, a few new bytes at a time."""
+scoped to a model such as Fable; with the panel's setting on, Agent Bar also reads them itself every 10 minutes.
+Codex writes its limits into its session logs as it works, so its history is read back from them, a few new bytes
+at a time."""
 import json
 import time
+import urllib.error
+import urllib.request
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -16,6 +19,10 @@ HISTORY = 'usage-history.json'
 KEEP = 15 * 86400  # Seconds of readings kept: two weekly windows.
 PACE = 24 * 3600  # Readings this recent set the pace a limit is projected at.
 SAME_WINDOW = 3600  # Reset times this close are one window; Codex's drift by seconds.
+# With the panel's Claude reads on, Agent Bar reads Claude's limits this often itself, waiting up to an hour after
+# failures, from the endpoint Claude Code uses for /usage.
+FETCH_EVERY = 600
+USAGE_URL = 'https://api.anthropic.com/api/oauth/usage'
 WEEK, FIVE_HOURS = 7 * 86400, 5 * 3600
 
 
@@ -26,12 +33,9 @@ def epoch(value):
     except ValueError: return None
 
 
-def claude(home):
-    """Claude Code's cached limits: the 5-hour session, the weekly limit, and weekly limits scoped to a model, with the
-    model's share of the weekly limit. None when it has cached none."""
-    try: cached = json.loads((home / '.claude.json').read_text()).get('cachedUsageUtilization') or {}
-    except (OSError, ValueError): return None
-    utilization = cached.get('utilization') or {}
+def claude_limits(utilization):
+    """Limits from a Claude usage reading (Claude Code caches it as `utilization`): the 5-hour session, the weekly
+    limit, and weekly limits scoped to a model, with the model's share of the weekly limit."""
     shares = {share['limit_index']: share for share in utilization.get('weekly_scoped_shares') or []
               if isinstance(share, dict) and isinstance(share.get('limit_index'), int)}
     limits = []
@@ -48,13 +52,42 @@ def claude(home):
             limit['share'] = {'used': float(share['used_percent_of_weekly']), 'allowance': share.get('allowance_percent_of_weekly')}
         limits.append(limit)
     if not limits:
-        # Older Claude Code caches name only the two windows.
-        for key, name, window, cache in [('session', '5-hour', FIVE_HOURS, 'five_hour'), ('weekly', 'Weekly', WEEK, 'seven_day')]:
-            item = utilization.get(cache)
+        # Older readings name only the two windows.
+        for key, name, window, field in [('session', '5-hour', FIVE_HOURS, 'five_hour'), ('weekly', 'Weekly', WEEK, 'seven_day')]:
+            item = utilization.get(field)
             if isinstance(item, dict) and item.get('utilization') is not None:
                 limits.append({'key': key, 'name': name, 'percent': float(item['utilization']), 'resets_at': epoch(item.get('resets_at')),
                                'window': window, 'limiting': False})
+    return limits
+
+
+def claude(home):
+    """Claude Code's cached limits in ~/.claude.json, or None when it has cached none."""
+    try: cached = json.loads((home / '.claude.json').read_text()).get('cachedUsageUtilization') or {}
+    except (OSError, ValueError): return None
+    limits = claude_limits(cached.get('utilization') or {})
     return {'as_of': (cached.get('fetchedAtMs') or 0) / 1000, 'limits': limits} if limits else None
+
+
+def fetch_claude(home, now):
+    """Claude's limits read now from the usage endpoint Claude Code itself reads (undocumented), with Claude Code's
+    sign-in, which this never renews. Raises ValueError saying why it could not."""
+    try: sign_in = json.loads((home / '.claude/.credentials.json').read_text())['claudeAiOauth']
+    except (OSError, ValueError, KeyError, TypeError): raise ValueError('Claude Code is not signed in on this computer') from None
+    if (sign_in.get('expiresAt') or 0) / 1000 <= now:
+        raise ValueError("Claude Code's sign-in has expired; it renews it the next time it runs")
+    request = urllib.request.Request(USAGE_URL, headers={'Authorization': f'Bearer {sign_in["accessToken"]}',
+                                                         'Content-Type': 'application/json', 'User-Agent': 'agent-bar'})
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response: reading = json.loads(response.read())
+    except urllib.error.HTTPError as error:
+        raise ValueError({401: "Claude refused Claude Code's sign-in; it renews it the next time it runs",
+                          429: 'Claude asked for fewer reads; trying again later'}.get(error.code, f'Claude answered HTTP {error.code}')) from None
+    except (urllib.error.URLError, OSError, ValueError) as error:
+        raise ValueError(f'Claude could not be reached: {getattr(error, "reason", error)}') from None
+    limits = claude_limits(reading if isinstance(reading, dict) else {})
+    if not limits: raise ValueError('Claude answered without limits')
+    return {'as_of': now, 'limits': limits}
 
 
 def codex_windows(limits):
@@ -87,7 +120,8 @@ def codex_readings(data, offset=0):
 def load(root=ROOT):
     try: data = json.loads((Path(root) / HISTORY).read_text())
     except (OSError, ValueError): data = {}
-    return {'current': data.get('current') or {}, 'series': data.get('series') or {}, 'offsets': data.get('offsets') or {}}
+    return {'current': data.get('current') or {}, 'series': data.get('series') or {}, 'offsets': data.get('offsets') or {},
+            'fetch': data.get('fetch') or {}}
 
 
 def record(series, key, at, limit):
@@ -103,15 +137,25 @@ def record(series, key, at, limit):
     rows.insert(index, entry)
 
 
-def refresh(home=None, root=ROOT, now=None):
-    """Read new limit readings into the history file and return the summary. Run by the service once a minute."""
+def refresh(home=None, root=ROOT, now=None, fetch=False):
+    """Read new limit readings into the history file and return the summary. Run by the service once a minute; with
+    `fetch`, also read Claude's limits from Claude every FETCH_EVERY seconds."""
     home, root, now = Path(home or Path.home()), Path(root), now or time.time()
     history = load(root)
     series, offsets = history['series'], history['offsets']
-    found = claude(home)
-    if found:
-        history['current']['claude'] = found
+    readings = [found] if (found := claude(home)) else []
+    state = history['fetch'] if fetch else {}
+    if fetch and now >= state.get('next', 0):
+        try:
+            readings.append(fetch_claude(home, now))
+            state = {'at': now, 'ok': True, 'error': None, 'next': now + FETCH_EVERY, 'wait': FETCH_EVERY}
+        except ValueError as error:
+            wait = min(3600, max(FETCH_EVERY, 2 * state.get('wait', FETCH_EVERY // 2)))
+            state = {**state, 'ok': False, 'error': str(error), 'failed_at': now, 'next': now + wait, 'wait': wait}
+    history['fetch'] = state
+    for found in readings:
         for limit in found['limits']: record(series, f'claude:{limit["key"]}', found['as_of'], limit)
+        if found['as_of'] >= (history['current'].get('claude') or {}).get('as_of', 0): history['current']['claude'] = found
     sessions = home / '.codex/sessions'
     latest = None
     seen = {}
@@ -221,6 +265,9 @@ def summary(history, now=None):
                 item['days'] = total
             limits.append(item)
         result[provider] = {'as_of': as_of, 'limits': limits}
+    if history.get('fetch') and 'claude' in result:
+        fetch = history['fetch']
+        result['claude']['fetch'] = {'ok': fetch.get('ok'), 'at': fetch.get('at'), 'error': fetch.get('error'), 'next': fetch.get('next')}
     return result
 
 

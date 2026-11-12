@@ -44,6 +44,8 @@ class Tracker:
         self.messages_enabled = True
         # The usage limits summary (usage.py), refreshed off the collection loop, and why it last failed.
         self.usage, self.usage_error = None, None
+        # Whether the user turned on Agent Bar's own reads of Claude's limits (off unless chosen).
+        self.claude_reads = False
         # 'on', 'off' (turned off in settings) or 'missing' (parallel-workers is not set up here).
         self.scheduler_status = 'on'
         self.queue_mtime = max((q.get('observed', 0) for q in self.ledger.data['queues'].values()), default=0)
@@ -64,10 +66,12 @@ class Tracker:
                 self.scheduler = saved.get('scheduler', True) is not False
                 self.git_enabled = saved.get('git', True) is not False
                 self.messages_enabled = saved.get('messages', True) is not False
+                self.claude_reads = saved.get('claudeUsage', False) is True
                 self.settings_stamp = stamp
         except FileNotFoundError:
             self.quiet, self.settings_stamp = QUIET, None
             self.scheduler = self.git_enabled = self.messages_enabled = True
+            self.claude_reads = False
         except (OSError, ValueError, TypeError) as error:
             warnings.append(f'Panel settings unreadable: {error}')
         for path in (self.root / 'windows').glob('*.json'):
@@ -363,7 +367,7 @@ class Tracker:
         of Codex's session logs takes a few seconds, later ones only their new lines."""
         while True:
             try:
-                self.usage = await asyncio.to_thread(usage.refresh, Path.home(), self.root)
+                self.usage = await asyncio.to_thread(usage.refresh, Path.home(), self.root, None, self.claude_reads)
                 self.usage_error = None
             except Exception as error:
                 print(f'Usage limits failed: {type(error).__name__}: {error}', flush=True)
