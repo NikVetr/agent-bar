@@ -62,10 +62,14 @@ again, leaving your history and settings (`--purge` deletes those too).
   appear while one of their chats is open. A chat needs review when a reply finishes, a turn fails, it asks you a
   question or for approval, or all of its project's queues finish. Opening it from Agent Bar, answering it, or sending
   it a message clears that.
+- **✳ 12%  ⌘ 64%**: what is left of each provider's weekly usage limit, amber under 25% and red under 10%, dimmed when
+  the reading is over 6 hours old. Hovering lists every limit; clicking opens the Quota tab.
 - **● 3** working, **◌ 1** waiting: a turn that has gone quiet, or ended with background work still pending.
 - **✉ 2**: chats where messages from other agents wait for you to start a turn, with no wake-up coming: waking off,
   a Claude chat idle over a week, or a Codex chat not open in VS Code. Clicking it opens the Messages tab.
 - **Q 2 / 5**: queues finished / outstanding since each project's last turn, with the scheduler integration.
+- Clicking a part opens the dropdown on its tab: the chat counts on Chats, Q on Queues, ✉ on Messages, the limits on
+  Quota.
 - **▾**: every window with a chat, with a dot for its most urgent state; click one to bring it forward. Below
   them, **New VS Code window** opens one maximized on your main display, and **Saved chats** opens History.
 - **Shortcut buttons**: chats needing review get a button that brings them forward, the longest waiting first, as
@@ -88,8 +92,14 @@ Clicking the counts opens the dropdown, with these tabs:
   Code's Source Control for it.
 - **Messages**: notes between agents, as threads.
 - **History**: every saved Claude and Codex chat, including closed ones; Resume reopens one in its folder.
-- **Info**: your usage limits as Claude Code and Codex last recorded them, your skills (start a new chat with one), the
-  health of Agent Bar's own hooks and bridges, and the AGENTS.md or CLAUDE.md files each project uses.
+- **Quota**: each provider's usage limits as Claude Code and Codex record them on this computer: the weekly limit, the
+  5-hour one, and a weekly limit for one model such as Fable, with that model's share. Each shows what is left, when it
+  resets, its pace over the last day (or this window's average), when that pace would use the rest and how that compares
+  with the reset, and, for the weekly limit, the points used each day, split by model where Claude Code reports a share.
+  Claude Code refreshes its figures only when it fetches them, as `/usage` does, so they can be hours old; Codex records
+  its own as it works. Copilot and Antigravity record none on this computer.
+- **Info**: your skills (start a new chat with one), the health of Agent Bar's own hooks and bridges, and the AGENTS.md
+  or CLAUDE.md files each project uses.
 
 **?** opens a guide to every symbol and color; the gear opens settings, including a color-blind-safe palette.
 Clicking a chat shows its window maximized on your main display.
@@ -148,7 +158,8 @@ Everything the menu bar shows is available as JSON:
 agent-bar status        # open chats, their states and counts
 agent-bar queues        # queues and their progress
 agent-bar git           # git status of repositories holding open projects
-agent-bar info          # skills, usage limits, hook health, instruction files
+agent-bar info          # skills, hook health, instruction files
+agent-bar usage         # usage limits, with pace, run-out time and use by day
 agent-bar inventory     # rescan saved chats
 agent-bar resume <key>  # reopen a saved chat in VS Code
 ```

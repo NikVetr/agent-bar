@@ -634,3 +634,37 @@ test('fact chips wrap into lines that fit the panel', () => {
     const lines = f.context.chipLines(['a'.repeat(30), 'b'.repeat(30), 'c'.repeat(30), 'd'], 70);
     assert.equal(lines.map(line => line.map(t => t[0]).join('')).join(' '), 'ab cd');
 });
+
+test('the top bar shows what is left of each weekly limit, dimmed when the reading is old or past its reset', () => {
+    const f = fixture();
+    const {quotaLeft, quotaStyle, quotaTooltip} = f.context;
+    const now = Math.floor(Date.now() / 1000);
+    const usage = {claude: {as_of: now - 3600, limits: [
+        {key: 'weekly', name: 'Weekly', left: 12, percent: 88, resets_at: now + 86400, expired: false, limiting: false},
+        {key: 'weekly:Fable', name: 'Weekly · Fable', left: 0, percent: 100, resets_at: now + 86400, expired: false, limiting: true}]},
+        codex: {as_of: now - 7 * 3600, limits: [{key: 'weekly', name: 'Weekly', left: 64, percent: 36, resets_at: now + 3600, expired: false}]}};
+    const claude = quotaLeft(usage, 'claude', now);
+    assert.equal(claude.left, 12);
+    assert.equal(claude.stale, false);
+    assert.equal(claude.limiting.length, 1);
+    assert.equal(quotaLeft(usage, 'codex', now).stale, true);
+    assert.equal(quotaLeft(usage, 'copilot', now), null);
+    assert.deepEqual([5, 12, 40].map(quotaStyle).join(' '), 'failed attention muted');
+    assert.match(quotaTooltip(usage), /^Usage limits left\nClaude, reading .+\n  Weekly: 12% left, resets .+\n  Weekly · Fable: 0% left/);
+    assert.equal(quotaTooltip({}), null);
+});
+
+test('a limit\'s projection says when its pace would use the rest, against the reset', () => {
+    const f = fixture();
+    const {quotaProjection} = f.context;
+    const now = 1_000_000, hour = 3600;
+    const limit = extra => ({left: 20, percent: 80, resets_at: now + 48 * hour, expired: false,
+        pace: {per_hour: 0.5, basis: 'day'}, runs_out_at: now + 40 * hour, at_reset: 100, ...extra});
+    assert.match(quotaProjection(limit(), now, now), /^At the last day's pace \(0\.50%\/h\), it runs out .+, in 1d 16h, 8h 0m before the reset\.$/);
+    assert.match(quotaProjection(limit({runs_out_at: now + 60 * hour, at_reset: 84}), now, now), /lasts to the reset, about 84% used by then\.$/);
+    assert.match(quotaProjection(limit({runs_out_at: now - hour, pace: {per_hour: 2, basis: 'window'}}), now - 20 * hour, now),
+        /^At this window's average pace \(2\.0%\/h\), it would have run out by .+; this reading is/);
+    assert.match(quotaProjection(limit({left: 0}), now, now), /^Used up until it resets, in 2d 0h\.$/);
+    assert.equal(quotaProjection(limit({pace: undefined}), now, now), null);
+    assert.equal(quotaProjection(limit({expired: true}), now, now), null);
+});

@@ -1,7 +1,6 @@
-"""What the panel's Info tab shows: installed skills, provider usage limits, tracker health, and the agent
-instruction files that apply to each open project. Read on demand from small local files; nothing polls."""
+"""What the panel's Info tab shows: installed skills, tracker health, and the agent instruction files that apply to
+each open project. Read on demand from small local files; nothing polls."""
 import json
-import re
 from pathlib import Path
 
 from . import hooks
@@ -45,56 +44,6 @@ def skills(home):
     return sorted(found.values(), key=lambda skill: (skill['synced'], skill['name']))
 
 
-def tail(path, size=512 * 1024):
-    with path.open('rb') as stream:
-        stream.seek(max(0, path.stat().st_size - size))
-        return stream.read().decode('utf8', errors='replace')
-
-
-def usage(home):
-    """Usage limits as each tool last recorded them: Claude Code's cached utilization in ~/.claude.json, and the
-    rate limits Codex writes into its session logs."""
-    result = {}
-    try:
-        cached = json.loads((home / '.claude.json').read_text()).get('cachedUsageUtilization') or {}
-        limits = cached.get('utilization', {})
-        result['claude'] = {'as_of': (cached.get('fetchedAtMs') or 0) / 1000, 'limits': [
-            {'name': name, 'percent': limits[key]['utilization'], 'resets_at': limits[key].get('resets_at')}
-            for key, name in [('five_hour', '5-hour'), ('seven_day', 'Weekly')] if limits.get(key)]}
-    except (OSError, ValueError, KeyError, TypeError):
-        pass
-    sessions = home / '.codex/sessions'
-    rollouts = sorted(sessions.glob('*/*/*/rollout-*.jsonl'), key=lambda p: p.stat().st_mtime, reverse=True)[:5] if sessions.exists() else []
-    for path in rollouts:
-        try: text = tail(path)
-        except OSError: continue
-        found = codex_limits(text)
-        if found:
-            stamp, windows = found
-            result['codex'] = {'as_of': stamp or path.stat().st_mtime, 'limits': [
-                {'name': '5-hour' if window.get('window_minutes') == 300 else 'Weekly' if window.get('window_minutes') == 10080
-                 else f'{window.get("window_minutes")}-minute', 'percent': window.get('used_percent'), 'resets_at': window.get('resets_at')}
-                for window in windows]}
-            break
-    return result
-
-
-def codex_limits(text):
-    """The latest rate-limit windows in a rollout's text, and the timestamp before them; Codex also writes entries
-    with no windows (null), which are skipped."""
-    marker, at = '"rate_limits":', len(text)
-    while (at := text.rfind(marker, 0, at)) >= 0:
-        start = at + len(marker)
-        try: limits, _ = json.JSONDecoder().raw_decode(text, start + len(text[start:]) - len(text[start:].lstrip()))
-        except ValueError: continue
-        windows = [limits.get(key) for key in ['primary', 'secondary']] if isinstance(limits, dict) else []
-        windows = [window for window in windows if isinstance(window, dict)]
-        if windows:
-            stamp = re.findall(r'"timestamp":"([^"]+)"', text[max(0, at - 4000):at])
-            return (stamp[-1] if stamp else None), windows
-    return None
-
-
 def health(root, home):
     """Whether the tracker's hooks are installed, when each provider's last arrived, and recent hook errors."""
     last = {}
@@ -130,5 +79,5 @@ def collect(root=ROOT, home=None):
     try: snapshot = json.loads((Path(root) / 'snapshot.json').read_text())
     except (OSError, ValueError): snapshot = {'windows': [], 'rows': []}
     folders = {root for window in snapshot['windows'] for root in window.get('roots') or []}
-    return {'ok': True, 'skills': skills(home), 'usage': usage(home), 'health': health(Path(root), home),
+    return {'ok': True, 'skills': skills(home), 'health': health(Path(root), home),
             'instructions': instructions(folders, home)}

@@ -55,8 +55,15 @@ state and unread reasons stay separate in the data.
   appended transcript data.
 - **Git** (`git.py`): every 20 s, off the collection loop, the `git status` of each repository holding an open folder,
   with `GIT_OPTIONAL_LOCKS=0` so it never takes the index lock an agent's own git command needs. It never fetches.
-- **Info** (`info.py`): read only when the panel's Info tab asks: skills, the usage limits Claude Code caches in
-  `~/.claude.json` and Codex writes into its rollouts, hook health, and instruction files.
+- **Usage** (`usage.py`): once a minute, off the collection loop, the usage limits Claude Code caches in
+  `~/.claude.json` (its `limits`, including weekly limits scoped to a model, and those models' shares of the weekly
+  limit) and the `rate_limits` Codex writes into its rollouts. Rollouts are read from a saved offset per file, so after
+  the first read (a few seconds, the last 15 days) each pass reads only new lines. Readings go to
+  `usage-history.json` when they change (a reset time drifting by seconds is the same window), kept 15 days. The
+  summary in the snapshot gives each limit's pace (since the reading in force a day earlier, or since its window began
+  empty), when that pace would use the rest, the share used by its reset, and for weekly limits the points used each
+  local day, split into scoped models and the rest. `agent-bar usage` prints the same summary.
+- **Info** (`info.py`): read only when the panel's Info tab asks: skills, hook health, and instruction files.
 
 ## Hooks
 

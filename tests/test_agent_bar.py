@@ -463,19 +463,14 @@ class TrackerTests(unittest.TestCase):
             hooks.remove('claude')
             self.assertEqual(json.loads(settings.read_text()), {'model': 'opus', 'hooks': {'Stop': [{'hooks': [mine]}]}})
 
-    def test_info_merges_skills_and_reads_recorded_usage_and_instructions(self):
+    def test_info_merges_skills_and_reads_instructions(self):
         from agent_bar import info
         with tempfile.TemporaryDirectory() as root:
             home, state = Path(root) / 'home', Path(root) / 'state'
             for folder, name in [('.claude/skills', 'plot'), ('.agents/skills', 'plot'), ('.claude/skills/synced/x', 'pdf')]:
                 (home / folder / name).mkdir(parents=True)
                 (home / folder / name / 'SKILL.md').write_text(f'---\nname: {name}\ndescription: Does {name}.\n---\n\n# {name}\n')
-            (home / '.claude.json').write_text(json.dumps({'skillUsage': {'plot': {'usageCount': 3, 'lastUsedAt': 5000}},
-                'cachedUsageUtilization': {'fetchedAtMs': 9000, 'utilization': {
-                    'five_hour': {'utilization': 26, 'resets_at': '2026-11-04T18:30:00+00:00'}, 'seven_day': {'utilization': 33}}}}))
-            rollout = home / '.codex/sessions/2026/11/04/rollout-2026-11-04T10-00-00-x.jsonl'; rollout.parent.mkdir(parents=True)
-            rollout.write_text(json.dumps({'timestamp': '2026-11-04T18:27:35Z', 'type': 'event_msg', 'payload': {'type': 'token_count',
-                'rate_limits': {'primary': {'used_percent': 61.0, 'window_minutes': 10080, 'resets_at': 1794095235}, 'secondary': None}}}) + '\n')
+            (home / '.claude.json').write_text(json.dumps({'skillUsage': {'plot': {'usageCount': 3, 'lastUsedAt': 5000}}}))
             project = home / 'repos/demo/sub'; project.mkdir(parents=True)
             (home / 'repos/demo/AGENTS.md').write_text('rules')
             state.mkdir()
@@ -484,8 +479,6 @@ class TrackerTests(unittest.TestCase):
             result = info.collect(state, home)
             self.assertEqual([(s['name'], s['providers'], s['synced'], s['uses']) for s in result['skills']],
                              [('plot', ['claude', 'codex'], False, 3), ('pdf', ['claude.ai'], True, 0)])
-            self.assertEqual(result['usage']['claude']['limits'][0], {'name': '5-hour', 'percent': 26, 'resets_at': '2026-11-04T18:30:00+00:00'})
-            self.assertEqual(result['usage']['codex']['limits'], [{'name': 'Weekly', 'percent': 61.0, 'resets_at': 1794095235}])
             self.assertEqual(result['instructions']['folders'], {str(project): [str(home / 'repos/demo/AGENTS.md')]})
             self.assertEqual((result['health']['hooks']['claude'], result['health']['last_event']['claude']),
                              ({'observer': False, 'waiter': False}, 70))
@@ -640,18 +633,79 @@ class TrackerTests(unittest.TestCase):
                 self.assertGreater(messages.send('claude:a', 'claude:b', 'much later', root, now=110 + messages.KEEP + 1)['id'], max(old))
             self.assertEqual((root / 'messages.sqlite').stat().st_mode & 0o777, 0o600)
 
-    def test_codex_usage_comes_from_the_newest_rollout_with_limit_windows(self):
-        from agent_bar import info
+    def test_claude_limits_include_scoped_models_and_their_share(self):
+        from agent_bar import usage
         with tempfile.TemporaryDirectory() as home:
-            folder = Path(home) / '.codex/sessions/2026/11/10'; folder.mkdir(parents=True)
-            for n, limits in enumerate([{'primary': {'used_percent': 40, 'window_minutes': 300, 'resets_at': 5}},
-                                        {'limit_id': 'premium', 'primary': None, 'secondary': None}, None]):
-                path = folder / f'rollout-{n}.jsonl'
-                path.write_text(json.dumps({'timestamp': f'2026-11-10T0{n}:00:00Z', 'payload': {'rate_limits': limits}},
-                                           separators=(',', ':')) + '\n')  # As Codex writes it.
-                os.utime(path, (100 + n, 100 + n))
-            self.assertEqual(info.usage(Path(home))['codex'], {'as_of': '2026-11-10T00:00:00Z', 'limits': [
-                {'name': '5-hour', 'percent': 40, 'resets_at': 5}]})
+            limits = [{'kind': 'session', 'group': 'session', 'percent': 21, 'resets_at': '2026-11-12T01:40:00+00:00', 'is_active': False},
+                      {'kind': 'weekly_all', 'group': 'weekly', 'percent': 88, 'resets_at': '2026-11-15T03:00:00+00:00', 'is_active': False},
+                      {'kind': 'weekly_scoped', 'group': 'weekly', 'percent': 100, 'resets_at': '2026-11-15T02:59:59+00:00',
+                       'scope': {'model': {'display_name': 'Fable'}}, 'is_active': True}]
+            (Path(home) / '.claude.json').write_text(json.dumps({'cachedUsageUtilization': {'fetchedAtMs': 9000, 'utilization': {
+                'limits': limits, 'weekly_scoped_shares': [{'limit_index': 2, 'used_percent_of_weekly': 50, 'allowance_percent_of_weekly': 50}]}}}))
+            found = usage.claude(Path(home))
+            self.assertEqual(found['as_of'], 9)
+            self.assertEqual([(l['key'], l['name'], l['percent'], l['window'], l['limiting']) for l in found['limits']],
+                             [('session', '5-hour', 21, 18000, False), ('weekly', 'Weekly', 88, 604800, False),
+                              ('weekly:Fable', 'Weekly · Fable', 100, 604800, True)])
+            self.assertEqual(found['limits'][2]['share'], {'used': 50, 'allowance': 50})
+            # Older caches name only the two windows.
+            (Path(home) / '.claude.json').write_text(json.dumps({'cachedUsageUtilization': {'fetchedAtMs': 9000, 'utilization': {
+                'five_hour': {'utilization': 26, 'resets_at': '2026-11-04T18:30:00+00:00'}, 'seven_day': {'utilization': 33}}}}))
+            self.assertEqual([(l['key'], l['percent']) for l in usage.claude(Path(home))['limits']], [('session', 26), ('weekly', 33)])
+
+    def test_codex_limit_history_reads_new_rollout_lines_and_keeps_changes(self):
+        from agent_bar import usage
+        with tempfile.TemporaryDirectory() as root:
+            home, state = Path(root) / 'home', Path(root) / 'state'
+            state.mkdir()
+            rollout = home / '.codex/sessions/2026/11/10/rollout-x.jsonl'; rollout.parent.mkdir(parents=True)
+            line = lambda at, percent, resets: json.dumps({'timestamp': at, 'payload': {'rate_limits': {
+                'primary': {'used_percent': percent, 'window_minutes': 10080, 'resets_at': resets}, 'secondary': None}}},
+                separators=(',', ':')) + '\n'
+            now = usage.epoch('2026-11-10T12:00:00Z')
+            rollout.write_text(line('2026-11-10T00:00:00Z', 10, now + 86400) + line('2026-11-10T01:00:00Z', 10, now + 86402)
+                               + json.dumps({'payload': {'rate_limits': None}}) + '\n' + line('2026-11-10T02:00:00Z', 12, now + 86401))
+            usage.refresh(home, state, now=now)
+            history = usage.load(state)
+            # The reset time drifting by seconds is the same window, so the second reading adds nothing.
+            self.assertEqual([row[1] for row in history['series']['codex:weekly']], [10, 12])
+            offset = history['offsets'][str(rollout)]
+            with rollout.open('a') as stream: stream.write(line('2026-11-10T03:00:00Z', 15, now + 86400) + '{"partial')
+            usage.refresh(home, state, now=now)
+            history = usage.load(state)
+            self.assertEqual([row[1] for row in history['series']['codex:weekly']], [10, 12, 15])
+            self.assertGreater(history['offsets'][str(rollout)], offset)
+            self.assertEqual(history['current']['codex']['limits'][0]['percent'], 15)
+            self.assertEqual(usage.report(state, now=now)['usage']['codex']['limits'][0]['left'], 85)
+
+    def test_limit_summary_projects_the_last_days_pace_and_splits_days_by_scoped_model(self):
+        from agent_bar import usage
+        resets = usage.epoch('2026-11-15T03:00:00Z')
+        start = resets - usage.WEEK
+        hour = 3600
+        week = {'key': 'weekly', 'name': 'Weekly', 'window': usage.WEEK, 'resets_at': resets, 'limiting': False}
+        fable = {'key': 'weekly:Fable', 'name': 'Weekly · Fable', 'window': usage.WEEK, 'resets_at': resets, 'limiting': False}
+        as_of = start + 72 * hour
+        history = {'current': {'claude': {'as_of': as_of, 'limits': [{**week, 'percent': 40.0}, {**fable, 'percent': 60.0, 'share': {'used': 30.0}}]}},
+                   'series': {'claude:weekly': [[start + 20 * hour, 10.0, resets, None], [start + 48 * hour, 18.0, resets, None],
+                                                [as_of, 40.0, resets, None]],
+                              'claude:weekly:Fable': [[start + 20 * hour, 20.0, resets, 10.0], [as_of, 60.0, resets, 30.0]]}}
+        weekly = usage.summary(history, now=as_of + hour)['claude']['limits'][0]
+        # 18% a day before, 40% now: 22 points in 24 h.
+        self.assertEqual(weekly['pace']['basis'], 'day')
+        self.assertAlmostEqual(weekly['pace']['per_hour'], 22 / 24)
+        self.assertAlmostEqual(weekly['runs_out_at'], as_of + 60 / (22 / 24) * hour)
+        # It runs out before the reset, 96 h away.
+        self.assertEqual(weekly['at_reset'], 100.0)
+        self.assertEqual(weekly['readings'], 3)
+        self.assertAlmostEqual(sum(day['used'] for day in weekly['days']), 40.0)
+        parts = [dict(day['parts']) for day in weekly['days']]
+        self.assertAlmostEqual(sum(part['Fable'] for part in parts), 30.0)
+        self.assertAlmostEqual(sum(part['Other'] for part in parts), 10.0)
+        # Without a reading a day back, the pace is since the window began, empty.
+        lone = {'current': {'codex': {'as_of': as_of, 'limits': [{**week, 'percent': 36.0}]}}, 'series': {}}
+        only = usage.summary(lone, now=as_of)['codex']['limits'][0]
+        self.assertEqual((only['pace']['basis'], only['pace']['per_hour']), ('window', 0.5))
 
     def test_hook_install_edits_a_linked_settings_file_where_it_lives(self):
         from agent_bar import hooks

@@ -35,7 +35,8 @@ def main():
     remove.add_argument('--purge', action='store_true', help='also delete history, messages and settings')
     subs.add_parser('doctor', help='check each part and say how to fix what is missing (JSON)')
     subs.add_parser('inventory', help='rescan saved conversations into inventory.json')
-    subs.add_parser('info', help='skills, usage limits, Agent Bar health and instruction files (JSON)')
+    subs.add_parser('info', help='skills, Agent Bar health and instruction files (JSON)')
+    subs.add_parser('usage', help='usage limits Claude Code and Codex recorded, with pace, run-out time and use by day (JSON)')
     resume = subs.add_parser('resume', help='reopen an inventoried conversation in VS Code')
     resume.add_argument('key')
     subs.add_parser('agents', help='open conversations a message can go to')
@@ -83,6 +84,10 @@ def main():
     if name == 'info':
         from . import info
         print(json.dumps(info.collect(), ensure_ascii=False))
+        return
+    if name == 'usage':
+        from . import usage
+        print(json.dumps(usage.report(), ensure_ascii=False))
         return
     if name in ['inventory', 'resume']:
         from . import inventory

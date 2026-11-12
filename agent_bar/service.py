@@ -9,7 +9,7 @@ import time
 import uuid
 from pathlib import Path
 
-from . import messages
+from . import messages, usage
 from .git import Repositories
 from .providers import Providers, queue_snapshot
 from .state import ROOT, Ledger, atomic_json, project_names
@@ -19,6 +19,7 @@ TURNS = {'start', 'message'}  # Any turn start, including automatic continuation
 QUIET = 300  # An open turn with no activity this long is waiting on something.
 CONTINUE = 'Please continue where you left off.'  # Sent to chats a usage limit stopped.
 GIT_EVERY = 20  # Seconds between git status reads of the open projects' repositories.
+USAGE_EVERY = 60  # Seconds between reads of the usage limits Claude Code and Codex record.
 PRUNE_EVERY = 3600  # Seconds between clean-ups of what closed chats, windows and old queues left behind.
 STALE_WINDOW = 86400  # A VS Code bridge silent this long has gone with its window.
 SETTINGS = Path.home() / '.config/agent-bar/settings.json'  # Written by the panel.
@@ -41,6 +42,8 @@ class Tracker:
         self.quiet, self.scheduler, self.settings_stamp = QUIET, True, None
         self.git_enabled, self.repositories, self.git = True, Repositories(), None
         self.messages_enabled = True
+        # The usage limits summary (usage.py), refreshed off the collection loop, and why it last failed.
+        self.usage, self.usage_error = None, None
         # 'on', 'off' (turned off in settings) or 'missing' (parallel-workers is not set up here).
         self.scheduler_status = 'on'
         self.queue_mtime = max((q.get('observed', 0) for q in self.ledger.data['queues'].values()), default=0)
@@ -229,6 +232,7 @@ class Tracker:
                 'scheduler': self.scheduler_status,
                 'git': self.git if self.git_enabled else None,
                 'messages': self.message_summary(rows) if self.messages_enabled else None,
+                'usage': self.usage, 'usage_error': self.usage_error,
                 'returns': self.ledger.data.get('returns', {})}
 
     def message_summary(self, rows):
@@ -354,6 +358,18 @@ class Tracker:
                     print(f'Git status failed: {type(error).__name__}: {error}', flush=True)
             await asyncio.sleep(GIT_EVERY)
 
+    async def read_usage(self):
+        """Usage limit readings into their history and the snapshot's summary, off the collection loop; the first read
+        of Codex's session logs takes a few seconds, later ones only their new lines."""
+        while True:
+            try:
+                self.usage = await asyncio.to_thread(usage.refresh, Path.home(), self.root)
+                self.usage_error = None
+            except Exception as error:
+                print(f'Usage limits failed: {type(error).__name__}: {error}', flush=True)
+                self.usage_error = f'{type(error).__name__}: {error}'
+            await asyncio.sleep(USAGE_EVERY)
+
     async def run(self):
         lock = (self.root / 'service.lock').open('w')
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -362,6 +378,7 @@ class Tracker:
         server = await asyncio.start_unix_server(self.client, path=str(socket))
         os.chmod(socket, 0o600)
         refresh = asyncio.create_task(self.read_git())
+        limits = asyncio.create_task(self.read_usage())
         async with server:
             while True:
                 try: self.collect()

@@ -33,6 +33,8 @@ const SETTINGS = [
     ['Top bar', 'quickReasons', 'Review buttons for', 'Reasons that give a chat a shortcut',
         ['Reply finished', 'Turn failed', 'Input needed', 'Approval needed', 'Queues finished'],
         [['Reply finished', 'Reply'], ['Turn failed', 'Failure'], ['Input needed', 'Question'], ['Approval needed', 'Approval'], ['Queues finished', 'Queues']]],
+    ['Top bar', 'quotaBar', 'Limits left', 'Each provider\'s weekly usage limit left, after the chat counts', true,
+        [[true, 'Show'], [false, 'Hide']]],
     ['Top bar', 'queueBar', 'Queue count', 'Q finished / outstanding since each project\'s last turn', true,
         [[true, 'Show'], [false, 'Hide']]],
     ['Cluster', 'clusterBar', 'Top-bar indicator', 'Pick any; with only Warnings it appears just when one fires', ['cpu', 'warnings'],
@@ -741,6 +743,80 @@ function failureReport(project, queues, cluster) {
     return lines.join('\n');
 }
 
+// Usage limits, as the service summarizes what Claude Code and Codex record (usage.py). A reading this old is shown
+// dimmed: Claude Code refreshes its figures only when it fetches them, as /usage does.
+const QUOTA_STALE = 6 * 3600;
+// Stacked day bars: the first part (a scoped model, such as Fable) violet, the rest blue.
+const QUOTA_COLORS = [[0.77, 0.65, 0.95, 0.95], [0.51, 0.73, 0.98, 0.95]];
+
+// A provider's weekly limit for the top bar: what is left, and whether the reading is old or past its reset.
+function quotaLeft(usage, provider, now = Date.now() / 1000) {
+    const value = usage?.[provider];
+    const weekly = value?.limits?.find(limit => limit.key === 'weekly');
+    if (!weekly) return null;
+    return {left: weekly.left, stale: now - value.as_of > QUOTA_STALE || weekly.expired, as_of: value.as_of, limit: weekly,
+        limiting: value.limits.filter(limit => limit.limiting && !limit.expired)};
+}
+
+// The top-bar section's tooltip: each provider's limits, what is left of each and when it resets.
+function quotaTooltip(usage) {
+    const lines = [];
+    for (const provider of Object.keys(PROVIDERS)) {
+        const value = usage?.[provider];
+        if (!value?.limits?.length) continue;
+        lines.push(`${PROVIDERS[provider][1]}, reading ${age(value.as_of)}`);
+        for (const limit of value.limits)
+            lines.push(`  ${limit.name}: ${limit.expired ? 'reset since this reading' : `${Math.floor(limit.left)}% left, ${resetTime(limit.resets_at)}`}`);
+    }
+    return lines.length ? `Usage limits left\n${lines.join('\n')}\nClick for the Quota tab` : null;
+}
+
+// The style of what is left of a limit: amber under a quarter, red under a tenth.
+function quotaStyle(left) {
+    return left < 10 ? 'failed' : left < 25 ? 'attention' : 'muted';
+}
+
+// What a limit's pace implies, in a sentence, or null without a pace.
+function quotaProjection(limit, asOf, now = Date.now() / 1000) {
+    if (limit.expired) return null;
+    const resets = limit.resets_at;
+    if (limit.left <= 0) return resets ? `Used up until it resets, in ${duration(Math.round(resets - now))}.` : 'Used up.';
+    if (!limit.pace) return null;
+    const pace = `${limit.pace.per_hour.toFixed(limit.pace.per_hour < 1 ? 2 : 1)}%/h`;
+    const basis = limit.pace.basis === 'day' ? `At the last day's pace (${pace})` : `At this window's average pace (${pace})`;
+    if (!(limit.pace.per_hour > 0)) return `${basis}, it lasts to the reset.`;
+    const out = limit.runs_out_at;
+    if (resets && out >= resets) return `${basis}, it lasts to the reset, about ${Math.round(limit.at_reset)}% used by then.`;
+    const when = new Date(out * 1000).toLocaleString('en-US', {weekday: 'short', hour: 'numeric', minute: '2-digit'});
+    const early = resets ? `, ${duration(Math.round(resets - out))} before the reset` : '';
+    return out < now ? `${basis}, it would have run out by ${when}${early}; this reading is ${age(asOf)}.`
+        : `${basis}, it runs out ${when}, in ${duration(Math.round(out - now))}${early}.`;
+}
+
+// Bars of a weekly limit's use by day, each stacked by its parts, scaled to the busiest day (or 20 points), with
+// room under them for day names drawn by the caller.
+function paintDays(cr, width, height, days) {
+    if (!days.length) return;
+    const most = Math.max(20, ...days.map(day => day.used));
+    const slot = width / days.length, bar = Math.min(28, slot * 0.6);
+    days.forEach((day, index) => {
+        let top = height;
+        day.parts.forEach(([, value], part) => {
+            const tall = height * value / most;
+            if (tall <= 0) return;
+            cr.setSourceRGBA(...QUOTA_COLORS[day.parts.length > 1 && part === 0 ? 0 : 1]);
+            cr.rectangle(index * slot + (slot - bar) / 2, top - tall, bar, tall);
+            cr.fill();
+            top -= tall;
+        });
+        if (!(day.used > 0)) {
+            cr.setSourceRGBA(1, 1, 1, 0.12);
+            cr.rectangle(index * slot + (slot - bar) / 2, height - 1, bar, 1);
+            cr.fill();
+        }
+    });
+}
+
 // Scheduler controls come from the scheduler's control command (parallel-workers' pw-control), which describes
 // them and applies one change at a time; the panel renders what it describes and holds no scheduler logic.
 const CONTROL_PROTOCOL = 1;
@@ -876,7 +952,7 @@ class Tracker {
     enable() {
         this._enabled = true;
         // A screen lock disables and re-enables this same object; disable() destroyed these widgets.
-        this._body = this._pickerList = this._clusterBody = this._clusterCards = this._clusterBarSignature = null;
+        this._body = this._pickerList = this._clusterBody = this._clusterCards = this._clusterBarSignature = this._quotaSignature = null;
         this._cancel = new Gio.Cancellable();
         this._borrowed = new Map();
         this._returnsLoaded = false;
@@ -930,8 +1006,12 @@ class Tracker {
                 this._ratios[key] = badge;
                 this._bar.add_child(badge);
             } else {
-                if (key === 'working') this._bar.add_child(new St.Label({text: '│',
-                    style_class: 'tracker-bar-divider', y_align: Clutter.ActorAlign.CENTER}));
+                if (key === 'working') {
+                    // What is left of each provider's weekly limit, after the chat counts.
+                    this._quota = new St.BoxLayout({style_class: 'tracker-quota-bar', visible: false, y_align: Clutter.ActorAlign.CENTER});
+                    this._bar.add_child(this._quota);
+                    this._bar.add_child(new St.Label({text: '│', style_class: 'tracker-bar-divider', y_align: Clutter.ActorAlign.CENTER}));
+                }
                 this._bar.add_child(label);
             }
         }
@@ -942,12 +1022,22 @@ class Tracker {
         this._mailCount = new St.Label({style_class: 'tracker-attention', y_align: Clutter.ActorAlign.CENTER});
         this._mail.add_child(this._mailCount);
         this._bar.insert_child_above(this._mail, this._labels.waiting);
-        // The press reaches the envelope before the button that opens the menu. An open menu's grab takes the
-        // press first and only closes it, as on any top-bar button.
-        this._mail.connect('button-press-event', () => {
-            this._openOn = 'messages';
-            return Clutter.EVENT_PROPAGATE;
-        });
+        // Each part opens the dropdown on its tab. The press reaches the part before the button that opens the menu;
+        // an open menu's grab takes the press first and only closes it, as on any top-bar button.
+        const opens = (actor, tab) => {
+            actor.reactive = true;
+            actor.connect('button-press-event', () => {
+                this._openOn = tab;
+                return Clutter.EVENT_PROPAGATE;
+            });
+        };
+        for (const badge of Object.values(this._ratios)) opens(badge, 'conversations');
+        opens(this._labels.working, 'conversations');
+        opens(this._labels.waiting, 'conversations');
+        opens(this._labels.queues, 'queues');
+        opens(this._mail, 'messages');
+        opens(this._quota, 'quota');
+        this._tooltip(this._quota, () => quotaTooltip(this._snapshot?.usage));
         this._button.add_child(this._bar);
         Main.panel.addToStatusArea('agent-bar', this._button, 2, 'left');
         this._nav = new PanelMenu.Button(0.0, 'Project windows');
@@ -1242,6 +1332,12 @@ class Tracker {
         row(top, [text(scheduler ? 'Q 3 / 9 ?' : '? / ?', 'tracker-help-bright')], scheduler
             ? 'A ? means its source stopped updating: the parallel-workers queue snapshot (start its monitor), or the agent-bar service when every count shows ?.'
             : 'A ? means the agent-bar service stopped updating.');
+        row(top, [text('✳', 'tracker-claude'), text('12%', 'tracker-quota-attention'), text('⌘', 'tracker-codex'), text('64%', 'tracker-quota-muted')],
+            'What is left of each provider\'s weekly usage limit: amber under 25%, red under 10%, dimmed when the reading is over '
+            + '6 h old (Claude Code refreshes its figures only when it fetches them, as /usage does). Hover for every limit; '
+            + 'clicking opens Quota, with the 5-hour and model limits, the pace, when it would run out, and use by day.');
+        row(top, [text('Click a part', 'tracker-help-bright')],
+            'Each part opens the dropdown on its tab: the chat counts on Chats, Q on Queues, the envelope on Messages, the limits on Quota.');
         row(top, [text('✳ project…', 'tracker-quick-button tracker-claude')], limit
             ? `Up to ${limit} chats needing review get a shortcut, as many as fit, the longest waiting first; clicking one brings that `
                 + 'chat forward and clears it. They continue right of the middle when the left half is full; +2 more lists the rest.'
@@ -2341,6 +2437,7 @@ class Tracker {
                 this._mailCount.text = `${stranded.length}`;
                 this._labels.queues.visible = this._queuesShown(snapshot);
                 this._labels.queues.text = `Q ${c.done} / ${c.queues}${Date.now() / 1000 - snapshot.queue_updated > 120 ? ' ?' : ''}`;
+                this._renderQuotaBar(snapshot.usage);
                 restyle(this._labels.queues, c.done ? 'color: #f1f3f5; font-weight: bold;' : 'color: #9ca3ad;');
                 for (const label of [...Object.values(this._labels), this._mailCount]) if (label.visible) holdWidth(label);
                 this._renderQuick(snapshot.rows);
@@ -2355,9 +2452,32 @@ class Tracker {
                 this._mail.visible = false;
                 for (const provider of PINNED) this._labels[provider].text = '? / ?';
                 this._labels.queues.text = 'Q ?';
+                this._quota.visible = false;
                 this._renderQuick([]);
             }
         });
+    }
+
+    // One part per provider with a weekly limit: its symbol and the percent left, dimmed when the reading is old.
+    _renderQuotaBar(usage) {
+        const shown = this._setting('quotaBar') ? Object.keys(PROVIDERS).map(provider => [provider, quotaLeft(usage, provider)])
+            .filter(([, quota]) => quota) : [];
+        this._quota.visible = shown.length > 0;
+        const signature = JSON.stringify(shown.map(([provider, quota]) => [provider, Math.floor(quota.left), quota.stale]));
+        if (signature === this._quotaSignature) return;
+        this._quotaSignature = signature;
+        this._quota.destroy_all_children();
+        for (const [provider, quota] of shown) {
+            const part = new St.BoxLayout({style_class: 'tracker-quota-part', y_align: Clutter.ActorAlign.CENTER});
+            for (const label of [new St.Label({text: PROVIDERS[provider][0], style_class: `tracker-${provider}`, y_align: Clutter.ActorAlign.CENTER}),
+                new St.Label({text: `${Math.floor(quota.left)}%`, y_align: Clutter.ActorAlign.CENTER,
+                    style_class: quota.stale ? 'tracker-quota-stale' : `tracker-quota-${quotaStyle(quota.left)}`})]) {
+                // Never shortened to an ellipsis when the top bar is crowded.
+                label.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+                part.add_child(label);
+            }
+            this._quota.add_child(part);
+        }
     }
 
     _item(text, style = null) {
@@ -2428,7 +2548,7 @@ class Tracker {
         // Integrations turned off in settings take their tabs with them.
         const shown = {queues: this._setting('scheduler'), git: this._setting('git'), messages: this._setting('messages')};
         if (shown[this._view] === false) this._view = 'conversations';
-        for (const [value, label] of [['conversations', 'Chats'], ['queues', 'Queues'], ['git', 'Git'], ['messages', 'Messages'], ['history', 'History'], ['info', 'Info']]
+        for (const [value, label] of [['conversations', 'Chats'], ['queues', 'Queues'], ['git', 'Git'], ['messages', 'Messages'], ['history', 'History'], ['quota', 'Quota'], ['info', 'Info']]
             .filter(([value]) => shown[value] !== false)) {
             const button = new St.Button({label, toggle_mode: true, checked: this._view === value,
                 can_focus: true, style_class: 'tracker-filter'});
@@ -2437,7 +2557,8 @@ class Tracker {
         }
         control(tabs);
         // The tab without parallel-workers has nothing to search, sort or filter.
-        const bare = this._view === 'queues' && snapshot?.scheduler === 'missing';
+        // Quota has nothing to search, sort or filter, nor the Queues tab without parallel-workers.
+        const bare = this._view === 'quota' || this._view === 'queues' && snapshot?.scheduler === 'missing';
         control(this._search).visible = !page && !bare;
         // Sort and filter each open a list under their button, over the rows.
         const toolbar = new St.BoxLayout({x_expand: true, style_class: 'tracker-toolbar'});
@@ -2474,17 +2595,18 @@ class Tracker {
                 toolbar.add_child(new St.Widget({x_expand: true}));
             }
         }
-        // Git, Messages and Info have no groups to expand or collapse.
-        for (const [icon, name, collapse] of ['git', 'messages', 'info'].includes(this._view) ? [] : [['view-fullscreen-symbolic', 'Expand all', false],
-            ['view-restore-symbolic', 'Collapse all', true]]) {
-            const button = new St.Button({child: new St.Icon({icon_name: icon, icon_size: 14}), can_focus: true,
-                accessible_name: name, style_class: 'tracker-bulk', y_align: Clutter.ActorAlign.CENTER});
-            button.connect('clicked', () => {
-                if (collapse) for (const key of this._projectKeys) this._collapsedProjects.add(key);
-                else this._collapsedProjects.clear();
+        // One button expands every group when any is collapsed, and collapses them all otherwise; Git, Messages and
+        // Info have no groups.
+        this._bulk = null;
+        if (!['git', 'messages', 'info'].includes(this._view)) {
+            this._bulk = new St.Button({label: 'Collapse all', can_focus: true, style_class: 'tracker-filter tracker-bulk-toggle',
+                y_align: Clutter.ActorAlign.CENTER});
+            this._bulk.connect('clicked', () => {
+                if (this._projectKeys.some(key => this._collapsedProjects.has(key))) this._collapsedProjects.clear();
+                else for (const key of this._projectKeys) this._collapsedProjects.add(key);
                 this._renderRows();
             });
-            toolbar.add_child(button);
+            toolbar.add_child(this._bulk);
         }
         control(toolbar).visible = !page && !bare;
         // The rows and an open picker list share one cell, so the list overlays the rows.
@@ -2611,6 +2733,7 @@ class Tracker {
                 fill(body);
                 fill = null;
             }
+            if (this._bulk) this._bulk.label = this._projectKeys.some(other => this._collapsedProjects.has(other)) ? 'Expand all' : 'Collapse all';
         };
         button.connect('clicked', () => {
             if (this._collapsedProjects.has(key)) this._collapsedProjects.delete(key);
@@ -2644,6 +2767,7 @@ class Tracker {
             history: 'Saved conversations, rescanned daily · click one to resume it in its folder',
             messages: 'A chat sees its unread count at its next turn start · at most 3 to one chat between your prompts',
             info: 'Read from local files when this tab opens, and again after 30 s · nothing polls in the background',
+            quota: 'As Claude Code and Codex record them on this computer, read each minute · Copilot and Antigravity record none here',
             git: `Read-only git status of open projects${snapshot.git ? `, ${age(snapshot.git.updated)}` : ''} · ↑↓ as of the last fetch · click for Source Control`,
         }[this._view] || `Top bar: needs review / open chats${this._queuesShown(snapshot) ? '   ·   Q finished / outstanding since last turn' : ''}`;
         if (this._view === 'queues') {
@@ -2664,6 +2788,10 @@ class Tracker {
         }
         if (this._view === 'info') {
             this._renderInfo(snapshot, query);
+            return;
+        }
+        if (this._view === 'quota') {
+            this._renderQuota(snapshot);
             return;
         }
         const limited = limitedConversations(snapshot.rows);
@@ -2945,7 +3073,8 @@ class Tracker {
         return button;
     }
 
-    // Hovering or focusing `actor` shows `text` in a small box under it after a moment.
+    // Hovering or focusing `actor` shows `text` (or what a function `text` returns then) in a small box under it
+    // after a moment.
     _tooltip(actor, text) {
         if (!text) return actor;
         actor.reactive = true;
@@ -2962,7 +3091,9 @@ class Tracker {
             timer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 350, () => {
                 timer = 0;
                 if (!actor.mapped || !(actor.hover || actor.has_key_focus())) return GLib.SOURCE_REMOVE;
-                tip = new St.Label({text, style_class: 'tracker-tooltip'});
+                const content = typeof text === 'function' ? text() : text;
+                if (!content) return GLib.SOURCE_REMOVE;
+                tip = new St.Label({text: content, style_class: 'tracker-tooltip'});
                 tip.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
                 tip.clutter_text.line_wrap = true;
                 Main.layoutManager.uiGroup.add_child(tip);
@@ -3518,6 +3649,110 @@ class Tracker {
         }
     }
 
+    // Each provider's usage limits as it records them here: what is left and when it resets, the recent pace and when
+    // that pace would use the rest, and a weekly limit's use by day.
+    _renderQuota(snapshot) {
+        const usage = snapshot.usage || {};
+        if (snapshot.usage_error) this._section.addMenuItem(this._item(`Usage limits unreadable: ${snapshot.usage_error}`, 'tracker-warning'));
+        const providers = Object.keys(PROVIDERS).filter(provider => usage[provider]?.limits?.length);
+        if (!providers.length) {
+            this._section.addMenuItem(this._item('Neither Claude Code nor Codex has recorded its limits on this computer yet', 'tracker-empty'));
+            return;
+        }
+        const now = Date.now() / 1000;
+        const order = limit => limit.key === 'weekly' ? 0 : limit.key.startsWith('weekly:') ? 1 : limit.key === 'session' ? 2 : 3;
+        for (const provider of providers) {
+            const value = usage[provider];
+            const weekly = quotaLeft(usage, provider, now);
+            const body = this._projectSection(`quota:${provider}`, PROVIDERS[provider][1], `reading ${age(value.as_of)}`,
+                weekly ? `${Math.floor(weekly.left)}% of the week left` : '', !!weekly && weekly.left < 25);
+            if (now - value.as_of > QUOTA_STALE) {
+                body.addMenuItem(this._quotaNote(provider === 'claude'
+                    ? 'Claude Code updates these figures only when it fetches them, as /usage does; run /usage in a Claude chat for a fresh reading.'
+                    : 'Codex records these as it works; they update with its next turn.', 'tracker-detail tracker-attention'));
+            }
+            for (const limit of [...value.limits].sort((a, b) => order(a) - order(b))) body.addMenuItem(this._quotaLimit(limit, value.as_of, now));
+        }
+    }
+
+    _quotaNote(text, style = 'tracker-detail') {
+        const item = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
+        item._ornamentLabel?.hide();
+        item.add_style_class_name('tracker-quota-note');
+        const label = new St.Label({text, x_expand: true, style_class: `${style} tracker-quota-wrap`});
+        label.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+        label.clutter_text.line_wrap = true;
+        item.add_child(label);
+        return item;
+    }
+
+    // One limit: its bar of what is used, what is left and when it resets, what its pace implies, a scoped model's share
+    // of the weekly limit, and for a weekly limit its use by day.
+    _quotaLimit(limit, asOf, now) {
+        const item = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
+        item._ornamentLabel?.hide();
+        item.add_style_class_name('tracker-queue-row');
+        const box = new St.BoxLayout({vertical: true, x_expand: true, style_class: 'tracker-quota-limit'});
+        item.add_child(box);
+        const label = (text, style, wrap = false) => {
+            const result = new St.Label({text, style_class: wrap ? `${style} tracker-quota-wrap` : style, y_align: Clutter.ActorAlign.CENTER});
+            result.clutter_text.ellipsize = wrap ? Pango.EllipsizeMode.NONE : Pango.EllipsizeMode.END;
+            result.clutter_text.line_wrap = wrap;
+            return result;
+        };
+        const style = limit.expired ? 'muted' : quotaStyle(limit.left);
+        const head = new St.BoxLayout({style_class: 'tracker-row-title'});
+        head.add_child(label(limit.name, 'tracker-title'));
+        if (limit.limiting && !limit.expired) head.add_child(label('Limiting now', 'tracker-chip tracker-chip-failed'));
+        head.add_child(new St.Widget({x_expand: true}));
+        head.add_child(label(limit.expired ? 'reset since this reading' : `${Math.round(limit.percent)}% used · ${Math.floor(limit.left)}% left`,
+            `tracker-quota-figure tracker-quota-${style}`));
+        box.add_child(head);
+        const line = new St.BoxLayout({style_class: 'tracker-progress-line'});
+        const track = new St.Widget({style_class: 'tracker-progress tracker-quota-track', y_align: Clutter.ActorAlign.CENTER});
+        const fill = new St.Widget({style_class: `tracker-progress-fill tracker-progress-${{failed: 'failed', attention: 'attention'}[style] || 'working'}`});
+        fill.set_width(Math.round(300 * Math.min(100, Math.max(0, limit.expired ? 0 : limit.percent)) / 100));
+        track.add_child(fill);
+        line.add_child(track);
+        const resets = limit.resets_at;
+        line.add_child(label(!resets ? '' : limit.expired ? `reset ${new Date(resets * 1000).toLocaleTimeString('en-US', {hour: 'numeric', minute: '2-digit'})}; no reading since`
+            : `${resetTime(resets)}, in ${duration(Math.round(resets - now))}`, 'tracker-detail'));
+        box.add_child(line);
+        const projection = quotaProjection(limit, asOf, now);
+        if (projection) box.add_child(label(projection, 'tracker-detail', true));
+        if (limit.share) {
+            const model = limit.name.split(' · ').pop();
+            box.add_child(label(`${model} has ${limit.share.allowance ?? '?'}% of the weekly limit to itself and has used ${Math.round(limit.share.used)} points of it.`,
+                'tracker-detail', true));
+        }
+        if (limit.days?.length) {
+            if (limit.readings < 3) {
+                box.add_child(label(`Use by day shows once there are more readings this week (${limit.readings} so far).`, 'tracker-muted tracker-quota-small', true));
+            } else {
+                const width = 420, height = 64;
+                const chart = this._drawing((cr, w, h) => paintDays(cr, w, h, limit.days),
+                    {width, height, style_class: 'tracker-quota-chart', x_align: Clutter.ActorAlign.START});
+                this._tooltip(chart, limit.days.map(day => `${day.day}: ${day.used.toFixed(1)} points`
+                    + (day.parts.length > 1 ? ` (${day.parts.map(([name, v]) => `${name} ${v.toFixed(1)}`).join(', ')})` : '')).join('\n'));
+                box.add_child(chart);
+                const names = new St.BoxLayout({style_class: 'tracker-quota-days', x_align: Clutter.ActorAlign.START});
+                for (const day of limit.days) names.add_child(new St.Label({text: day.day, style_class: 'tracker-quota-day',
+                    style: `width: ${Math.floor(width / limit.days.length)}px;`}));
+                box.add_child(names);
+                const parts = limit.days[0].parts.map(([name]) => name);
+                const legend = new St.BoxLayout({style_class: 'tracker-quota-legend'});
+                legend.add_child(label('Points of the weekly limit used each day', 'tracker-muted tracker-quota-small'));
+                if (parts.length > 1) parts.forEach((name, index) => {
+                    const [r, g, b] = QUOTA_COLORS[index === 0 ? 0 : 1].map(c => Math.round(c * 255));
+                    legend.add_child(new St.Label({text: '■', style: `color: rgb(${r}, ${g}, ${b});`, y_align: Clutter.ActorAlign.CENTER}));
+                    legend.add_child(label(name, 'tracker-quota-small'));
+                });
+                box.add_child(legend);
+            }
+        }
+        return item;
+    }
+
     // Usage limits, skills, tracker health and instruction files, from `agent-bar info`, read when this tab
     // opens and again once 30 s old.
     _renderInfo(snapshot, query) {
@@ -3568,28 +3803,6 @@ class Tracker {
             });
             return row => { row.visible = this._openSkills.has(key); rows.push(row); };
         };
-
-        const usage = card('Usage limits');
-        for (const provider of ['claude', 'codex']) {
-            const value = info.usage?.[provider];
-            if (!value) continue;
-            const children = [this._providerLabel(provider)];
-            for (const limit of value.limits) {
-                const box = new St.BoxLayout({vertical: true, style_class: 'tracker-info-limit'});
-                box.add_child(label(`${limit.name} ${Math.round(limit.percent)}%`, `tracker-${loadStyle(limit.percent)} tracker-info-value`));
-                const track = new St.Widget({style_class: 'tracker-progress tracker-info-bar'});
-                const fill = new St.Widget({style_class: `tracker-progress-fill tracker-progress-${loadStyle(limit.percent)}`});
-                fill.set_width(Math.round(90 * Math.min(100, limit.percent) / 100));
-                track.add_child(fill);
-                box.add_child(track);
-                box.add_child(label(resetTime(limit.resets_at)));
-                children.push(box);
-            }
-            const asOf = typeof value.as_of === 'number' ? value.as_of : Date.parse(value.as_of) / 1000;
-            children.push(label(`as of ${age(asOf)}`, 'tracker-detail', true));
-            line(usage, children);
-        }
-        if (!info.usage?.claude && !info.usage?.codex) line(usage, [label('Neither Claude Code nor Codex has recorded its limits yet')]);
 
         const skills = card('Skills');
         const shown = info.skills.filter(skill => `${skill.name} ${skill.description}`.toLowerCase().includes(query));

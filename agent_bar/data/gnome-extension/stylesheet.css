@@ -229,3 +229,21 @@
 .tracker-copy { padding: 3px 9px; border-radius: 6px; font-size: 12px; color: #c3cad4; background-color: #2c3139; }
 .tracker-copy:hover { background-color: #404957; color: #f3f5f8; }
 .tracker-copy-content { spacing: 5px; }
+
+/* Usage limits: the top bar's section and the Quota tab */
+.tracker-quota-bar { spacing: 8px; padding-left: 2px; }
+.tracker-quota-part { spacing: 3px; }
+.tracker-quota-muted { color: #c3cad4; }
+.tracker-quota-attention { color: #f4c36a; font-weight: bold; }
+.tracker-quota-failed { color: #f28b82; font-weight: bold; }
+.tracker-quota-stale { color: #7d8693; }
+.tracker-quota-limit { spacing: 6px; }
+.tracker-quota-figure { font-size: 12px; }
+.tracker-quota-track { width: 300px; }
+.tracker-quota-wrap { width: 600px; }
+.tracker-quota-note { padding: 8px 12px 0; }
+.tracker-quota-small { font-size: 11px; }
+.tracker-quota-chart { margin-top: 4px; }
+.tracker-quota-day { font-size: 10px; color: #a6afbd; text-align: center; }
+.tracker-quota-legend { spacing: 6px; }
+.tracker-bulk-toggle { padding: 4px 10px; font-size: 12px; }
