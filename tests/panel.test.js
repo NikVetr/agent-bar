@@ -540,3 +540,69 @@ test('message filters pick an agent or a project at either end of a message', ()
     assert.equal(ids('project', 'alpha'), '1,2,3');
     assert.equal(ids('unread'), '');
 });
+
+test('scheduler control inputs give the values pw-control apply takes, or say what to fix', () => {
+    const f = fixture();
+    const {controlTyped, controlValue, controlSummary, controlRequest} = f.context;
+    const integer = (name, extra = {}) => ({name, label: name, kind: 'integer', min: 0, max: 50, value: 4, enabled: true, ...extra});
+    const priority = {name: 'priority', label: 'Priority', kind: 'group', value: {default: 90, hosts: {mba: 'off', mm1: 70}},
+        fields: [integer('default', {min: -1000, max: 1000, value: 90}),
+            {name: 'hosts', label: 'Per host', kind: 'host-map', hosts: ['mba', 'mm1', 'mm2'], min: -1000, max: 1000,
+                value: {mba: 'off', mm1: 70}, enabled: true}]};
+    const typed = controlTyped(priority);
+    assert.deepEqual(JSON.parse(JSON.stringify(typed)), {default: '90', hosts: {mba: 'off', mm1: '70', mm2: ''}});
+    assert.deepEqual(JSON.parse(JSON.stringify(controlValue(priority, typed))), {value: priority.value});
+    typed.hosts.mm1 = '';
+    typed.hosts.mm2 = ' OFF ';
+    assert.deepEqual(JSON.parse(JSON.stringify(controlValue(priority, typed).value)), {default: 90, hosts: {mba: 'off', mm2: 'off'}});
+    typed.hosts.mm2 = 'lots';
+    assert.match(controlValue(priority, typed).error, /Per host on mm2 takes a whole number from -1000 to 1000, or off/);
+    assert.match(controlValue(integer('cap'), '51').error, /from 0 to 50/);
+    assert.match(controlValue(integer('cap', {max: null}), '1.5').error, /cap takes a whole number of at least 0$/);
+    assert.equal(controlValue(integer('cap', {optional: true}), ' ').value, null);
+    assert.match(controlValue(integer('cap'), '').error, /needs a whole number/);
+    const text = {name: 'reason', label: 'Reason', kind: 'text', value: null};
+    assert.match(controlValue(text, '').error, /Reason is required/);
+    assert.equal(controlValue({...text, optional: true}, '').value, null);
+    const choice = {name: 'state', label: 'State', kind: 'choice', value: 'present', choices: [{value: 'present', label: 'Present'}, {value: 'away', label: 'Away'}]};
+    assert.equal(controlValue(choice, 'away').value, 'away');
+    assert.match(controlValue(choice, 'gone').error, /Choose State/);
+    assert.match(controlValue({label: 'Odd', kind: 'boolean'}, 'x').error, /cannot edit/);
+    assert.equal(controlSummary(priority), 'default 90 · Per host mba off, mm1 70');
+    assert.equal(controlSummary({...choice, value: 'away'}), 'Away');
+    assert.equal(controlSummary(integer('cap', {unit: 'jobs', value: null})), 'none');
+    assert.deepEqual(JSON.parse(JSON.stringify(controlRequest({kind: 'queue', id: 'q1'}, integer('max_workers'), 6, 'pool-1', 'r1'))),
+        {protocol: 1, request_id: 'r1', source: 'agent-bar', target: {kind: 'queue', id: 'q1'}, control: 'max_workers', value: 6,
+            expect: {pool_id: 'pool-1', value: 4}});
+});
+
+test('a redescription redraws the Queues tab only when controls or reachability change', () => {
+    const f = fixture();
+    const {controlsSignature} = f.context;
+    const described = facts => ({coordinator: {reachable: true}, pool: {id: 'p', state: 'ACTIVE', facts, controls: []}, hosts: [],
+        queues: [{id: 'q', snapshot_id: 's', state: 'RUNNING', facts, controls: [{name: 'pause', enabled: true}]}]});
+    assert.equal(controlsSignature(described([{label: 'Running jobs', value: '3'}])), controlsSignature(described([{label: 'Running jobs', value: '4'}])));
+    const paused = described([]);
+    paused.queues[0].controls[0].enabled = false;
+    assert.notEqual(controlsSignature(paused), controlsSignature(described([])));
+    assert.equal(controlsSignature(null), '');
+});
+
+test('an applied control sends what was shown as expected, and a refusal comes back as the scheduler worded it', async () => {
+    const f = fixture();
+    const sent = [];
+    f.context.imports.gi.GLib.uuid_string_random = () => 'r1';
+    f.tracker._controls = {pool: {id: 'pool-1'}};
+    f.tracker._control = async (args, input) => {
+        sent.push([Array.from(args), JSON.parse(input)]);
+        return {protocol: 1, ok: false, request_id: 'r1', error: {code: 'conflict', message: 'the current value is 2, not 4'}};
+    };
+    const control = {name: 'max_workers', label: 'Worker cap', kind: 'integer', value: 4};
+    const answer = await f.tracker._applyControl({kind: 'queue', id: 'q1'}, control, 6);
+    assert.equal(answer.error.code, 'conflict');
+    assert.deepEqual(sent[0][0], ['apply']);
+    assert.deepEqual(sent[0][1].expect, {pool_id: 'pool-1', value: 4});
+    f.tracker._control = async () => { throw new Error('pw-control is not installed'); };
+    assert.deepEqual(JSON.parse(JSON.stringify(await f.tracker._applyControl({kind: 'pool', id: 'pool-1'}, control, null))),
+        {ok: false, error: {code: 'failed', message: 'pw-control is not installed'}});
+});

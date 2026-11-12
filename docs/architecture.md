@@ -11,6 +11,7 @@ flowchart LR
     H[Claude and Codex hooks] --> S
     F[Session files: Claude records, Codex rollouts, Copilot logs, Antigravity locks] --> S
     Q[parallel-workers snapshots, optional] --> S
+    G -->|describe, apply| C[pw-control, optional]
     R[Git repositories, read-only] --> S
     S --> L[(ledger.json)]
     S --> P[snapshot.json]
@@ -93,6 +94,14 @@ with `codex queue`, or returns it for a Claude chat. The panel then brings the C
 the cursor back at its end, then paste the note after a blank line. The keys reach whichever window has focus, so they
 go only while the chat's window has it and no other input has come since. Otherwise the note stays on the clipboard;
 the clipboard's earlier text is restored.
+
+Scheduler controls in the Queues tab come from the scheduler's own control command (parallel-workers' `pw-control`,
+protocol 1), which the panel runs directly; the service is not involved. `describe` lists the pool, hosts and queues
+with their facts and typed control descriptors, read from the collector's `cluster-status.json`; it runs when the tab
+opens and every 10 s while it shows, and the tab redraws only when controls or reachability change, keeping what was
+typed. Queues join snapshot rows by `snapshot_id`. `apply` takes one change on stdin with `expect` set to the value
+shown, so the scheduler refuses one made meanwhile, and answers in JSON either way. The panel checks only whole-number
+bounds and required fields itself, and holds a control as applied until a description read after the change arrives.
 
 The extension exports `io.github.nikvetr.AgentBar` at `/org/gnome/Shell/Extensions/AgentBar` on the session bus
 (`Inspect`, `Show`, `Hide`, `Activate`), sharing the panel's navigation code, for tests and automation.

@@ -739,6 +739,98 @@ function failureReport(project, queues, cluster) {
     return lines.join('\n');
 }
 
+// Scheduler controls come from the scheduler's control command (parallel-workers' pw-control), which describes
+// them and applies one change at a time; the panel renders what it describes and holds no scheduler logic.
+const CONTROL_PROTOCOL = 1;
+
+function controlProgram() {
+    return [GLib.find_program_in_path('pw-control'), GLib.build_filenamev([GLib.get_home_dir(), '.local/bin/pw-control'])]
+        .find(path => path && GLib.file_test(path, GLib.FileTest.IS_EXECUTABLE)) || null;
+}
+
+// What a control's inputs start with: its value as text, by field for a group and by host for a host map.
+function controlTyped(control) {
+    if (control.kind === 'group') return Object.fromEntries(control.fields.map(field => [field.name, controlTyped(field)]));
+    if (control.kind === 'host-map')
+        return Object.fromEntries(control.hosts.map(host => [host, control.value?.[host] === undefined ? '' : String(control.value[host])]));
+    if (control.kind === 'choice') return control.value;
+    return control.value === null || control.value === undefined ? '' : String(control.value);
+}
+
+// The value `typed` gives a control, as apply takes it, or {error} saying what to fix. Whole numbers are checked
+// against the control's bounds here; the scheduler checks everything else.
+function controlValue(control, typed) {
+    const text = String(typed ?? '').trim();
+    switch (control.kind) {
+    case 'action':
+        return {value: null};
+    case 'integer': {
+        if (!text) return control.optional ? {value: null} : {error: `${control.label} needs a whole number`};
+        const value = /^-?\d+$/.test(text) ? Number(text) : NaN;
+        const low = control.min ?? -Infinity, high = control.max ?? Infinity;
+        if (Number.isNaN(value) || value < low || value > high)
+            return {error: `${control.label} takes a whole number${control.min !== null && control.max !== null ? ` from ${control.min} to ${control.max}`
+                : control.min !== null ? ` of at least ${control.min}` : control.max !== null ? ` of at most ${control.max}` : ''}`};
+        return {value};
+    }
+    case 'text':
+        return text ? {value: text} : control.optional ? {value: null} : {error: `${control.label} is required`};
+    case 'choice':
+        return control.choices.some(choice => choice.value === typed) ? {value: typed} : {error: `Choose ${control.label}`};
+    case 'host-map': {
+        // A blank host has no override.
+        const value = {};
+        for (const host of control.hosts) {
+            const entry = String(typed?.[host] ?? '').trim().toLowerCase();
+            if (!entry) continue;
+            if (entry === 'off') {
+                value[host] = 'off';
+                continue;
+            }
+            const one = controlValue({kind: 'integer', label: `${control.label} on ${host}`, min: control.min, max: control.max}, entry);
+            if (one.error) return {error: `${one.error}, or off`};
+            value[host] = one.value;
+        }
+        return {value};
+    }
+    case 'group': {
+        const value = {};
+        for (const field of control.fields) {
+            const one = controlValue(field, typed?.[field.name]);
+            if (one.error) return one;
+            value[field.name] = one.value;
+        }
+        return {value};
+    }
+    }
+    return {error: `${control.label} is a ${control.kind} control, which this Agent Bar cannot edit`};
+}
+
+// A control's current value in a few words, for a control shown without inputs.
+function controlSummary(control) {
+    const one = (value, field = control) => value === null || value === undefined ? 'none'
+        : field.kind === 'host-map' ? Object.entries(value).map(([host, v]) => `${host} ${v}`).join(', ') || 'none'
+            : field.kind === 'choice' ? field.choices.find(choice => choice.value === value)?.label ?? String(value)
+                : `${value}${field.unit ? ` ${field.unit}` : ''}`;
+    if (control.kind === 'action') return '';
+    if (control.kind === 'group') return control.fields.map(field => `${field.label} ${one(control.value?.[field.name], field)}`).join(' · ');
+    return one(control.value);
+}
+
+// The apply request for one change. `expect` carries what the user saw, so a change made meanwhile is refused.
+function controlRequest(target, control, value, poolId, requestId) {
+    return {protocol: CONTROL_PROTOCOL, request_id: requestId, source: 'agent-bar', target, control: control.name, value,
+        expect: {pool_id: poolId, value: control.value}};
+}
+
+// What decides whether the Queues tab redraws for a new description: controls and reachability, not facts.
+function controlsSignature(described) {
+    if (!described) return '';
+    const controls = entity => [entity.id, entity.state, entity.enabled, entity.controls];
+    return JSON.stringify([described.coordinator, controls(described.pool || {}), (described.hosts || []).map(controls),
+        (described.queues || []).map(queue => [queue.snapshot_id, ...controls(queue)])]);
+}
+
 class Tracker {
     enable() {
         this._enabled = true;
@@ -760,6 +852,15 @@ class Tracker {
         this._messageValue = null;
         // Message id -> whether it is unfolded, where the user has chosen.
         this._openMessages = new Map();
+        // Scheduler controls: the last description and when it was read, which entities have their controls open,
+        // what was typed into them (with the value it was typed over), and changes applied that the description
+        // does not show yet, by control.
+        this._controls = null;
+        this._controlsAt = 0;
+        this._controlsError = null;
+        this._openControls = new Set();
+        this._controlInputs = new Map();
+        this._controlApplied = new Map();
         // History folders start collapsed the first time they appear.
         this._historySeen = new Set();
         this._view = 'conversations';
@@ -875,6 +976,9 @@ class Tracker {
         this._timer = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 3, () => {
             this._read();
             if (this._setting('scheduler')) this._readCluster();
+            // The scheduler's controls are described again every 10 s while the Queues tab shows them.
+            if (this._button.menu.isOpen && this._view === 'queues' && !this._page && Date.now() - this._controlsAt > 10000)
+                this._loadControls();
             return GLib.SOURCE_CONTINUE;
         });
         this._read();
@@ -1199,6 +1303,10 @@ class Tracker {
             'A project\'s queues finished / outstanding since its last turn. A new turn there, from either provider, drops queues that already finished; other filters show those dimmed.');
         row(queues, [text('Clear', 'tracker-filter')],
             'Beside a project with finished queues: drops them as a new turn there would; running ones stay.');
+        row(queues, [text('Controls', 'tracker-filter')],
+            'On a queue, the pool or a host the scheduler can still change: what it offers (pause, priority, worker cap, memory, '
+            + 'host budgets, drain), described by parallel-workers\' pw-control. Apply sends one change with the value shown; '
+            + 'a change made meanwhile is refused. Irreversible ones ask again. Applied changes show within about 30 s.');
 
         const cluster = card('Cluster dropdown');
         row(cluster, dots(['finished', 'attention', 'failed']),
@@ -2673,6 +2781,14 @@ class Tracker {
         const groups = queueGroups(queues, snapshot.queue_counts, this._setting('queueOrder'), this._queueFilter);
         if (Date.now() / 1000 - snapshot.queue_updated > 120)
             this._section.addMenuItem(this._item('Snapshot stale · start the parallel-workers monitor to refresh queue progress', 'tracker-warning'));
+        if (Date.now() - this._controlsAt > 10000) this._loadControls();
+        const described = this._controls;
+        // Queues the scheduler can still change, by their id in the queue snapshot.
+        const controlled = new Map((described?.queues || []).filter(queue => queue.controls?.length).map(queue => [queue.snapshot_id, queue]));
+        if (this._controlsError) this._section.addMenuItem(this._item(this._controlsError, 'tracker-warning'));
+        else if (described && !described.coordinator?.reachable)
+            this._section.addMenuItem(this._item(`Scheduler controls unavailable: ${described.coordinator?.error || 'its coordinator is unreachable'}`,
+                'tracker-warning'));
         for (const [project, items] of groups) {
             const count = snapshot.queue_counts[project] || {done: 0, total: 0};
             // Other filters can list queues that finished before the project's last turn.
@@ -2699,6 +2815,12 @@ class Tracker {
                 const title = new St.Label({text: queue.label, x_expand: true, style_class: 'tracker-title'});
                 title.clutter_text.ellipsize = Pango.EllipsizeMode.END;
                 line.add_child(title);
+                const entity = controlled.get(queue.id);
+                const editor = new PopupMenu.PopupMenuSection();
+                if (entity) {
+                    line.add_child(this._controlsToggle(`queue:${entity.id}`, queue.label, editor,
+                        section => this._fillControls(section, {kind: 'queue', id: entity.id}, entity, true)));
+                }
                 line.add_child(new St.Label({text: queue.state, style_class: `tracker-chip tracker-chip-${stateStyle(queue.state)}`}));
                 box.add_child(line);
                 const progress = new St.BoxLayout({style_class: 'tracker-progress-line'});
@@ -2714,9 +2836,304 @@ class Tracker {
                 box.add_child(progress);
                 item.add_child(box);
                 body.addMenuItem(item);
+                if (entity) body.addMenuItem(editor);
             }
         }
         if (!groups.length) this._section.addMenuItem(this._item('No matching watched queues', 'tracker-empty'));
+        const pool = described?.pool;
+        const hosts = (described?.hosts || []).filter(host => !query || `pool ${host.label}`.toLowerCase().includes(query));
+        if (pool && (!query || hosts.length)) {
+            const name = pool.facts?.find(fact => fact.label === 'Name')?.value || pool.id;
+            const body = this._projectSection('scheduler:pool', 'Pool and hosts', name,
+                `${pool.state} · ${described.hosts.length} host${described.hosts.length === 1 ? '' : 's'}`);
+            this._controlledRow(body, {kind: 'pool', id: pool.id}, 'Pool', pool);
+            for (const host of hosts) this._controlledRow(body, {kind: 'host', id: host.id}, host.label, host);
+        }
+    }
+
+    // One pool or host: its facts on one line, and its controls under it once opened.
+    _controlledRow(body, target, title, entity) {
+        const item = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
+        item._ornamentLabel?.hide();
+        item.add_style_class_name('tracker-queue-row');
+        const line = new St.BoxLayout({style_class: 'tracker-row-title', x_expand: true});
+        line.add_child(new St.Label({text: title, style_class: 'tracker-title', y_align: Clutter.ActorAlign.CENTER}));
+        const facts = new St.Label({text: (entity.facts || []).filter(fact => fact.label !== 'Name').map(fact => `${fact.label} ${fact.value}`).join(' · '),
+            x_expand: true, style_class: 'tracker-detail', y_align: Clutter.ActorAlign.CENTER});
+        facts.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+        line.add_child(facts);
+        const editor = new PopupMenu.PopupMenuSection();
+        if (entity.controls?.length)
+            line.add_child(this._controlsToggle(`${target.kind}:${target.id}`, title, editor, section => this._fillControls(section, target, entity, false)));
+        item.add_child(line);
+        body.addMenuItem(item);
+        if (entity.controls?.length) body.addMenuItem(editor);
+    }
+
+    // A button that opens or closes an entity's controls in `editor`, filled the first time it opens.
+    _controlsToggle(key, name, editor, fill) {
+        const button = new St.Button({label: 'Controls', can_focus: true, toggle_mode: true, y_align: Clutter.ActorAlign.CENTER,
+            style_class: 'tracker-filter tracker-control-toggle', accessible_name: `Scheduler controls for ${name}`});
+        const show = () => {
+            const open = this._openControls.has(key);
+            button.set_checked(open);
+            editor.actor.visible = open;
+            if (open && fill) {
+                fill(editor);
+                fill = null;
+            }
+        };
+        button.connect('clicked', () => {
+            if (this._openControls.has(key)) this._openControls.delete(key);
+            else this._openControls.add(key);
+            show();
+        });
+        show();
+        return button;
+    }
+
+    _fillControls(editor, target, entity, facts) {
+        if (facts && entity.facts?.length) {
+            const item = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
+            item._ornamentLabel?.hide();
+            item.add_style_class_name('tracker-control');
+            const label = new St.Label({text: entity.facts.map(fact => `${fact.label} ${fact.value}`).join(' · '),
+                style_class: 'tracker-detail tracker-control-wrap'});
+            label.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+            label.clutter_text.line_wrap = true;
+            item.add_child(label);
+            editor.addMenuItem(item);
+        }
+        for (const control of entity.controls) editor.addMenuItem(this._controlItem(target, control));
+    }
+
+    // One control: its inputs and button; or, while it is unavailable or a change to it has yet to show, its value
+    // and why. An irreversible one asks again, with the scheduler's own question, before it applies.
+    _controlItem(target, control) {
+        const key = `${target.kind}:${target.id}:${control.name}`;
+        const item = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
+        item._ornamentLabel?.hide();
+        item.add_style_class_name('tracker-control');
+        const box = new St.BoxLayout({vertical: true, x_expand: true, style_class: 'tracker-control-box'});
+        item.add_child(box);
+        const label = (text, style) => new St.Label({text, style_class: style, y_align: Clutter.ActorAlign.CENTER});
+        const wrapped = (text, style) => {
+            const result = label(text, `${style} tracker-control-wrap`);
+            result.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+            result.clutter_text.line_wrap = true;
+            return result;
+        };
+        const head = new St.BoxLayout({style_class: 'tracker-control-line'});
+        box.add_child(head);
+        const applied = this._controlApplied.get(key);
+        if (applied && (this._controls?.as_of ?? 0) >= applied.at) this._controlApplied.delete(key);
+        const waiting = this._controlApplied.get(key);
+        const note = text => `Applied${text ? `: ${text}` : ''}. Shown here once the scheduler's next state arrives, within about 30 s.`;
+        if (!control.enabled || waiting) {
+            head.add_child(label(control.label, 'tracker-control-label'));
+            const summary = new St.Label({text: controlSummary(control), x_expand: true, style_class: 'tracker-detail', y_align: Clutter.ActorAlign.CENTER});
+            summary.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+            head.add_child(summary);
+            box.add_child(wrapped(waiting ? note(waiting.message) : control.disabled_reason || 'Unavailable now', 'tracker-detail tracker-control-help'));
+            return item;
+        }
+        // What was typed survives the list redrawing, until the value it was typed over changes.
+        const base = JSON.stringify(control.value);
+        let saved = this._controlInputs.get(key);
+        if (!saved || saved.base !== base) {
+            saved = {base, typed: {value: controlTyped(control)}};
+            this._controlInputs.set(key, saved);
+        }
+        const typed = saved.typed;
+        const verb = control.kind === 'action' ? control.label : 'Apply';
+        const button = new St.Button({label: verb, can_focus: true, y_align: Clutter.ActorAlign.CENTER,
+            style_class: 'tracker-filter tracker-control-apply', accessible_name: `${verb} ${control.kind === 'action' ? '' : control.label}`.trim()});
+        const cancel = new St.Button({label: 'Cancel', can_focus: true, visible: false, y_align: Clutter.ActorAlign.CENTER,
+            style_class: 'tracker-filter', accessible_name: `Do not ${control.label.toLowerCase()}`});
+        const buttons = new St.BoxLayout({style_class: 'tracker-control-buttons', y_align: Clutter.ActorAlign.CENTER});
+        buttons.add_child(button);
+        buttons.add_child(cancel);
+        const fill = () => new St.Widget({x_expand: true});
+        if (control.kind === 'action') {
+            head.add_child(buttons);
+        } else if (control.kind === 'group') {
+            head.add_child(label(control.label, 'tracker-control-label tracker-control-heading'));
+            head.add_child(fill());
+            head.add_child(buttons);
+            for (const field of control.fields) {
+                const line = new St.BoxLayout({style_class: 'tracker-control-line tracker-control-field'});
+                line.add_child(label(field.label, 'tracker-control-label'));
+                line.add_child(field.enabled ? this._controlInput(field, typed.value, field.name)
+                    : label(`${controlSummary(field)} · ${field.disabled_reason || 'unavailable'}`, 'tracker-detail'));
+                if (field.unit && field.enabled && field.kind !== 'host-map') line.add_child(label(field.unit, 'tracker-detail'));
+                box.add_child(line);
+            }
+        } else {
+            head.add_child(label(control.label, 'tracker-control-label'));
+            head.add_child(this._controlInput(control, typed, 'value'));
+            if (control.unit && control.kind !== 'host-map') head.add_child(label(control.unit, 'tracker-detail'));
+            head.add_child(fill());
+            head.add_child(buttons);
+        }
+        if (control.help) box.add_child(wrapped(control.help, 'tracker-detail tracker-control-help'));
+        const status = wrapped('', 'tracker-detail');
+        status.hide();
+        box.add_child(status);
+        const show = (text, style = 'tracker-detail') => {
+            status.text = text;
+            status.style_class = `${style} tracker-control-wrap`;
+            status.visible = !!text;
+        };
+        let armed = false;
+        const disarm = () => {
+            armed = false;
+            button.label = verb;
+            cancel.hide();
+        };
+        cancel.connect('clicked', () => {
+            disarm();
+            show('');
+        });
+        button.connect('clicked', async () => {
+            const result = controlValue(control, typed.value);
+            if (result.error) {
+                show(result.error, 'tracker-warning');
+                return;
+            }
+            if (control.danger === 'irreversible' && !armed) {
+                armed = true;
+                button.label = 'Confirm';
+                cancel.show();
+                show(control.confirm || 'This cannot be undone.', 'tracker-detail tracker-attention');
+                return;
+            }
+            disarm();
+            const ready = on => {
+                button.reactive = on;
+                button.opacity = on ? 255 : 110;
+            };
+            ready(false);
+            show('Applying…');
+            const answer = await this._applyControl(target, control, result.value);
+            if (!this._enabled) return;
+            if (answer.ok) {
+                // The description lags the scheduler by up to one collector read, so the control waits for it.
+                this._controlApplied.set(key, {at: Date.now() / 1000, message: answer.message});
+                this._controlInputs.delete(key);
+                show(note(answer.message));
+                return;
+            }
+            ready(true);
+            const error = answer.error || {};
+            show((error.message || 'The scheduler refused the change') + (error.code === 'conflict' ? '. It changed since this was shown; '
+                + 'the shown values update within about 30 s.' : error.retryable ? '. Try again shortly.' : ''), 'tracker-warning');
+        });
+        return item;
+    }
+
+    // An input for one control or group field, writing what is typed into holder[key].
+    _controlInput(control, holder, key) {
+        if (control.kind === 'choice') {
+            const box = new St.BoxLayout({style_class: 'tracker-control-choices'});
+            const buttons = control.choices.map(choice => {
+                const button = new St.Button({label: choice.label, can_focus: true, toggle_mode: true, style_class: 'tracker-filter',
+                    accessible_name: `${control.label} ${choice.label}`});
+                button.connect('clicked', () => {
+                    holder[key] = choice.value;
+                    buttons.forEach((other, index) => other.set_checked(control.choices[index].value === choice.value));
+                });
+                box.add_child(button);
+                return button;
+            });
+            buttons.forEach((button, index) => button.set_checked(control.choices[index].value === holder[key]));
+            return box;
+        }
+        if (control.kind === 'host-map') {
+            // Three hosts to a line; a blank one has no override.
+            const box = new St.BoxLayout({vertical: true, style_class: 'tracker-control-hosts'});
+            let line = null;
+            control.hosts.forEach((host, index) => {
+                if (index % 3 === 0) box.add_child(line = new St.BoxLayout({style_class: 'tracker-control-line'}));
+                line.add_child(new St.Label({text: host, style_class: 'tracker-detail tracker-control-host', y_align: Clutter.ActorAlign.CENTER}));
+                line.add_child(this._controlEntry(holder[key], host, '—', `${control.label} on ${host}: a number, off, or blank for none`));
+            });
+            return box;
+        }
+        return this._controlEntry(holder, key, control.optional ? 'none' : '', control.label,
+            control.kind === 'text' ? 'tracker-control-text' : '');
+    }
+
+    _controlEntry(holder, key, hint, name, style = '') {
+        const entry = new St.Entry({text: holder[key] ?? '', hint_text: hint, can_focus: true, accessible_name: name,
+            style_class: `tracker-search tracker-control-entry ${style}`.trim(), y_align: Clutter.ActorAlign.CENTER});
+        entry.clutter_text.connect('text-changed', () => {
+            holder[key] = entry.get_text();
+        });
+        return entry;
+    }
+
+    async _applyControl(target, control, value) {
+        const request = controlRequest(target, control, value, this._controls?.pool?.id ?? null, GLib.uuid_string_random());
+        try {
+            return await this._control(['apply'], JSON.stringify(request));
+        } catch (error) {
+            return {ok: false, error: {code: 'failed', message: error.message}};
+        }
+    }
+
+    // Reads what the scheduler's controls are now; the Queues tab redraws when they or its reachability change.
+    async _loadControls() {
+        if (this._controlsLoading) return;
+        this._controlsAt = Date.now();
+        if (!controlProgram()) {
+            this._controls = this._controlsError = null;
+            return;
+        }
+        this._controlsLoading = true;
+        const before = [controlsSignature(this._controls), this._controlsError];
+        try {
+            this._controls = await this._control(['describe']);
+            this._controlsError = null;
+        } catch (error) {
+            this._controls = null;
+            this._controlsError = `Scheduler controls unavailable: ${error.message}`;
+        } finally {
+            this._controlsLoading = false;
+            this._controlsAt = Date.now();
+        }
+        if (this._enabled && this._button.menu.isOpen && this._view === 'queues' && !this._page
+            && (controlsSignature(this._controls) !== before[0] || this._controlsError !== before[1]))
+            this._later(() => this._renderRows());
+    }
+
+    // Runs the scheduler's control command with `input` on stdin, resolving with its JSON answer whatever its exit
+    // status, since it answers refusals in JSON too.
+    _control(args, input = '') {
+        return new Promise((resolve, reject) => {
+            const program = controlProgram();
+            if (!program) {
+                reject(new Error('pw-control is not installed'));
+                return;
+            }
+            try {
+                const process = Gio.Subprocess.new([program, ...args],
+                    Gio.SubprocessFlags.STDIN_PIPE | Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE);
+                process.communicate_utf8_async(input, this._cancel, (proc, result) => {
+                    try {
+                        const [, stdout, stderr] = proc.communicate_utf8_finish(result);
+                        let value;
+                        try {
+                            value = JSON.parse(stdout);
+                        } catch (_) {
+                            throw new Error((stderr || stdout || 'no answer').trim().split('\n').pop());
+                        }
+                        if (value?.protocol !== CONTROL_PROTOCOL)
+                            throw new Error(`pw-control speaks protocol ${value?.protocol}; this Agent Bar knows ${CONTROL_PROTOCOL}`);
+                        resolve(value);
+                    } catch (error) { reject(error); }
+                });
+            } catch (error) { reject(error); }
+        });
     }
 
     // Each pair of conversations' messages as a thread, oldest first. The header names the projects and has a button

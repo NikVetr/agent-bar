@@ -71,6 +71,24 @@
 .tracker-window-control:hover { background-color: #455061; }
 .tracker-queue-row { padding: 10px 12px; border-top: 1px solid #3b414a; }
 .tracker-queue-earlier { opacity: 150; }
+.tracker-control-toggle { padding: 3px 9px; font-size: 12px; }
+.tracker-control { padding: 6px 12px 6px 28px; background-color: #22262c; }
+.tracker-control-box { spacing: 5px; }
+.tracker-control-line { spacing: 8px; }
+.tracker-control-field { padding-left: 12px; }
+.tracker-control-label { min-width: 140px; font-size: 12px; color: #d5dbe3; }
+.tracker-control-heading { font-weight: bold; }
+.tracker-control-help { color: #8f98a6; }
+/* Wrapped lines in a control get a set width, which the menu's 680 px leaves room for; otherwise they widen it. */
+.tracker-control-wrap { width: 580px; }
+.tracker-control-buttons { spacing: 4px; }
+.tracker-control-apply { background-color: #343a44; color: #eef2f7; padding: 4px 11px; }
+.tracker-control-apply:hover { background-color: #404957; }
+.tracker-control-choices { spacing: 4px; }
+.tracker-control-hosts { spacing: 4px; }
+.tracker-control-host { min-width: 44px; text-align: right; }
+.tracker-control-entry { margin: 0; padding: 3px 8px; width: 64px; font-size: 12px; }
+.tracker-control-text { width: 220px; }
 .tracker-progress-line { spacing: 12px; }
 .tracker-progress { width: 180px; height: 8px; border-radius: 4px; background-color: #3a404a; }
 .tracker-progress-fill { height: 8px; border-radius: 4px; background-color: #a6afbd; }
