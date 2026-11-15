@@ -171,8 +171,7 @@
 .tracker-segment:checked { background-color: #4a5566; color: #ffffff; }
 .tracker-back { font-size: 13px; padding: 6px 9px; }
 .tracker-header-actions { spacing: 2px; }
-.tracker-help-mark { width: 14px; height: 14px; border: 1.5px solid #b4bbc5; border-radius: 9px; font-size: 11px; font-weight: bold; }
-.tracker-gear:hover .tracker-help-mark { border-color: #f3f5f8; }
+.tracker-help-mark { width: 16px; height: 16px; font-size: 15px; font-weight: bold; text-align: center; }
 
 /* Guide */
 .tracker-help-figure { padding: 18px 0 16px; }
@@ -257,3 +256,4 @@
 .tracker-quota-day { font-size: 10px; color: #a6afbd; text-align: center; }
 .tracker-quota-legend { spacing: 6px; }
 .tracker-bulk-toggle { padding: 4px 10px; font-size: 12px; }
+.tracker-cluster-tab { padding: 0; }

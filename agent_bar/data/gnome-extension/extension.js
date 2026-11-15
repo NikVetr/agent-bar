@@ -575,6 +575,20 @@ function paintGlyph(cr, size, kind, used, rgba) {
         cr.arc(c, c, r, 0, 2 * Math.PI);
         cr.stroke();
     };
+    if (kind === 'gear') {
+        // A plain gear: a ring with six short teeth.
+        cr.setLineWidth(2);
+        cr.arc(c, c, r * 0.58, 0, 2 * Math.PI);
+        cr.stroke();
+        cr.setLineWidth(2.6);
+        for (let i = 0; i < 6; i++) {
+            const angle = i * Math.PI / 3;
+            cr.moveTo(c + Math.cos(angle) * r * 0.72, c + Math.sin(angle) * r * 0.72);
+            cr.lineTo(c + Math.cos(angle) * (r + 0.5), c + Math.sin(angle) * (r + 0.5));
+        }
+        cr.stroke();
+        return;
+    }
     if (kind === 'disk') {
         // A drive, filled as far as it is full.
         const left = 1.5, right = size - 1.5, ry = size * 0.14, top = 1 + ry, bottom = size - 1 - ry;
@@ -955,7 +969,7 @@ class Tracker {
     enable() {
         this._enabled = true;
         // A screen lock disables and re-enables this same object; disable() destroyed these widgets.
-        this._body = this._pickerList = this._clusterBody = this._clusterCards = this._clusterBarSignature = this._quotaSignature = null;
+        this._body = this._scroll = this._pickerList = this._clusterCards = this._clusterBarSignature = this._quotaSignature = null;
         this._cancel = new Gio.Cancellable();
         this._borrowed = new Map();
         this._returnsLoaded = false;
@@ -1054,7 +1068,7 @@ class Tracker {
         this._nav.menu.addMenuItem(this._item('Loading windows…'));
         this._nav.menu.connect('open-state-changed', (_menu, open) => { if (open) this._buildNav(); });
         this._clusterPath = CLUSTER;
-        this._clusterButton = new PanelMenu.Button(0.0, 'Cluster status');
+        this._clusterButton = new PanelMenu.Button(0.0, 'Cluster status', true);
         const clusterBar = new St.BoxLayout({style_class: 'tracker-cluster-bar'});
         clusterBar.add_child(new St.Icon({icon_name: 'utilities-system-monitor-symbolic', icon_size: 14,
             style_class: 'tracker-cluster-icon', y_align: Clutter.ActorAlign.CENTER}));
@@ -1071,11 +1085,43 @@ class Tracker {
         this._clusterButton.add_child(clusterBar);
         this._clusterButton.visible = false;
         Main.panel.addToStatusArea('agent-bar-cluster', this._clusterButton, 3, 'left');
-        this._clusterButton.menu.box.add_style_class_name('tracker-menu');
-        this._clusterButton.menu.addMenuItem(this._item('Loading cluster status…'));
-        this._clusterButton.menu.connect('open-state-changed', (_menu, open) => { if (open) this._buildCluster(); });
+        // A button without a menu still gets a placeholder one, which the panel would switch to when the pointer crosses
+        // the indicator with the dropdown open, closing it.
+        Main.panel.menuManager.removeMenu(this._clusterButton.menu);
+        // The cluster indicator opens the dropdown on its Cluster tab; while the dropdown is open, the stage's handler
+        // below switches to it.
+        this._clusterButton.connect('button-press-event', () => {
+            if (!this._button.menu.isOpen) {
+                this._openOn = 'cluster';
+                this._button.menu.open();
+            }
+            return Clutter.EVENT_STOP;
+        });
+        // While the dropdown is open, a press on another top-bar part switches to that part's tab instead of closing it;
+        // a press on the open tab's own part, or anywhere else, still closes it. GNOME 42 routes every event during the
+        // dropdown's grab through the menu's actor, where the panel's menu manager closes the menu on any press outside
+        // it. That handler was connected first, so it is moved behind this one.
+        const manager = Main.panel.menuManager, dropdown = this._button.menu.actor;
+        if (typeof manager._onCapturedEvent === 'function') {
+            dropdown.disconnectObject(manager);
+            this._tabPress = dropdown.connect('captured-event', (_actor, event) => {
+                const type = event.type();
+                if (type === Clutter.EventType.BUTTON_RELEASE && this._pressTaken) {
+                    this._pressTaken = false;
+                    return Clutter.EVENT_STOP;
+                }
+                if (type !== Clutter.EventType.BUTTON_PRESS || !this._button.menu.isOpen) return Clutter.EVENT_PROPAGATE;
+                const source = global.stage.get_event_actor(event);
+                const hit = [...this._parts, [this._clusterButton, 'cluster']].find(([actor]) => actor.visible && source && actor.contains(source));
+                if (!hit || hit[1] === this._view && !this._page) return Clutter.EVENT_PROPAGATE;
+                this._pressTaken = true;
+                this._showTab(hit[1]);
+                return Clutter.EVENT_STOP;
+            });
+            dropdown.connectObject('captured-event', manager._onCapturedEvent.bind(manager), manager);
+        }
         // Each dropdown hangs from its button's left edge rather than from its middle.
-        for (const button of [this._button, this._nav, this._clusterButton]) button.menu.setSourceAlignment(0);
+        for (const button of [this._button, this._nav]) button.menu.setSourceAlignment(0);
         this._holdHoverSwitch();
         this._quick = new St.BoxLayout({style_class: 'tracker-quick'});
         // Shortcuts without room on the left continue at the start of the right-hand box.
@@ -1111,6 +1157,7 @@ class Tracker {
                 if (tab) this._view = tab;
                 this._menuFocus = global.display.focus_window;
                 this._menuSnapshot = this._snapshot;
+                this._renderedPlace = null;
                 this._buildMenu();
             }
         });
@@ -1158,7 +1205,7 @@ class Tracker {
         // button into its dropdown can open a neighbour. Hover switches away from a tracker
         // dropdown wait for the pointer to rest; keyboard switches stay immediate.
         const manager = Main.panel.menuManager, change = manager._changeMenu;
-        const ours = [this._button.menu, this._nav.menu, this._clusterButton.menu];
+        const ours = [this._button.menu, this._nav.menu];
         const hold = {timer: 0, menu: null, own: Object.prototype.hasOwnProperty.call(manager, '_changeMenu')};
         hold.wrapper = menu => {
             // A keyboard switch follows key focus onto the new button; a hover switch does not.
@@ -1229,7 +1276,7 @@ class Tracker {
                 if (Array.isArray(fallback) ? Array.isArray(saved[key]) && saved[key].every(valid) : valid(saved[key]))
                     this._settings[key] = saved[key];
             }
-            // Set from the cluster dropdown's Snooze buttons, not from Settings.
+            // Set from the Cluster tab's Snooze buttons, not from Settings.
             const snoozes = saved.clusterSnoozed;
             if (snoozes && typeof snoozes === 'object' && Object.values(snoozes).every(until => until === null || Number.isFinite(until)))
                 this._settings.clusterSnoozed = snoozes;
@@ -1239,8 +1286,7 @@ class Tracker {
     }
 
     _applySettings() {
-        for (const actor of [this._bar, this._quick, this._quickRight, this._quickMenu.box, this._button.menu.box, this._nav.menu.box,
-            this._clusterButton?.menu.box].filter(Boolean)) {
+        for (const actor of [this._bar, this._quick, this._quickRight, this._quickMenu.box, this._button.menu.box, this._nav.menu.box]) {
             if (this._setting('palette') === 'colorblind') actor.add_style_class_name('tracker-colorblind');
             else actor.remove_style_class_name('tracker-colorblind');
         }
@@ -1275,7 +1321,8 @@ class Tracker {
                 const text = new St.BoxLayout({vertical: true, x_expand: true, y_align: Clutter.ActorAlign.CENTER});
                 text.add_child(new St.Label({text: label, style_class: 'tracker-setting-label'}));
                 const detail = new St.Label({text: description, style_class: 'tracker-detail'});
-                detail.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+                detail.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+                detail.clutter_text.line_wrap = true;
                 text.add_child(detail);
                 item.add_child(text);
                 const segments = new St.BoxLayout({style_class: 'tracker-segments', y_align: Clutter.ActorAlign.CENTER});
@@ -1301,8 +1348,17 @@ class Tracker {
     // A labelled copy of the top bar, then what each state, color and control means, drawn with
     // the same styles as the real ones so a palette change applies here too.
     _renderHelp() {
+        // Opened from a tab, the Guide starts at the part about it.
+        const cards = {};
+        const from = {conversations: 'Chats', queues: 'Queues', cluster: 'Cluster', git: 'Git', messages: 'Messages', quota: 'Quota'}[this._helpFrom];
+        this._helpFrom = null;
+        if (from) this._scrollTo(() => {
+            const heading = cards[from];
+            return heading ? heading.actor.get_transformed_position()[1] - this._section.actor.get_transformed_position()[1] : 0;
+        });
         const card = title => {
-            this._section.addMenuItem(this._item(title, 'tracker-settings-section'));
+            cards[title] = this._item(title, 'tracker-settings-section');
+            this._section.addMenuItem(cards[title]);
             const section = new PopupMenu.PopupMenuSection();
             section.actor.add_style_class_name('tracker-settings-card');
             this._section.addMenuItem(section);
@@ -1344,7 +1400,9 @@ class Tracker {
             + '6 h old (Claude Code refreshes its figures only when it fetches them, as /usage does). Hover for every limit; '
             + 'clicking opens Quota, with the 5-hour and model limits, the pace, when it would run out, and use by day.');
         row(top, [text('Click a part', 'tracker-help-bright')],
-            'Each part opens the dropdown on its tab: the chat counts on Chats, Q on Queues, the envelope on Messages, the limits on Quota.');
+            'Each part lights on its own and opens the dropdown on its tab: the chat counts on Chats, Q on Queues, the envelope on Messages, '
+            + 'the limits on Quota, the cluster indicator on Cluster. With the dropdown open, clicking another part switches tabs; '
+            + 'clicking the open tab\'s part, or anywhere else, closes it. ? opens this guide at the part about the tab you were on.');
         row(top, [text('✳ project…', 'tracker-quick-button tracker-claude')], limit
             ? `Up to ${limit} chats needing review get a shortcut, as many as fit, the longest waiting first; clicking one brings that `
                 + 'chat forward and clears it. They continue right of the middle when the left half is full; +2 more lists the rest.'
@@ -1357,7 +1415,7 @@ class Tracker {
         if (scheduler) row(top, [this._glyph('disk', 0.92), this._glyph('memory'), this._glyph('down', null, 'failed'),
             this._glyph('unmounted', null, 'failed'), text('+1', 'tracker-failed')],
             'A cluster warning, by kind: a drive nearly full (filled as far as it is), memory pressure, a host unreachable, '
-            + 'or the shared drive unmounted. Red when critical; +1 counts the others. The dropdown names the hosts.');
+            + 'or the shared drive unmounted. Red when critical; +1 counts the others. Clicking it opens the Cluster tab, which names the hosts.');
         if (this._setting('messages')) row(top, [this._glyph('mail', null, 'attention'), text('2', 'tracker-attention')],
             'Messages from other agents wait in 2 chats until you start a turn there, with no wake-up coming: waking off, '
             + 'a Claude chat idle over a week, or a Codex chat not open in VS Code. Clicking it opens Messages.');
@@ -1435,6 +1493,22 @@ class Tracker {
                 + 'chat open in VS Code, once any turn in progress ends.');
         }
 
+        const quota = card('Quota');
+        const bar = new St.Widget({style_class: 'tracker-progress tracker-help-progress', y_align: Clutter.ActorAlign.CENTER});
+        const used = new St.Widget({style_class: 'tracker-progress-fill tracker-progress-attention'});
+        used.set_width(64);
+        bar.add_child(used);
+        row(quota, [bar], 'How much of a limit is used, amber once under 25% is left and red under 10%, with when it resets.');
+        row(quota, [chip('Limiting now', 'failed')], 'A limit that is holding you back now, such as a model\'s own weekly limit once it is used up.');
+        row(quota, [text('0.54%/h', 'tracker-detail')], 'The pace since the reading a day earlier, or this window\'s average when there is none, '
+            + 'and when that pace would use the rest: before the reset, by how much, or what will be used by then.');
+        row(quota, [this._drawing((cr, width, height) => paintDays(cr, width, height, [[30, 8], [12, 4], [0, 0], [20, 10]]
+            .map(([total, model]) => ({used: total, parts: [['Model', model], ['Other', total - model]]}))), {width: 72, height: 24})],
+            'Points of a weekly limit used each day, a scoped model\'s share (such as Fable) in violet; hover for the figures.');
+        row(quota, [text(this._setting('claudeUsage') ? 'Reads: on' : 'Reads: off', 'tracker-detail')],
+            'Claude Code refreshes its limits only when it fetches them, as /usage does. Settings › Integrations › Read Claude limits '
+            + 'has Agent Bar read them every 10 minutes with Claude Code\'s sign-in. Codex records its own as it works.');
+
         // The rest describes the job scheduler integration.
         if (!scheduler) return;
 
@@ -1463,7 +1537,7 @@ class Tracker {
             + 'or why it is unavailable now. Edited settings turn blue and go together with Apply, each with the value shown, '
             + 'so one changed meanwhile is refused; irreversible actions ask first. Applied changes show within about 30 s.');
 
-        const cluster = card('Cluster dropdown');
+        const cluster = card('Cluster');
         row(cluster, dots(['finished', 'attention', 'failed']),
             'A host is fine, has a warning, or is unreachable. Warnings are listed first, each with its sign from the top bar; '
             + 'a clock marks a host that stopped updating. Snooze keeps one off the top bar until it clears, or for at most '
@@ -1703,6 +1777,15 @@ class Tracker {
     }
 
     // A rebuild run from inside a click would destroy the widget still handling that click.
+    // Scrolls the dropdown's list to `value` once it has been laid out with its new rows.
+    _scrollTo(value) {
+        const scroll = this._scroll;
+        GLib.timeout_add(GLib.PRIORITY_DEFAULT_IDLE, 30, () => {
+            if (this._enabled && this._scroll === scroll) scroll.vscroll.adjustment.value = typeof value === 'function' ? value() : value;
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
     _later(callback) {
         GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
             if (this._enabled) callback();
@@ -1743,7 +1826,7 @@ class Tracker {
                 this._clusterError = error.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.NOT_FOUND) ? null : error.message;
             }
             this._renderClusterBar();
-            if (this._clusterButton.menu.isOpen) this._updateCluster();
+            if (this._clusterShown()) this._updateCluster();
         });
     }
 
@@ -1761,7 +1844,7 @@ class Tracker {
         else snoozes[key] = seconds === null ? null : Math.round(Date.now() / 1000 + seconds);
         if (this._clusterCards) this._clusterCards.choosing = this._clusterCards.typed = null;
         this._saveSetting('clusterSnoozed', snoozes);
-        if (this._clusterButton.menu.isOpen) this._updateCluster();
+        if (this._clusterShown()) this._updateCluster();
     }
 
     // The picked measures, each colored by its load, then the most serious warning and how many more.
@@ -1808,39 +1891,30 @@ class Tracker {
             ...warnings.map(warning => `${warning.host} ${warning.text}`), ...!cluster && this._clusterError ? [this._clusterError] : []].join(', ');
     }
 
-    // Builds the cluster dropdown once per opening, and again only when its hosts, layout or failed
-    // queues change; other snapshots update it in place.
-    _buildCluster() {
-        const menu = this._clusterButton.menu;
-        this._releaseFocus(menu);
-        // removeAll() only drops menu items; the scrolled body is a plain actor.
-        this._clusterBody?.destroy();
-        this._clusterBody = null;
-        menu.removeAll();
+    // Whether the dropdown shows the Cluster tab now, so the cluster's figures update in place.
+    _clusterShown() {
+        return this._button.menu.isOpen && this._view === 'cluster' && !this._page;
+    }
+
+    // Switches the open dropdown to `tab`.
+    _showTab(tab) {
+        this._page = null;
+        this._picker = null;
+        this._view = tab;
+        this._buildMenu();
+    }
+
+    // The Cluster tab: warnings, failed jobs, each measure or host, and the shared drive. Its totals sit in the dropdown's
+    // header, and the figures update in place as the collector writes (_updateCluster).
+    _renderCluster() {
         this._clusterCards = null;
         const cluster = this._cluster;
-        if (!cluster) {
-            menu.addMenuItem(this._item(this._clusterError || 'No cluster snapshot yet', 'tracker-warning'));
+        const header = this._clusterHeader;
+        if (!cluster || !header) {
+            this._section.addMenuItem(this._item(this._clusterError || 'No cluster snapshot yet', 'tracker-warning'));
             return;
         }
-        const header = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
-        header._ornamentLabel?.hide();
-        header.add_style_class_name('tracker-heading');
-        const heading = new St.BoxLayout({vertical: true, x_expand: true});
-        heading.add_child(new St.Label({text: 'Cluster', style_class: 'tracker-heading-title'}));
-        const subtitle = new St.Label({style_class: 'tracker-detail'});
-        heading.add_child(subtitle);
-        header.add_child(heading);
-        const stats = {}, captions = {};
-        for (const [key, caption] of [['cpu', 'CPU'], ['cores', 'busy cores'], ['memory', 'memory']]) {
-            const stat = new St.BoxLayout({vertical: true, style_class: 'tracker-summary'});
-            stats[key] = new St.Label({style_class: 'tracker-summary-value'});
-            captions[key] = new St.Label({text: caption, style_class: 'tracker-detail'});
-            stat.add_child(stats[key]);
-            stat.add_child(captions[key]);
-            header.add_child(stat);
-        }
-        menu.addMenuItem(header);
+        const {stats, captions, subtitle} = header;
         const columns = new St.BoxLayout({vertical: true, x_expand: true, style_class: 'tracker-cluster-grid'});
         // Warnings and stale hosts come first.
         const problems = new St.BoxLayout({vertical: true, x_expand: true, visible: false, style_class: 'tracker-cluster-group'});
@@ -1911,16 +1985,11 @@ class Tracker {
         });
         shared.add_child(sharedFigures);
         columns.add_child(shared);
-        this._clusterBody = new St.ScrollView({style_class: 'tracker-scroll', overlay_scrollbars: true, x_expand: true,
-            hscrollbar_policy: St.PolicyType.NEVER, vscrollbar_policy: St.PolicyType.AUTOMATIC});
-        this._clusterBody.set_style(`max-height: ${Main.layoutManager.primaryMonitor.height - 200}px;`);
-        this._clusterBody.add_actor(columns);
-        menu.box.add_child(this._clusterBody);
-        menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
-        const footer = this._item('', 'tracker-footer');
-        footer.label.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
-        footer.label.clutter_text.line_wrap = true;
-        menu.addMenuItem(footer);
+        const item = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false, style_class: 'tracker-cluster-tab'});
+        item._ornamentLabel?.hide();
+        item.add_child(columns);
+        this._section.addMenuItem(item);
+        const footer = this._footer;
         this._clusterCards = {signature: this._clusterSignature(cluster), cards, failures, stats, captions, subtitle,
             problems, problemList, sharedDisk, sharedFrom, sharedDetail, sharedFigures, sharedStats, footer};
         this._updateCluster();
@@ -2108,7 +2177,8 @@ class Tracker {
         const cluster = this._cluster;
         const view = this._clusterCards;
         if (!cluster || !view || view.signature !== this._clusterSignature(cluster)) {
-            this._buildCluster();
+            // Redrawn whole: a host, a failed project or its window came or went.
+            if (this._clusterShown()) this._renderRows();
             return;
         }
         const now = Date.now() / 1000;
@@ -2213,7 +2283,7 @@ class Tracker {
         view.problems.visible = ordered.length > 0;
         if (signature === view.problemsSignature) return;
         view.problemsSignature = signature;
-        this._releaseFocus(this._clusterButton.menu, view.problemList);
+        this._releaseFocus(this._button.menu, view.problemList);
         view.problemList.destroy_all_children();
         const button = (label, name, action) => {
             const actor = new St.Button({label, can_focus: true, style_class: 'tracker-copy', accessible_name: name,
@@ -2500,10 +2570,15 @@ class Tracker {
             if (open && tab === this._view && actor.visible) actor.add_style_class_name('agent-bar-part-open');
             else actor.remove_style_class_name('agent-bar-part-open');
         }
+        // The cluster indicator is a top-bar button of its own, lit as the theme lights an open one.
+        if (open && this._view === 'cluster') this._clusterButton.add_style_pseudo_class('checked');
+        else this._clusterButton.remove_style_pseudo_class('checked');
     }
 
     _buildMenu() {
         this._markPart();
+        // A rebuild of the same tab, as after Clear, keeps the list's place (see _renderRows).
+        this._keptScroll = this._scroll?.vscroll.adjustment.value ?? 0;
         this._releaseFocus(this._button.menu);
         // removeAll() only drops menu items; the list body is a plain actor.
         this._body?.destroy();
@@ -2519,13 +2594,28 @@ class Tracker {
         header._ornamentLabel?.hide();
         header.add_style_class_name('tracker-heading');
         const heading = new St.BoxLayout({vertical: true, x_expand: true});
-        heading.add_child(new St.Label({text: {settings: 'Settings', help: 'Guide'}[page] || 'Agents',
+        // The Cluster tab heads the dropdown with the cluster's own totals, which _updateCluster fills in.
+        const clusterView = !page && this._view === 'cluster';
+        this._clusterHeader = null;
+        heading.add_child(new St.Label({text: {settings: 'Settings', help: 'Guide'}[page] || (clusterView ? 'Cluster' : 'Agents'),
             style_class: 'tracker-heading-title'}));
-        heading.add_child(new St.Label({style_class: 'tracker-detail', text: page === 'settings' ? `Saved to ${CONFIG.replace(GLib.get_home_dir(), '~')}`
+        const subtitle = new St.Label({style_class: 'tracker-detail', text: page === 'settings' ? `Saved to ${CONFIG.replace(GLib.get_home_dir(), '~')}`
             : page === 'help' ? 'What the top bar and this menu show'
-                : snapshot ? `${new Set(snapshot.rows.map(row => row.key)).size} chats open · ${snapshot.windows.length} windows` : 'Waiting for the agent-bar service'}));
+                : snapshot ? `${new Set(snapshot.rows.map(row => row.key)).size} chats open · ${snapshot.windows.length} windows` : 'Waiting for the agent-bar service'});
+        heading.add_child(subtitle);
         header.add_child(heading);
-        if (snapshot && !page) {
+        if (clusterView) {
+            const stats = {}, captions = {};
+            for (const [key, caption] of [['cpu', 'CPU'], ['cores', 'busy cores'], ['memory', 'memory']]) {
+                const stat = new St.BoxLayout({vertical: true, style_class: 'tracker-summary'});
+                stats[key] = new St.Label({style_class: 'tracker-summary-value'});
+                captions[key] = new St.Label({text: caption, style_class: 'tracker-detail'});
+                stat.add_child(stats[key]);
+                stat.add_child(captions[key]);
+                header.add_child(stat);
+            }
+            this._clusterHeader = {stats, captions, subtitle};
+        } else if (snapshot && !page) {
             for (const [value, caption, style] of [[snapshot.counts.review, 'needs review', 'attention'],
                 [snapshot.counts.working, 'working', 'working'], [snapshot.counts.waiting, 'waiting', 'waiting']]) {
                 const stat = new St.BoxLayout({vertical: true, style_class: 'tracker-summary'});
@@ -2536,16 +2626,30 @@ class Tracker {
         }
         if (snapshot || page) {
             const actions = new St.BoxLayout({style_class: 'tracker-header-actions', y_align: Clutter.ActorAlign.START});
-            // Drawn rather than themed: Yaru's help icons are a boxed or bubbled question mark.
-            const mark = () => new St.Bin({style_class: 'tracker-help-mark',
-                child: new St.Label({text: '?', x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER})});
-            const gear = () => new St.Icon({icon_name: 'emblem-system-symbolic', icon_size: 16});
+            // Plain marks in the button's own color, rather than the theme's busier help and settings icons.
+            const mark = () => new St.Label({text: '?', style_class: 'tracker-help-mark', x_align: Clutter.ActorAlign.CENTER,
+                y_align: Clutter.ActorAlign.CENTER});
+            const gear = () => {
+                const area = new St.DrawingArea({width: 16, height: 16, y_align: Clutter.ActorAlign.CENTER});
+                area.connect('repaint', () => {
+                    const cr = area.get_context();
+                    const color = area.get_theme_node().get_foreground_color();
+                    paintGlyph(cr, 16, 'gear', null, [color.red / 255, color.green / 255, color.blue / 255, color.alpha / 255]);
+                    cr.$dispose();
+                });
+                area.connect('style-changed', () => area.queue_repaint());
+                return area;
+            };
             // An open page's own button becomes ◀, so going back is where the page was opened.
             for (const [child, target, name] of [[mark, 'help', 'What the symbols and colors mean'], [gear, 'settings', 'Settings']]) {
                 const back = page === target;
                 const button = new St.Button({can_focus: true, style_class: back ? 'tracker-gear tracker-back' : 'tracker-gear',
                     accessible_name: back ? 'Back to conversations' : name, ...back ? {label: '◀'} : {child: child()}});
-                button.connect('clicked', () => { this._page = back ? null : target; this._later(() => this._buildMenu()); });
+                button.connect('clicked', () => {
+                    if (!back && target === 'help') this._helpFrom = this._view;
+                    this._page = back ? null : target;
+                    this._later(() => this._buildMenu());
+                });
                 actions.add_child(button);
             }
             header.add_child(actions);
@@ -2563,9 +2667,10 @@ class Tracker {
             can_focus: true, x_expand: true, style_class: 'tracker-search'});
         const tabs = new St.BoxLayout({style_class: 'tracker-filters'});
         // Integrations turned off in settings take their tabs with them.
-        const shown = {queues: this._setting('scheduler'), git: this._setting('git'), messages: this._setting('messages')};
+        const shown = {queues: this._setting('scheduler'), cluster: this._setting('scheduler') && !!this._cluster,
+            git: this._setting('git'), messages: this._setting('messages')};
         if (shown[this._view] === false) this._view = 'conversations';
-        for (const [value, label] of [['conversations', 'Chats'], ['queues', 'Queues'], ['git', 'Git'], ['messages', 'Messages'], ['history', 'History'], ['quota', 'Quota'], ['info', 'Info']]
+        for (const [value, label] of [['conversations', 'Chats'], ['queues', 'Queues'], ['cluster', 'Cluster'], ['git', 'Git'], ['messages', 'Messages'], ['history', 'History'], ['quota', 'Quota'], ['info', 'Info']]
             .filter(([value]) => shown[value] !== false)) {
             const button = new St.Button({label, toggle_mode: true, checked: this._view === value,
                 can_focus: true, style_class: 'tracker-filter'});
@@ -2573,9 +2678,8 @@ class Tracker {
             tabs.add_child(button);
         }
         control(tabs);
-        // The tab without parallel-workers has nothing to search, sort or filter.
-        // Quota has nothing to search, sort or filter, nor the Queues tab without parallel-workers.
-        const bare = this._view === 'quota' || this._view === 'queues' && snapshot?.scheduler === 'missing';
+        // Quota and Cluster have nothing to search, sort or filter, nor the Queues tab without parallel-workers.
+        const bare = ['quota', 'cluster'].includes(this._view) || this._view === 'queues' && snapshot?.scheduler === 'missing';
         control(this._search).visible = !page && !bare;
         // Sort and filter each open a list under their button, over the rows.
         const toolbar = new St.BoxLayout({x_expand: true, style_class: 'tracker-toolbar'});
@@ -2615,7 +2719,7 @@ class Tracker {
         // One button expands every group when any is collapsed, and collapses them all otherwise; Git, Messages and
         // Info have no groups.
         this._bulk = null;
-        if (!['git', 'messages', 'info'].includes(this._view)) {
+        if (!['git', 'messages', 'info', 'quota', 'cluster'].includes(this._view)) {
             this._bulk = new St.Button({label: 'Collapse all', can_focus: true, style_class: 'tracker-filter tracker-bulk-toggle',
                 y_align: Clutter.ActorAlign.CENTER});
             this._bulk.connect('clicked', () => {
@@ -2762,6 +2866,13 @@ class Tracker {
     }
 
     _renderRows() {
+        // Redrawing the same list, as after a setting or an action, keeps where it was scrolled to; a new tab, page
+        // or opening starts at the top (or, for the Guide, at the part about the tab it was opened from).
+        const place = `${this._page}:${this._view}`;
+        const kept = place === this._renderedPlace ? this._keptScroll ?? this._scroll.vscroll.adjustment.value : 0;
+        this._keptScroll = null;
+        if (kept > 0) this._scrollTo(kept);
+        this._renderedPlace = place;
         this._releaseFocus(this._button.menu, this._section.actor);
         this._section.removeAll();
         this._projectKeys = [];
@@ -2784,6 +2895,8 @@ class Tracker {
             history: 'Saved conversations, rescanned daily · click one to resume it in its folder',
             messages: 'A chat sees its unread count at its next turn start · at most 3 to one chat between your prompts',
             info: 'Read from local files when this tab opens, and again after 30 s · nothing polls in the background',
+            cluster: '',
+            cluster: 'From the parallel-workers collector',
             quota: `As Claude Code and Codex record them here, read each minute${this._setting('claudeUsage') ? ', and from Claude every 10 min' : ''} · Copilot and Antigravity record none here`,
             git: `Read-only git status of open projects${snapshot.git ? `, ${age(snapshot.git.updated)}` : ''} · ↑↓ as of the last fetch · click for Source Control`,
         }[this._view] || `Top bar: needs review / open chats${this._queuesShown(snapshot) ? '   ·   Q finished / outstanding since last turn' : ''}`;
@@ -2809,6 +2922,10 @@ class Tracker {
         }
         if (this._view === 'quota') {
             this._renderQuota(snapshot);
+            return;
+        }
+        if (this._view === 'cluster') {
+            this._renderCluster();
             return;
         }
         const limited = limitedConversations(snapshot.rows);
@@ -4296,7 +4413,6 @@ class Tracker {
         const returnOnly = mode === 'return';
         this._button.menu.close();
         this._nav?.menu.close();
-        this._clusterButton?.menu.close();
         try {
             const record = snapshot.windows.find(w => w.id === row.window);
             if (record?.kind === 'app' && row.provider === 'codex' && row.key) await this._openAppThread(record, row);
@@ -4385,7 +4501,7 @@ class Tracker {
     disable() {
         this._enabled = false;
         const focus = global.stage.get_key_focus();
-        if (focus && [Main.panel, this._button.menu.actor, this._nav.menu.actor, this._clusterButton.menu.actor]
+        if (focus && [Main.panel, this._button.menu.actor, this._nav.menu.actor]
             .some(actor => actor.contains(focus))) global.stage.set_key_focus(null);
         this._cancel.cancel();
         if (this._timer) GLib.source_remove(this._timer);

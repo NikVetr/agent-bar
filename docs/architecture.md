@@ -99,6 +99,12 @@ reveal the exact tab or sidebar; only a confirmed navigation acknowledges the ch
 returns the window. Menus are rebuilt after the click that asked for it finishes, and keyboard focus moves off any
 widget before it is destroyed: GNOME Shell 42 crashed in `Main.pushModal` reading a freed key-focus actor.
 
+The top bar is one panel button holding parts (chat counts, limits, working and waiting, mail, queues), each with its
+own hover highlight, beside a separate cluster indicator without a menu of its own; each opens the one dropdown on
+its tab. While the dropdown is open, GNOME 42 routes every event through the menu's actor, where the panel's menu
+manager closes the menu on any press outside it; the extension moves that handler behind its own, which turns a
+press on another part into a tab switch and lets any other press close the menu as before.
+
 Continue, for chats a usage limit stopped, runs `agent-bar continue <key>`: the service queues the note for a Codex chat
 with `codex queue`, or returns it for a Claude chat. The panel then brings the Claude chat forward with
 `navigate --input`, and pastes the note at the end of the input box through a virtual keyboard: copy the draft and put

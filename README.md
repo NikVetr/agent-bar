@@ -68,8 +68,9 @@ again, leaving your history and settings (`--purge` deletes those too).
 - **✉ 2**: chats where messages from other agents wait for you to start a turn, with no wake-up coming: waking off,
   a Claude chat idle over a week, or a Codex chat not open in VS Code. Clicking it opens the Messages tab.
 - **Q 2 / 5**: queues finished / outstanding since each project's last turn, with the scheduler integration.
-- Clicking a part opens the dropdown on its tab: the chat counts on Chats, Q on Queues, ✉ on Messages, the limits on
-  Quota.
+- Each part lights on its own and opens the dropdown on its tab: the chat counts on Chats, Q on Queues, ✉ on Messages,
+  the limits on Quota, the cluster indicator on Cluster. With the dropdown open, clicking another part switches tabs;
+  clicking the open tab's part, or anywhere else, closes it.
 - **▾**: every window with a chat, with a dot for its most urgent state; click one to bring it forward. Below
   them, **New VS Code window** opens one maximized on your main display, and **Saved chats** opens History.
 - **Shortcut buttons**: chats needing review get a button that brings them forward, the longest waiting first, as
@@ -102,7 +103,8 @@ Clicking the counts opens the dropdown, with these tabs:
 - **Info**: your skills (start a new chat with one), the health of Agent Bar's own hooks and bridges, and the AGENTS.md
   or CLAUDE.md files each project uses.
 
-**?** opens a guide to every symbol and color; the gear opens settings, including a color-blind-safe palette.
+**?** opens a guide to every symbol and color, at the part about the tab you were on; the gear opens settings,
+including a color-blind-safe palette.
 Clicking a chat shows its window maximized on your main display.
 
 ## Messages between agents
@@ -136,9 +138,9 @@ The cluster indicator shows any of the cluster's CPU, memory and fullest disk. C
 allots to jobs (its job slots); its other cores are reserved and take its load first. When a host is under memory pressure,
 has a drive nearly full, or is unreachable or without the shared mount, it adds a small sign for that kind of
 warning, amber or red when critical, with a count of any others. **Settings › Cluster** picks what it shows and the
-warning thresholds; with only warnings picked, it appears just when one fires. Its dropdown names each warning's
-host, and **Snooze** keeps a warning off the top bar until it clears, or for at most a time you type (such as 5d or
-120h); parallel-workers keeps checking the host meanwhile. The dropdown also lists each host's cores, memory and
+warning thresholds; with only warnings picked, it appears just when one fires. Clicking it opens the **Cluster** tab,
+headed by the cluster's CPU, busy cores and memory, which names each warning's host; **Snooze** keeps a warning off the top bar until it clears, or for at most a time you type (such as 5d or
+120h); parallel-workers keeps checking the host meanwhile. The tab also lists each host's cores, memory and
 disks, and failed jobs by project, with a note to copy for that project's agent and buttons that bring its VS Code
 window forward. The shared drive's card names the host serving it and shows the scheduler's job slots in use, and
 the drive's throughput and that host's network over the last 10 minutes.
