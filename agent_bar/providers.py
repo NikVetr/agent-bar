@@ -452,7 +452,8 @@ class Providers:
                 warnings.append(f'Claude tab needs identity refresh: {tab["label"]}')
                 continue
             sid = matches[0]['sessionId']
-            rows.append({'provider': 'claude', 'id': sid, 'title': tab['label'],
+            # The tab's label is the title shortened; the transcript has it whole.
+            rows.append({'provider': 'claude', 'id': sid, 'title': self.claude_title(sid) or tab['label'],
                          'target': {'kind': 'tab', **tab}})
         try:
             active = set(self.codex_open(window))

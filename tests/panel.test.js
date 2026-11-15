@@ -668,3 +668,12 @@ test('a limit\'s projection says when its pace would use the rest, against the r
     assert.equal(quotaProjection(limit({pace: undefined}), now, now), null);
     assert.equal(quotaProjection(limit({expired: true}), now, now), null);
 });
+
+test('a chat copies as its whole name, key, project, folders and how to resume it', () => {
+    const f = fixture();
+    const row = {provider: 'claude', id: 'abc', key: 'claude:abc', title: 'A long chat name that the tab shortens', project: 'p', roots: ['/r/p']};
+    assert.equal(f.context.chatIdentity(row),
+        'A long chat name that the tab shortens\nChat: claude:abc\nProject: p\nFolder: /r/p\nResume: claude --resume abc');
+    assert.match(f.context.chatIdentity({...row, provider: 'codex', key: 'codex:abc'}), /Resume: codex resume abc$/);
+    assert.doesNotMatch(f.context.chatIdentity({...row, provider: 'copilot', roots: []}), /Resume|Folder/);
+});

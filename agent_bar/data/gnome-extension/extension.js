@@ -142,6 +142,14 @@ function providerCounts(rows, provider) {
     return {open: unique.size, review: [...unique.values()].filter(row => row.unread.length).length};
 }
 
+// What identifies a chat, open (with its roots) or saved (with its folder), for the clipboard: its name, key, project
+// and folders, and how to resume it in a terminal.
+function chatIdentity(row) {
+    const resume = {claude: `claude --resume ${row.id}`, codex: `codex resume ${row.id}`}[row.provider];
+    return [row.title, `Chat: ${row.key}`, `Project: ${row.project}`, ...(row.roots || [row.folder].filter(Boolean)).map(root => `Folder: ${root}`),
+        ...resume ? [`Resume: ${resume}`] : []].join('\n');
+}
+
 function completionTime(row) {
     return row.completed_at || (row.state === 'finished' ? row.state_at : 0);
 }
@@ -2078,22 +2086,26 @@ class Tracker {
         return details;
     }
 
-    // Copies text(), confirming briefly on the button.
-    _copyButton(text) {
-        const label = new St.Label({text: 'Copy', y_align: Clutter.ActorAlign.CENTER});
+    // Copies text(), confirming briefly on the button; `compact` shows the icon alone, with `name` as its tooltip.
+    _copyButton(text, name = 'Copy a note about these failures for the project\'s agent', compact = false) {
+        const label = new St.Label({text: compact ? '' : 'Copy', y_align: Clutter.ActorAlign.CENTER, visible: !compact});
         const content = new St.BoxLayout({style_class: 'tracker-copy-content'});
-        content.add_child(new St.Icon({icon_name: 'edit-copy-symbolic', icon_size: 14, y_align: Clutter.ActorAlign.CENTER}));
+        const icon = new St.Icon({icon_name: 'edit-copy-symbolic', icon_size: 14, y_align: Clutter.ActorAlign.CENTER});
+        content.add_child(icon);
         content.add_child(label);
-        const button = new St.Button({child: content, can_focus: true, style_class: 'tracker-copy',
-            accessible_name: 'Copy a note about these failures for the project\'s agent', y_align: Clutter.ActorAlign.CENTER});
+        const button = new St.Button({child: content, can_focus: true, style_class: compact ? 'tracker-copy tracker-copy-compact' : 'tracker-copy',
+            accessible_name: name, y_align: Clutter.ActorAlign.CENTER});
+        if (compact) this._tooltip(button, name);
         let timer = 0;
         button.connect('clicked', () => {
             St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, text());
             label.text = 'Copied';
+            label.show();
             if (timer) GLib.source_remove(timer);
             timer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1500, () => {
                 timer = 0;
-                label.text = 'Copy';
+                label.text = compact ? '' : 'Copy';
+                label.visible = !compact;
                 return GLib.SOURCE_REMOVE;
             });
         });
@@ -4170,9 +4182,7 @@ class Tracker {
         item.add_style_class_name('tracker-conversation');
         item.add_child(this._providerLabel(row.provider));
         const box = new St.BoxLayout({vertical: true, style_class: 'tracker-row', x_expand: true});
-        const title = new St.Label({text: row.title, style_class: 'tracker-title', x_expand: true});
-        title.clutter_text.ellipsize = Pango.EllipsizeMode.END;
-        box.add_child(title);
+        box.add_child(this._chatHeading(row));
         const detail = new St.Label({text: historyDetail(row), style_class: 'tracker-detail'});
         detail.clutter_text.ellipsize = Pango.EllipsizeMode.END;
         box.add_child(detail);
@@ -4283,6 +4293,18 @@ class Tracker {
         return box;
     }
 
+    // A chat's whole title, wrapped, and a button that copies it with what identifies the chat.
+    _chatHeading(row) {
+        const heading = new St.BoxLayout({style_class: 'tracker-row-heading'});
+        const title = new St.Label({text: row.title, style_class: 'tracker-title tracker-title-full', x_expand: true,
+            y_align: Clutter.ActorAlign.CENTER});
+        title.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+        title.clutter_text.line_wrap = true;
+        heading.add_child(title);
+        heading.add_child(this._copyButton(() => chatIdentity(row), 'Copy the chat\'s name, id and folder', true));
+        return heading;
+    }
+
     _conversationItem(row, snapshot, section) {
         const item = new PopupMenu.PopupBaseMenuItem({reactive: !!row.target, can_focus: !!row.target});
         item._ornamentLabel?.hide();
@@ -4290,9 +4312,7 @@ class Tracker {
         if (row.unread.length) item.add_style_class_name('tracker-unread');
         item.add_child(this._providerLabel(row.provider));
         const box = new St.BoxLayout({vertical: true, style_class: 'tracker-row', x_expand: true});
-        const title = new St.Label({text: row.title, style_class: 'tracker-title', x_expand: true});
-        title.clutter_text.ellipsize = Pango.EllipsizeMode.END;
-        box.add_child(title);
+        box.add_child(this._chatHeading(row));
         const native = this._findWindow(snapshot.windows.find(w => w.id === row.window), false);
         const borrowed = native && this._borrowed.get(row.window);
         const action = borrowed?.key === row.key && native === this._menuFocus ? ' · click to return' : '';

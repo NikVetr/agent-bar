@@ -79,8 +79,8 @@ again, leaving your history and settings (`--purge` deletes those too).
 
 Clicking the counts opens the dropdown, with these tabs:
 
-- **Chats**: open chats grouped by project and window, with sort and filter. Clicking a chat selects it and brings its
-  window forward; clicking again sends the window back. When a usage limit stops chats open in VS Code, a line above
+- **Chats**: open chats grouped by project and window, with sort and filter, each with its whole name and a copy button
+  for its name, id, folder and resume command. Clicking a chat selects it and brings its window forward; clicking again sends the window back. When a usage limit stops chats open in VS Code, a line above
   them names them and when Claude's limit resets; **Continue** queues "Please continue where you left off." in the
   Codex ones, which start it on their own, and brings each Claude one forward with that text at the end of its input
   box, after any draft, for you to send. If Agent Bar cannot be sure the cursor is in that box (several Claude chats on
@@ -92,7 +92,8 @@ Clicking the counts opens the dropdown, with these tabs:
   behind its upstream (as of the last fetch; Agent Bar never fetches or takes git's lock). Clicking one opens VS
   Code's Source Control for it.
 - **Messages**: notes between agents, as threads.
-- **History**: every saved Claude and Codex chat, including closed ones; Resume reopens one in its folder.
+- **History**: every saved Claude and Codex chat, including closed ones, with the same copy button; Resume reopens one
+  in its folder.
 - **Quota**: each provider's usage limits as Claude Code and Codex record them on this computer: the weekly limit, the
   5-hour one, and a weekly limit for one model such as Fable, with that model's share. Each shows what is left, when it
   resets, its pace over the last day (or this window's average), when that pace would use the rest and how that compares
