@@ -677,3 +677,12 @@ test('a chat copies as its whole name, key, project, folders and how to resume i
     assert.match(f.context.chatIdentity({...row, provider: 'codex', key: 'codex:abc'}), /Resume: codex resume abc$/);
     assert.doesNotMatch(f.context.chatIdentity({...row, provider: 'copilot', roots: []}), /Resume|Folder/);
 });
+
+test('a chat a usage limit stopped gets a review button only when the setting asks for it', () => {
+    const f = fixture();
+    const rows = [{key: 'stopped', target: {}, unread: ['Turn failed'], limited: {at: 5}, completed_at: 5},
+        {key: 'failed', target: {}, unread: ['Turn failed'], completed_at: 6},
+        {key: 'both', target: {}, unread: ['Turn failed', 'Queues finished'], limited: {at: 7}, completed_at: 7}];
+    assert.equal(f.context.readyConversations(rows, null, false).map(r => r.key).join(','), 'failed,both');
+    assert.equal(f.context.readyConversations(rows, null, true).map(r => r.key).join(','), 'stopped,failed,both');
+});

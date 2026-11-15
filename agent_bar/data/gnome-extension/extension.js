@@ -33,6 +33,8 @@ const SETTINGS = [
     ['Top bar', 'quickReasons', 'Review buttons for', 'Reasons that give a chat a shortcut',
         ['Reply finished', 'Turn failed', 'Input needed', 'Approval needed', 'Queues finished'],
         [['Reply finished', 'Reply'], ['Turn failed', 'Failure'], ['Input needed', 'Question'], ['Approval needed', 'Approval'], ['Queues finished', 'Queues']]],
+    ['Top bar', 'quickLimited', 'Usage-limit stops', 'Whether a chat stopped at its 5-hour or weekly limit gets a review button; '
+        + 'the Chats tab shows it either way', false, [[true, 'Show'], [false, 'Hide']]],
     ['Top bar', 'quotaBar', 'Limits left', 'Each provider\'s weekly usage limit left, after the chat counts', true,
         [[true, 'Show'], [false, 'Hide']]],
     ['Top bar', 'queueBar', 'Queue count', 'Q finished / outstanding since each project\'s last turn', true,
@@ -156,14 +158,16 @@ function completionTime(row) {
 
 // Open chats needing review for one of `reasons` (any, when null), the longest waiting first: since the oldest of
 // those reasons arrived.
-function readyConversations(rows, reasons = null) {
+// With `limited` false, a turn a usage limit stopped does not count as a failure to review: nothing in it needs the
+// user until the limit resets, and the Chats tab says so.
+function readyConversations(rows, reasons = null, limited = true) {
     const unique = new Map();
-    const counts = reason => !reasons || reasons.includes(reason);
+    const counts = (reason, row) => (!reasons || reasons.includes(reason)) && (limited || !(row.limited && reason === 'Turn failed'));
     for (const row of rows)
-        if (row.target && !unique.has(row.key) && row.unread.some(counts))
+        if (row.target && !unique.has(row.key) && row.unread.some(reason => counts(reason, row)))
             unique.set(row.key, row);
     const since = row => {
-        const times = Object.entries(row.unread_at || {}).filter(([reason]) => counts(reason)).map(([, at]) => at);
+        const times = Object.entries(row.unread_at || {}).filter(([reason]) => counts(reason, row)).map(([, at]) => at);
         return times.length ? Math.min(...times) : completionTime(row);
     };
     return [...unique.values()].sort((a, b) => since(a) - since(b));
@@ -1413,7 +1417,8 @@ class Tracker {
             + 'clicking the open tab\'s part, or anywhere else, closes it. ? opens this guide at the part about the tab you were on.');
         row(top, [text('✳ project…', 'tracker-quick-button tracker-claude')], limit
             ? `Up to ${limit} chats needing review get a shortcut, as many as fit, the longest waiting first; clicking one brings that `
-                + 'chat forward and clears it. They continue right of the middle when the left half is full; +2 more lists the rest.'
+                + 'chat forward and clears it. They continue right of the middle when the left half is full; +2 more lists the rest. '
+                + (this._setting('quickLimited') ? 'Chats a usage limit stopped get one too.' : 'A chat stopped only by a usage limit gets none; the Chats tab shows it.')
             : 'Review shortcuts are off (Settings › Top bar).');
         if (scheduler) row(top, [text('23%', 'tracker-muted'), text('64%', 'tracker-working'), text('94%', 'tracker-attention')],
             'Cluster CPU: busy cores over the cores allotted to jobs (each host\'s job slots). A host\'s other cores are '
@@ -1491,7 +1496,7 @@ class Tracker {
             row(letters, [this._glyph('mail', null, 'attention'), this._glyph('mail', null, 'help-bright'), this._glyph('mail-open', null, 'muted')],
                 'On a thread\'s chats: messages to it unread, waiting for you to start a turn there (amber) or for a wake-up; '
                 + 'opened once it has read them all.');
-            row(letters, [chip('Unread', 'attention'), chip('Read', 'muted')], 'In Messages, by pair of chats. A chat can send at most 3 '
+            row(letters, [chip('Unread', 'attention'), chip('Read', 'muted')], 'In Messages, by pair of chats. A chat can send at most 10 '
                 + 'to another between your prompts to it, and 10 an hour; agents are told to treat them as information, not instructions.');
             const reset = new St.Label({text: 'Reset limit', style_class: 'tracker-filter tracker-reset-limit', y_align: Clutter.ActorAlign.CENTER});
             row(letters, [reset], 'When a pair reaches that limit, its header says so and how many sends were held back; the sending agent is told '
@@ -2364,7 +2369,8 @@ class Tracker {
 
     _renderQuick(rows) {
         for (const [key, after] of this._quickPending) if ((this._snapshot?.updated ?? 0) > after) this._quickPending.delete(key);
-        const ready = readyConversations(rows, this._setting('quickReasons')).filter(row => !this._quickPending.has(row.key));
+        const ready = readyConversations(rows, this._setting('quickReasons'), this._setting('quickLimited'))
+            .filter(row => !this._quickPending.has(row.key));
         const limit = this._setting('quickLimit'), chars = this._setting('quickChars');
         const shown = ready.slice(0, limit);
         const signature = JSON.stringify(shown.map(row => [row.key, row.window, row.project]));
@@ -2905,7 +2911,7 @@ class Tracker {
         this._footer.label.text = {
             queues: `From parallel-workers · updated ${age(snapshot.queue_updated)} · counts reset at each turn in the project`,
             history: 'Saved conversations, rescanned daily · click one to resume it in its folder',
-            messages: 'A chat sees its unread count at its next turn start · at most 3 to one chat between your prompts',
+            messages: 'A chat sees its unread count at its next turn start · at most 10 to one chat between your prompts',
             info: 'Read from local files when this tab opens, and again after 30 s · nothing polls in the background',
             cluster: '',
             cluster: 'From the parallel-workers collector',

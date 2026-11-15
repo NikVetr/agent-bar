@@ -73,7 +73,8 @@ again, leaving your history and settings (`--purge` deletes those too).
   clicking the open tab's part, or anywhere else, closes it.
 - **▾**: every window with a chat, with a dot for its most urgent state; click one to bring it forward. Below
   them, **New VS Code window** opens one maximized on your main display, and **Saved chats** opens History.
-- **Shortcut buttons**: chats needing review get a button that brings them forward, the longest waiting first, as
+- **Shortcut buttons**: chats needing review get a button that brings them forward (except, unless **Settings › Top
+  bar › Usage-limit stops** says so, chats stopped only by a usage limit), the longest waiting first, as
   many as fit, continuing right of the middle when the left half is full; **+2 more** lists the rest. **Settings › Top bar** sets the most buttons and
   which reasons give one: a finished or failed reply, a question or approval, finished queues.
 
@@ -126,8 +127,9 @@ Other chats wait for their next turn. Copilot and Antigravity chats cannot recei
 hook to show the note. In the Messages tab, each chat's badge shows a sealed envelope while it has unread messages,
 amber when they wait for you to start a turn there, and an open one once it has read them.
 
-Each message goes to one chat; there is no broadcast. A loop guard refuses a fourth message to the same chat until you
-write to the sender again, and more than 10 an hour; you can lift it from the Messages tab. Agents are told to treat
+Each message goes to one chat; there is no broadcast. A loop guard refuses an eleventh message to the same chat until
+you write to the sender again, and more than 10 an hour; the sender is told which, and for the hourly cap when it can
+send again; you can lift it from the Messages tab. Agents are told to treat
 messages as information, not as your instructions. You can turn messages off in settings.
 
 ## Optional: the parallel-workers scheduler

@@ -13,7 +13,7 @@ from pathlib import Path
 from .state import ROOT
 
 SETTINGS = Path.home() / '.config/agent-bar/settings.json'  # Written by the panel.
-PEER_LIMIT = 3  # Messages to one conversation between the sender's own user prompts or limit resets.
+PEER_LIMIT = 10  # Messages to one conversation between the sender's own user prompts or limit resets.
 HOURLY_LIMIT = 10  # Messages from one conversation in any hour.
 LENGTH_LIMIT = 4000
 BUSY = {'working', 'input needed', 'approval needed'}  # Tracker states during a turn.
@@ -229,9 +229,15 @@ def send(sender, recipient, body, root=ROOT, now=None, urgent=False):
             # Kept so the user can see what was held back; the refusal itself must not roll back.
             connection.execute('INSERT INTO refusals VALUES (?,?,?)', (now, sender, recipient))
             connection.commit()
-            raise ValueError(f'Loop guard: {peer} messages to this conversation since your user last wrote to you. '
-                             'Ask your user before sending more; they can also reset the limit in Agent Bar\'s Messages tab.'
-                             if peer >= PEER_LIMIT else f'Loop guard: {hourly} messages sent in the last hour. Ask your user before sending more.')
+            if peer >= PEER_LIMIT:
+                raise ValueError(f'Not sent. Loop guard: {peer} messages to this conversation since your user last wrote to you. '
+                                 'This does not lift with time: sending resumes once your user writes to you again or resets the '
+                                 'limit in Agent Bar\'s Messages tab. Tell your user.')
+            oldest = connection.execute('SELECT min(at) FROM messages WHERE sender=? AND at>?', (sender, now - 3600)).fetchone()[0] or now
+            wait = max(60, round(oldest + 3600 - now))
+            raise ValueError(f'Not sent. Loop guard: {hourly} messages sent in the last hour. Sending resumes in about '
+                             f'{-(-wait // 60)} minutes, at {time.strftime("%H:%M", time.localtime(now + wait))}, or sooner if your '
+                             'user resets the limit in Agent Bar\'s Messages tab. Tell your user.')
         mine = open_rows.get(sender, {})
         # The newest row stays, so ids keep rising: wake marks compare them.
         connection.execute('DELETE FROM messages WHERE read_at IS NOT NULL AND at<? AND id<(SELECT max(id) FROM messages)',

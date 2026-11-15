@@ -255,11 +255,13 @@ class TrackerTests(unittest.TestCase):
             (root / 'snapshot.json').write_text(json.dumps({'rows': rows}))
             ledger = {'conversations': {'claude:a': {'human_at': 100}}}
             (root / 'ledger.json').write_text(json.dumps(ledger))
-            with unittest.mock.patch.object(messages, 'SETTINGS', root / 'settings.json'):
+            # The guard's behavior, at a limit of three.
+            with unittest.mock.patch.object(messages, 'SETTINGS', root / 'settings.json'), unittest.mock.patch.object(messages, 'PEER_LIMIT', 3):
                 self.assertIsNone(messages.notice('codex:b', root))
                 for n in range(3):
                     self.assertEqual(messages.send('claude:a', 'codex:b', f'note {n}', root, now=200 + n)['remaining'], 2 - n)
-                with self.assertRaisesRegex(ValueError, 'Loop guard'): messages.send('claude:a', 'codex:b', 'more', root, now=210)
+                with self.assertRaisesRegex(ValueError, 'Not sent. Loop guard.*does not lift with time'):
+                    messages.send('claude:a', 'codex:b', 'more', root, now=210)
                 for bad in ['claude:a', 'codex:gone']:
                     with self.assertRaises(ValueError): messages.send('claude:a', bad, 'x', root, now=211)
                 self.assertIn('3 unread messages', messages.notice('codex:b', root) or '')
@@ -286,7 +288,7 @@ class TrackerTests(unittest.TestCase):
             rows = [{'key': key, 'provider': 'claude', 'title': key, 'project': 'p', 'state': 'finished'} for key in ['claude:a', 'claude:b']]
             (root / 'snapshot.json').write_text(json.dumps({'rows': rows}))
             (root / 'ledger.json').write_text(json.dumps({'conversations': {}}))
-            with unittest.mock.patch.object(messages, 'SETTINGS', root / 'settings.json'):
+            with unittest.mock.patch.object(messages, 'SETTINGS', root / 'settings.json'), unittest.mock.patch.object(messages, 'PEER_LIMIT', 3):
                 for n in range(3): messages.send('claude:a', 'claude:b', f'm{n}', root, now=100 + n)
                 for n in range(2):
                     with self.assertRaises(ValueError): messages.send('claude:a', 'claude:b', 'more', root, now=110 + n)
@@ -296,6 +298,19 @@ class TrackerTests(unittest.TestCase):
                 messages.reset_limit('claude:b', 'claude:a', root, now=130)
                 self.assertEqual(messages.summary(root, now=131)['held'], [])
                 self.assertTrue(messages.send('claude:a', 'claude:b', 'after reset', root, now=140)['ok'])
+
+    def test_the_hourly_cap_says_when_sending_resumes(self):
+        from agent_bar import messages
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            rows = [{'key': f'claude:{n}', 'provider': 'claude', 'title': str(n), 'project': 'p', 'state': 'finished'} for n in range(12)]
+            (root / 'snapshot.json').write_text(json.dumps({'rows': rows}))
+            (root / 'ledger.json').write_text(json.dumps({'conversations': {}}))
+            with unittest.mock.patch.object(messages, 'SETTINGS', root / 'settings.json'):
+                # Ten chats, one message each: the per-pair limit is not reached, the hourly one is.
+                for n in range(1, 11): messages.send('claude:0', f'claude:{n}', 'hi', root, now=1000 + n * 60)
+                with self.assertRaisesRegex(ValueError, r'10 messages sent in the last hour\. Sending resumes in about 41 minutes'):
+                    messages.send('claude:0', 'claude:11', 'one more', root, now=1000 + 20 * 60)
 
     def test_waiter_wakes_an_idle_claude_chat_once_per_new_message(self):
         from agent_bar import hook, messages
