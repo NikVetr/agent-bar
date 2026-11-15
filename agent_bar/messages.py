@@ -71,17 +71,28 @@ def queued_file(key, root=ROOT):
     return Path(f'{wake_files(key, root)[0]}.queued')
 
 
+def deferred_file(key, root=ROOT):
+    """Marks a Codex chat whose wake-up note waits for its turn to end; holds the chat's key."""
+    return Path(f'{wake_files(key, root)[0]}.deferred')
+
+
 def codex_pending(key, root=ROOT, now=None):
+    """Whether a wake-up note is queued for this Codex chat, or waits for its turn to end."""
+    if deferred_file(key, root).exists(): return True
     try: return (now or time.time()) - queued_file(key, root).stat().st_mtime < QUEUED_HOLD
     except OSError: return False
 
 
 def wake_codex(key, root=ROOT):
     """With waking on, queue the unread-messages note for a Codex chat open in VS Code, one note at a time. Says how
-    the messages will reach the chat."""
+    the messages will reach the chat. A chat in a turn gets its note once the turn ends (deliver_deferred): a note
+    queued now would run after the turn, by when the chat may have read the messages, and its count would be wrong."""
     rows = [row for row in snapshot(root)['rows'] if row['key'] == key]
     if not waking() or not any((row.get('target') or {}).get('kind') in VSCODE for row in rows): return 'at its next turn'
     if codex_pending(key, root): return 'with the wake-up already queued'
+    if any(row['state'] in BUSY for row in rows):
+        deferred_file(key, root).write_text(key)
+        return 'by a wake-up turn after its current turn'
     note = notice(key, root)
     if not note: return 'at its next turn'
     # Marked as an agent message, so the turn-start hook takes it for an automatic turn, not the user's.
@@ -89,6 +100,25 @@ def wake_codex(key, root=ROOT):
     except ValueError as error: return f'at its next turn ({error})'
     queued_file(key, root).write_text(str(time.time()))
     return 'by a queued wake-up turn'
+
+
+def deferred(root=ROOT):
+    """The Codex chats whose wake-up notes wait for their turns to end."""
+    folder = Path(root) / 'wake'
+    return sorted(folder.glob('*.deferred')) if folder.exists() else []
+
+
+def deliver_deferred(root=ROOT):
+    """Queue each held-back wake-up note whose chat's turn has ended, if its messages are still unread; drop the
+    others: the chat closed, read them, or waking was turned off."""
+    rows = {row['key']: row for row in snapshot(root)['rows']}
+    for path in deferred(root):
+        try: key = path.read_text().strip()
+        except OSError: continue
+        row = rows.get(key)
+        if row and row['state'] in BUSY and waking(): continue
+        path.unlink(missing_ok=True)
+        if row and waking() and notice(key, root): wake_codex(key, root)
 
 
 def codex_queue(thread, text):

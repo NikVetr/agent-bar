@@ -362,6 +362,11 @@ class Tracker:
                     print(f'Git status failed: {type(error).__name__}: {error}', flush=True)
             await asyncio.sleep(GIT_EVERY)
 
+    async def deliver_wakes(self):
+        try: await asyncio.to_thread(messages.deliver_deferred, self.root)
+        except Exception as error:
+            print(f'Wake-up delivery failed: {type(error).__name__}: {error}', flush=True)
+
     async def read_usage(self):
         """Usage limit readings into their history and the snapshot's summary, off the collection loop; the first read
         of Codex's session logs takes a few seconds, later ones only their new lines."""
@@ -382,11 +387,15 @@ class Tracker:
         server = await asyncio.start_unix_server(self.client, path=str(socket))
         os.chmod(socket, 0o600)
         refresh = asyncio.create_task(self.read_git())
+        delivery = None
         limits = asyncio.create_task(self.read_usage())
         async with server:
             while True:
                 try: self.collect()
                 except Exception as error:
                     print(f'Collection failed: {type(error).__name__}: {error}', flush=True)
+                # Wake-up notes held back while their Codex chats were in a turn go once the turn has ended.
+                if (delivery is None or delivery.done()) and messages.deferred(self.root):
+                    delivery = asyncio.create_task(self.deliver_wakes())
                 await asyncio.sleep(3)
 

@@ -1,3 +1,4 @@
+import contextlib
 import io
 import json
 import tempfile
@@ -392,6 +393,62 @@ class TrackerTests(unittest.TestCase):
                     hook.main()
                 self.assertFalse(messages.codex_pending('codex:v', root))
                 self.assertEqual(messages.stranded({'codex:v': 3}, rows, root), ['codex:v'])
+
+    def test_a_codex_chat_in_a_turn_is_woken_after_it_only_for_messages_still_unread(self):
+        from agent_bar import hook, messages
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            snapshot = root / 'snapshot.json'
+            state = lambda value: snapshot.write_text(json.dumps({'rows': [
+                {'key': 'claude:a', 'provider': 'claude', 'title': 'A', 'project': 'p', 'state': 'finished', 'target': {'kind': 'tab'}},
+                {'key': 'codex:v', 'provider': 'codex', 'title': 'V', 'project': 'p', 'state': value, 'target': {'kind': 'codex-sidebar'}}]}))
+            state('working')
+            (root / 'ledger.json').write_text(json.dumps({'conversations': {}}))
+            settings, calls = root / 'settings.json', []
+            settings.write_text(json.dumps({'wake': True}))
+            run = lambda command, **_: calls.append(command) or subprocess.CompletedProcess(command, 0, 'Queued', '')
+            with unittest.mock.patch.object(messages, 'SETTINGS', settings), \
+                    unittest.mock.patch.object(shutil, 'which', lambda name: '/bin/codex'), \
+                    unittest.mock.patch.object(subprocess, 'run', run), \
+                    unittest.mock.patch.dict(os.environ, {'AGENT_BAR_STATE_DIR': str(root)}):
+                def turn(text):
+                    output = io.StringIO()
+                    with unittest.mock.patch('sys.argv', ['hook', 'codex']), unittest.mock.patch('sys.stdin', io.StringIO(json.dumps(
+                            {'hook_event_name': 'UserPromptSubmit', 'session_id': 'v', 'prompt': text}))), \
+                            contextlib.redirect_stdout(output):
+                        hook.main()
+                    return output.getvalue()
+                # Mid-turn, nothing is queued yet; the chat does not strand meanwhile.
+                self.assertEqual(messages.send('claude:a', 'codex:v', 'one', root)['delivery'], 'by a wake-up turn after its current turn')
+                self.assertEqual(calls, [])
+                self.assertEqual(messages.stranded({'codex:v': 1}, json.loads(snapshot.read_text())['rows'], root), [])
+                messages.deliver_deferred(root)
+                self.assertEqual(calls, [])  # Still in its turn.
+                state('finished')
+                messages.deliver_deferred(root)
+                [command] = calls
+                self.assertIn('1 unread message', command[-1])
+                self.assertEqual(messages.deferred(root), [])
+                # Read during the turn: no note once it ends.
+                turn(command[-1])
+                state('working')
+                messages.send('claude:a', 'codex:v', 'two', root)
+                messages.inbox('codex:v', root)
+                state('finished')
+                messages.deliver_deferred(root)
+                self.assertEqual(len(calls), 1)
+                # A note that arrives after its messages were read says so.
+                messages.send('claude:a', 'codex:v', 'three', root)
+                self.assertEqual(len(calls), 2)
+                messages.inbox('codex:v', root)
+                self.assertIn('already been read', turn(calls[-1][-1]))
+                # A note queued but never run on its own no longer holds back the next once a turn of the user's starts.
+                # (The sender's user writes to it first, as the loop guard allows three messages between their prompts.)
+                (root / 'ledger.json').write_text(json.dumps({'conversations': {'claude:a': {'human_at': time.time()}}}))
+                messages.send('claude:a', 'codex:v', 'four', root)
+                self.assertTrue(messages.codex_pending('codex:v', root))
+                self.assertIn('1 unread message', turn('what is new?'))
+                self.assertFalse(messages.codex_pending('codex:v', root))
 
     def test_a_busy_chat_gets_messages_mid_turn_only_as_the_user_allows(self):
         from agent_bar import hook, messages

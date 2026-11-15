@@ -85,9 +85,12 @@ earlier installation's interpreter.
 per-pair loop guard, reset by the sender's last human prompt or by the user, plus an hourly cap; refused sends are
 kept so the panel can show what was held back. Files under `wake/` hold each recipient's newest unread id, the
 newest it was woken or told about, and its one live waiter's pid. A chat in a turn gets new messages mid-turn only
-as the user's setting allows. With waking on, `send` queues the turn-start note for a Codex chat open in VS Code
-with `codex queue`; VS Code's Codex runs it as a turn once any turn in progress ends, and a `.queued` marker under
-`wake/` keeps it to one note until that turn starts. The snapshot's `messages.stranded` lists the open chats whose
+as the user's setting allows. With waking on, `send` queues the turn-start note for an idle Codex chat open in VS
+Code with `codex queue`, which VS Code's Codex runs as a turn; a `.queued` marker under `wake/` keeps it to one note
+until a turn starts there. A chat in a turn gets a `.deferred` marker instead, and the service queues its note once
+the turn ends, if the messages are still unread: a queued note cannot be withdrawn and its count is fixed when
+queued. When a queued note's turn starts with nothing unread, the hook says the messages were already read; any
+other turn start clears both markers, since that turn hears of unread messages itself. The snapshot's `messages.stranded` lists the open chats whose
 unread messages wait for the user to start a turn: Codex chats with no note queued, and Claude chats no waiter will
 wake (waking off, or idle with no live waiter left).
 

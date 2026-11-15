@@ -1498,7 +1498,7 @@ class Tracker {
                 + 'to ask you. Reset limit allows another round without writing to either chat.');
             row(letters, [text(this._setting('wake') ? 'Wake: on' : 'Wake: off', 'tracker-detail')], 'With Settings › Integrations › Wake idle '
                 + 'chats on, a message starts a turn in an idle Claude Code chat (up to a week after its last turn), once per message, and in a Codex '
-                + 'chat open in VS Code, once any turn in progress ends.');
+                + 'chat open in VS Code, after any turn in progress ends, if the message is still unread then.');
         }
 
         const quota = card('Quota');

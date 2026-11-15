@@ -126,13 +126,22 @@ def main():
             'at': time.time(), 'turn': data.get('turn_id'), 'cwd': data.get('cwd'),
             'transcript': data.get('transcript_path'),
             **({'resets': limit_reset(data.get('transcript_path'))} if kind == 'limit' else {})})
-    # A turn the waiter woke, or a queued Codex note started, already carries the note.
+    # A turn the waiter woke, or a queued Codex note started, already carries the note; the messages may have been
+    # read since it was written, so say so.
     if event == 'UserPromptSubmit' and kind == 'start' and '[agent-bar]' in data.get('prompt', ''):
         from agent_bar import messages
-        messages.queued_file(f'{provider}:{data["session_id"]}', state_root).unlink(missing_ok=True)
+        key = f'{provider}:{data["session_id"]}'
+        messages.queued_file(key, state_root).unlink(missing_ok=True)
+        if not messages.notice(key, state_root):
+            print(json.dumps({'hookSpecificOutput': {'hookEventName': 'UserPromptSubmit', 'additionalContext':
+                '[agent-bar] Those messages have already been read; none are unread now, so nothing is needed for them.'}}))
     elif event == 'UserPromptSubmit':
         from agent_bar import messages
         key = f'{provider}:{data["session_id"]}'
+        # This turn hears of any unread messages below, so no wake-up note is still owed: one queued but never run on
+        # its own (Codex may fold it into this turn) must not hold back the next.
+        messages.queued_file(key, state_root).unlink(missing_ok=True)
+        messages.deferred_file(key, state_root).unlink(missing_ok=True)
         note = messages.notice(key, state_root)
         if note:
             # Told now, so the background waiter does not wake it again for the same messages.

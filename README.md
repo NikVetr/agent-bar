@@ -120,7 +120,8 @@ agent-bar inbox                   # read this chat's messages
 
 The recipient sees a one-line note with its unread count when its next turn starts. With **Wake idle chats** on in
 settings, a new message also starts a turn in an idle Claude Code chat (up to a week after its last turn) and in a
-Codex chat open in VS Code (once any turn in progress ends; this needs the `codex` command with `codex queue`).
+Codex chat open in VS Code (after any turn in progress ends, and only if the message is still unread then; this
+needs the `codex` command with `codex queue`).
 Other chats wait for their next turn. Copilot and Antigravity chats cannot receive messages, because they have no
 hook to show the note. In the Messages tab, each chat's badge shows a sealed envelope while it has unread messages,
 amber when they wait for you to start a turn there, and an open one once it has read them.
