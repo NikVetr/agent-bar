@@ -2,7 +2,7 @@
   "name": "agent-bar-bridge",
   "displayName": "Agent Bar bridge",
   "description": "Tells Agent Bar which AI agent chats are open in this VS Code window, and opens them when asked.",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "publisher": "agent-bar",
   "engines": {"vscode": "^1.100.0"},
   "main": "./extension.js",

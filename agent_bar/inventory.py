@@ -4,13 +4,11 @@ Each transcript is read once and afterwards only from where the previous scan
 stopped, so the nightly refresh reads just what was appended since."""
 import json
 import re
-import shutil
 import sqlite3
-import subprocess
 import time
-import uuid
 from pathlib import Path
 
+from . import bridge
 from .providers import UUID, epoch
 from .state import ROOT, atomic_json
 
@@ -19,7 +17,6 @@ OUTPUT = ROOT / 'inventory.json'
 IDLE = 600
 TIMESTAMP = re.compile(rb'"timestamp":"([^"]+)"')
 CWD = re.compile(rb'"cwd":("(?:[^"\\]|\\.)*")')
-RESUME_WAIT = 45
 
 
 def scan(path, state, inspect):
@@ -116,35 +113,4 @@ def resume(key):
     matches = [row for row in json.loads(OUTPUT.read_text())['conversations'] if row['key'] == key]
     if len(matches) != 1: raise ValueError('Conversation is not in the inventory; refresh it and retry')
     row = matches[0]
-    if not row['available']: raise ValueError(f'Its folder no longer exists: {row["folder"]}')
-    live = []
-    for path in (ROOT / 'windows').glob('*.json'):
-        try: window = json.loads(path.read_text())
-        except (OSError, ValueError): continue
-        if row['folder'] in window.get('roots', []) and time.time() - window.get('updated', 0) < 15: live.append(window)
-    # `code` focuses an open window on the folder instead of opening another.
-    if live and not any(window.get('resume') for window in live):
-        raise ValueError(f'The VS Code window on {row["project"]} started before resume support; '
-                         'run Developer: Reload Window in it, then retry')
-    code = shutil.which('code')
-    if not code: raise ValueError('The VS Code `code` command is not on PATH')
-    action = str(uuid.uuid4())
-    (ROOT / 'resume').mkdir(mode=0o700, exist_ok=True)
-    request = ROOT / 'resume' / f'{action}.json'
-    response = ROOT / 'responses' / f'{action}.json'
-    atomic_json(request, {'id': action, 'provider': row['provider'], 'conversation': row['id'],
-                          'folder': row['folder'], 'expires': time.time() + RESUME_WAIT})
-    # Focuses the window already open on this folder, or opens a new one.
-    subprocess.Popen([code, row['folder']], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                     stderr=subprocess.DEVNULL, start_new_session=True)
-    try:
-        for _ in range(RESUME_WAIT * 4):
-            time.sleep(.25)
-            if response.exists():
-                result = json.loads(response.read_text())
-                response.unlink()
-                if not result['ok']: raise ValueError(result.get('error', 'VS Code could not reopen it'))
-                return {'ok': True}
-        raise ValueError(f'No VS Code window on {row["folder"]} took the request within {RESUME_WAIT} s')
-    finally:
-        request.unlink(missing_ok=True)
+    return bridge.in_folder(row['folder'], {'provider': row['provider'], 'conversation': row['id']}, 'resume', 'reopen chats')

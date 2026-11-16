@@ -104,6 +104,11 @@ time, or another ticket's number. Readiness is computed on listing: times agains
 (a forgotten queue finished long ago), tickets against those still open. The service puts the listing in the
 snapshot, rereading it when the database or the queues change, and every 30 s for waits on time. Numbers are never
 reused, so prompts and `ticket:` waits keep pointing at the same ticket; closed tickets are pruned after 30 days.
+`ticket start` and `resume` share `bridge.in_folder`: it leaves a request under `resume/` and runs `code <folder>`,
+which focuses the window open there or opens one; the first bridge on that folder takes the request and either
+reopens a chat or runs `claude-vscode.editor.open` with no session and the prompt, which Claude Code puts in a new
+chat's input box without sending it. A window whose bridge predates the feature (`resume`, `start` in its published
+window file) must be reloaded first.
 
 ## GNOME Shell extension
 

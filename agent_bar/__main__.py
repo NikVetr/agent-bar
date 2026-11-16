@@ -60,6 +60,8 @@ def main():
                           'date:<YYYY-MM-DD[ HH:MM]>, date:+<N>h|d, or ticket:<number>; repeat to wait for several')
     new.add_argument('--as', dest='sender', help='author when not run from a Claude Code or Codex tool (default: user)')
     actions.add_parser('list', help='open tickets with what each waits for, then recently closed ones')
+    begin = actions.add_parser('start', help="open a new Claude Code chat in the ticket's folder with its prompt, unsent")
+    begin.add_argument('number', type=int)
     for action, words in [('take', 'mark a ticket started by this chat'), ('done', 'close a ticket as done'),
                           ('drop', 'close a ticket without doing it'), ('reopen', 'open a closed or started ticket again')]:
         one = actions.add_parser(action, help=words)
@@ -91,6 +93,7 @@ def main():
             if action == 'add':
                 result = tickets.add(args['text'] if args['text'] is not None else sys.stdin.read(), args['project'], args['after'], args['sender'])
             elif action == 'list': result = tickets.listing()
+            elif action == 'start': result = tickets.start(args['number'])
             else:
                 status = {'take': 'started', 'done': 'done', 'drop': 'dropped', 'reopen': 'open'}[action]
                 result = tickets.change(args['number'], status, args.get('note'), args['sender'])

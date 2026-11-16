@@ -37,7 +37,7 @@ async function activate(context) {
                 roots: (vscode.workspace.workspaceFolders || []).map(x => x.uri.fsPath),
                 storage: context.storageUri?.fsPath || null,
                 log: context.logUri.fsPath, focused: vscode.window.state.focused,
-                nativeId, tabs: tabs(), resume: true, scm: true,
+                nativeId, tabs: tabs(), resume: true, start: true, scm: true,
                 providers: Object.fromEntries(['openai.chatgpt', 'Anthropic.claude-code']
                     .map(key => [key, vscode.extensions.getExtension(key)?.packageJSON.version || null])),
             });
@@ -129,9 +129,15 @@ async function activate(context) {
         } catch (error) { report(error); }
         finally { busy = false; }
     }
-    // `agent-bar resume` leaves a request naming a folder; the first
-    // window on that folder to delete the file reopens the conversation.
+    // `agent-bar resume` and `agent-bar ticket start` leave a request naming a folder; the first window on that
+    // folder to delete the file reopens the conversation, or starts a Claude one with the prompt in its input box,
+    // unsent.
     async function reopen(request) {
+        if (request.conversation === undefined && typeof request.prompt === 'string') {
+            if (request.provider !== 'claude') throw new Error('Only Claude Code chats can start with a prompt');
+            await vscode.commands.executeCommand('claude-vscode.editor.open', undefined, request.prompt);
+            return;
+        }
         if (!/^[a-f0-9-]{36}$/.test(request.conversation)) throw new Error('Invalid conversation ID');
         if (request.provider === 'claude') {
             await vscode.commands.executeCommand('claude-vscode.editor.open', request.conversation);

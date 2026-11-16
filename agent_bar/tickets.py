@@ -12,6 +12,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from . import bridge
 from .state import ROOT, project_names
 
 LENGTH_LIMIT = 4000
@@ -150,6 +151,18 @@ def prompt(ticket):
     return (f'Agent Bar ticket #{ticket["id"]} in {ticket["project"]} ({ticket["folder"]}), written by {source}:\n\n{ticket["body"]}\n\n'
             f'Run `agent-bar ticket take {ticket["id"]}` before starting, and `agent-bar ticket done {ticket["id"]} --note "<one line>"` '
             'when it is finished.')
+
+
+def start(number, root=ROOT):
+    """Open a new Claude Code chat in the ticket's folder, in VS Code, with its prompt in the input box for the user to
+    send; the chat takes the ticket itself, as the prompt asks."""
+    with connect(root) as connection:
+        row = connection.execute('SELECT * FROM tickets WHERE id=?', (number,)).fetchone()
+    if not row: raise ValueError(f'No ticket #{number}')
+    if row['status'] != 'open': raise ValueError(f'Ticket #{number} is {row["status"]}')
+    if not row['folder']: raise ValueError(f'Ticket #{number} has no folder')
+    bridge.in_folder(row['folder'], {'provider': 'claude', 'prompt': prompt(dict(row))}, 'start', 'start chats with a prompt', root)
+    return {'ok': True, 'id': number}
 
 
 def listing(root=ROOT, now=None, queues=None):

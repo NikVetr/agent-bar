@@ -715,3 +715,11 @@ test('a new ticket can go in any open folder, the most recently active chat\'s f
         windows: [{kind: 'vscode', roots: ['/r/idle']}, {kind: 'app', roots: ['/r/app']}]};
     assert.equal(f.context.ticketFolders(snapshot).map(([folder, name]) => `${name}=${folder}`).join(), 'new=/r/new,old=/r/old,idle=/r/idle');
 });
+
+test('the top-bar ticket count shows the ones that came due, every ready one, or none', () => {
+    const f = fixture();
+    const listing = {open: [{ready: true, after: [{kind: 'date'}]}, {ready: true, after: []}, {ready: false, after: [{kind: 'reset'}]}]};
+    assert.equal(f.context.countedTickets(listing, 'due').length, 1);
+    assert.equal(f.context.countedTickets(listing, 'ready').length, 2);
+    assert.equal(f.context.countedTickets(listing, 'off').length, 0);
+});

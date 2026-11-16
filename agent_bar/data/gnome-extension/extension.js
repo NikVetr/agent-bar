@@ -37,8 +37,8 @@ const SETTINGS = [
             ['Queues finished', 'Queues finished'], ['Usage limit', 'Stopped at a usage limit']]],
     ['Top bar', 'quotaBar', 'Limits left', 'Each provider\'s weekly usage limit left, after the chat counts', true,
         [[true, 'Show'], [false, 'Hide']]],
-    ['Top bar', 'ticketBar', 'Ticket count', 'Tickets ready to start, when there are any', true,
-        [[true, 'Show'], [false, 'Hide']]],
+    ['Top bar', 'ticketBar', 'Ticket count', 'Tickets that came due (waited for something that has passed), or every ticket ready to start', 'due',
+        [['due', 'Came due'], ['ready', 'All ready'], ['off', 'Hide']]],
     ['Top bar', 'queueBar', 'Queue count', 'Q finished / outstanding since each project\'s last turn', true,
         [[true, 'Show'], [false, 'Hide']]],
     ['Cluster', 'clusterBar', 'Top-bar indicator', 'What it shows; with only Warnings it appears just when one fires', ['cpu', 'warnings'],
@@ -202,6 +202,11 @@ function ticketDetail(ticket) {
         parts.push(`taken by ${ticket.taken_by === 'user' ? 'you' : `${who(ticket.taken_by)} ${ticket.taken_title || ticket.taken_by}`} ${age(ticket.status_at)}`);
     if (ticket.status === 'done' || ticket.status === 'dropped') parts.push(`${ticket.status} ${age(ticket.status_at)}${ticket.note ? `: ${ticket.note}` : ''}`);
     return parts.join(' · ');
+}
+
+// The tickets the top-bar count shows: ready ones that waited for something ('due'), every ready one ('ready'), or none.
+function countedTickets(listing, which) {
+    return (listing?.open || []).filter(ticket => ticket.ready && (which === 'ready' || which === 'due' && ticket.after?.length > 0));
 }
 
 // Folders a new ticket can go in: open chats' folders, most recently active first, then other open windows'.
@@ -1114,8 +1119,8 @@ class Tracker {
         this._ticketCount = new St.Label({style_class: 'tracker-help-bright', y_align: Clutter.ActorAlign.CENTER});
         this._ticketPart.add_child(this._ticketCount);
         this._tooltip(this._ticketPart, () => {
-            const ready = (this._snapshot?.tickets?.open || []).filter(ticket => ticket.ready).length;
-            return `${ready} ticket${ready === 1 ? '' : 's'} ready to start`;
+            const count = countedTickets(this._snapshot?.tickets, this._setting('ticketBar')).length;
+            return `${count} ticket${count === 1 ? '' : 's'} ${this._setting('ticketBar') === 'due' ? 'whose waits have passed' : 'ready to start'}`;
         });
         // Each part is a box around its labels: the labels keep the widths they have needed, and the part's padding
         // must stay out of those.
@@ -1363,9 +1368,9 @@ class Tracker {
     }
 
     _showTicketCount(snapshot) {
-        const ready = (snapshot.tickets?.open || []).filter(ticket => ticket.ready).length;
-        this._ticketPart.visible = this._setting('ticketBar') && ready > 0;
-        this._ticketCount.text = `${ready}`;
+        const count = countedTickets(snapshot.tickets, this._setting('ticketBar')).length;
+        this._ticketPart.visible = count > 0;
+        this._ticketCount.text = `${count}`;
     }
 
     // Whether queue counts show: the scheduler integration is on and parallel-workers is set up here.
@@ -1587,12 +1592,16 @@ class Tracker {
         }
 
         const tickets = card('Tickets');
-        row(tickets, [this._glyph('ticket', null, 'help-bright'), text('2', 'tracker-help-bright')], 'In the top bar: tickets ready to start. A ticket '
-            + 'is a task you or an agent wants done later, in one project; write one at the top of Tickets, or an agent runs `agent-bar ticket add`.');
+        row(tickets, [this._glyph('ticket', null, 'help-bright'), text('2', 'tracker-help-bright')], 'In the top bar: tickets that waited for something '
+            + 'that has now passed (Settings › Top bar › Ticket count can count every ready one). A ticket is a task you or an agent wants done '
+            + 'later, in one project; write one with New ticket, or an agent runs `agent-bar ticket add`.');
         row(tickets, [text('waits until', 'tracker-detail')], 'A ticket can wait for a usage limit to reset, the project\'s queues to finish, a time, '
             + 'or another ticket to close; each is fixed when it is written (that reset, the queues outstanding then), and it is ready once all have passed.');
-        row(tickets, [this._copyButton(() => '', 'Copy', true)], 'Copies a prompt to paste into a chat: the ticket, and to run `agent-bar ticket take` '
-            + 'before starting and `agent-bar ticket done` after, which move it to Started and Closed. Done and Drop close it here; Reopen undoes either.');
+        row(tickets, [text('Start', 'tracker-filter')], 'Opens a new Claude Code chat in the ticket\'s folder, in VS Code (opening a window there if '
+            + 'none is), with the ticket as its prompt in the input box, unsent. The prompt asks the chat to run `agent-bar ticket take` before starting '
+            + 'and `agent-bar ticket done` after, which move it to Started and Closed.');
+        row(tickets, [this._copyButton(() => '', 'Copy', true)], 'Copies the same prompt, to paste into any chat, such as a Codex one. Done and Drop '
+            + 'close a ticket here; Reopen undoes either.');
 
         const quota = card('Quota');
         const bar = new St.Widget({style_class: 'tracker-progress tracker-help-progress', y_align: Clutter.ActorAlign.CENTER});
@@ -4004,11 +4013,21 @@ class Tracker {
         const actions = new St.BoxLayout({style_class: 'tracker-ticket-actions', y_align: Clutter.ActorAlign.CENTER});
         const closed = ticket.status === 'done' || ticket.status === 'dropped';
         if (!closed) actions.add_child(this._copyButton(() => ticket.prompt, 'Copy a prompt that has a chat do this ticket', true));
-        for (const [label, action, name] of closed ? [['Reopen', 'reopen', 'Open this ticket again']]
-            : [['Done', 'done', 'Close this ticket as done'], ['Drop', 'drop', 'Close this ticket without doing it']]) {
+        const choices = closed ? [['Reopen', 'reopen', 'Open this ticket again']]
+            : [['Done', 'done', 'Close this ticket as done'], ['Drop', 'drop', 'Close this ticket without doing it']];
+        if (ticket.status === 'open') choices.unshift(['Start', 'start', 'Open a new Claude Code chat in its folder, in VS Code, with the ticket '
+            + 'as its prompt, for you to read and send']);
+        for (const [label, action, name] of choices) {
             const button = new St.Button({label, can_focus: true, accessible_name: name, style_class: 'tracker-filter tracker-ticket-action',
                 y_align: Clutter.ActorAlign.CENTER});
-            button.connect('clicked', () => this._ticketAction([action, `${ticket.id}`]));
+            if (action === 'start') {
+                this._tooltip(button, name);
+                button.connect('clicked', () => {
+                    button.label = 'Opening…';
+                    button.reactive = false;
+                    this._ticketAction([action, `${ticket.id}`], () => this._button.menu.close());
+                });
+            } else button.connect('clicked', () => this._ticketAction([action, `${ticket.id}`]));
             actions.add_child(button);
         }
         item.add_child(actions);

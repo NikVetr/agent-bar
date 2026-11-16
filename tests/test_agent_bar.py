@@ -1238,4 +1238,35 @@ class TicketTests(unittest.TestCase):
         self.assertEqual(([row['id'] for row in listing['open']], listing['closed']), ([2], []))
 
 
+    def test_start_hands_the_prompt_to_the_window_on_its_folder(self):
+        from agent_bar import bridge
+        t = self.tickets
+        Path(self.folder).mkdir(parents=True)
+        t.add('Do the thing', self.folder, root=self.root, now=100)
+        windows = self.root / 'windows'
+        windows.mkdir()
+        # A window on the folder whose bridge predates starting chats is asked to reload.
+        (windows / 'w.json').write_text(json.dumps({'roots': [self.folder], 'updated': time.time(), 'resume': True}))
+        with self.assertRaisesRegex(ValueError, 'Reload Window'): t.start(1, root=self.root)
+        (windows / 'w.json').write_text(json.dumps({'roots': [self.folder], 'updated': time.time(), 'resume': True, 'start': True}))
+        (self.root / 'responses').mkdir()
+        launched = []
+
+        def answer(command, **_):
+            # The bridge takes the request and answers.
+            launched.append(command)
+            request = json.loads(next((self.root / 'resume').glob('*.json')).read_text())
+            self.assertEqual((request['provider'], request['folder'], 'conversation' in request), ('claude', self.folder, False))
+            self.assertIn('Do the thing', request['prompt'])
+            (self.root / 'responses' / f'{request["id"]}.json').write_text('{"ok": true}')
+
+        with unittest.mock.patch.object(bridge.shutil, 'which', return_value='/usr/bin/code'), \
+                unittest.mock.patch.object(bridge.subprocess, 'Popen', side_effect=answer):
+            self.assertEqual(t.start(1, root=self.root), {'ok': True, 'id': 1})
+        self.assertEqual(launched, [['/usr/bin/code', self.folder]])
+        self.assertEqual(list((self.root / 'resume').iterdir()), [])
+        t.change(1, 'done', root=self.root)
+        with self.assertRaisesRegex(ValueError, 'is done'): t.start(1, root=self.root)
+
+
 if __name__ == '__main__': unittest.main()
