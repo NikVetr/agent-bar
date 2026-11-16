@@ -3,6 +3,7 @@ const {Clutter, Gio, GLib, Meta, Pango, St} = imports.gi;
 const Main = imports.ui.main;
 const PanelMenu = imports.ui.panelMenu;
 const PopupMenu = imports.ui.popupMenu;
+const CheckBox = imports.ui.checkBox;
 const ByteArray = imports.byteArray;
 const ROOT = GLib.build_filenamev([GLib.get_home_dir(), '.local/state/agent-bar']);
 // The agent-bar command; pipx and uv install it in ~/.local/bin, which a GNOME session's PATH may lack.
@@ -30,16 +31,15 @@ const SETTINGS = [
         [[0, 'Off'], [3, '3'], [6, '6'], [10, '10']]],
     ['Top bar', 'quickChars', 'Button name length', 'Characters of the folder name on each shortcut', 16,
         [[12, '12'], [16, '16'], [24, '24']]],
-    ['Top bar', 'quickReasons', 'Review buttons for', 'Reasons that give a chat a shortcut',
+    ['Top bar', 'quickReasons', 'Review buttons for', 'What gives a chat a shortcut; the Chats tab shows every chat needing review either way',
         ['Reply finished', 'Turn failed', 'Input needed', 'Approval needed', 'Queues finished'],
-        [['Reply finished', 'Reply'], ['Turn failed', 'Failure'], ['Input needed', 'Question'], ['Approval needed', 'Approval'], ['Queues finished', 'Queues']]],
-    ['Top bar', 'quickLimited', 'Usage-limit stops', 'Whether a chat stopped at its 5-hour or weekly limit gets a review button; '
-        + 'the Chats tab shows it either way', false, [[true, 'Show'], [false, 'Hide']]],
+        [['Reply finished', 'Reply finished'], ['Turn failed', 'Turn failed'], ['Input needed', 'Question'], ['Approval needed', 'Approval'],
+            ['Queues finished', 'Queues finished'], ['Usage limit', 'Stopped at a usage limit']]],
     ['Top bar', 'quotaBar', 'Limits left', 'Each provider\'s weekly usage limit left, after the chat counts', true,
         [[true, 'Show'], [false, 'Hide']]],
     ['Top bar', 'queueBar', 'Queue count', 'Q finished / outstanding since each project\'s last turn', true,
         [[true, 'Show'], [false, 'Hide']]],
-    ['Cluster', 'clusterBar', 'Top-bar indicator', 'Pick any; with only Warnings it appears just when one fires', ['cpu', 'warnings'],
+    ['Cluster', 'clusterBar', 'Top-bar indicator', 'What it shows; with only Warnings it appears just when one fires', ['cpu', 'warnings'],
         [['cpu', 'CPU'], ['memory', 'Memory'], ['disk', 'Disk'], ['warnings', 'Warnings']]],
     ['Cluster', 'clusterMemoryWarn', 'Memory warning', 'The memory pressure a host must reach', 'warn',
         [['warn', 'Elevated'], ['critical', 'Critical']]],
@@ -157,12 +157,11 @@ function completionTime(row) {
 }
 
 // Open chats needing review for one of `reasons` (any, when null), the longest waiting first: since the oldest of
-// those reasons arrived.
-// With `limited` false, a turn a usage limit stopped does not count as a failure to review: nothing in it needs the
-// user until the limit resets, and the Chats tab says so.
-function readyConversations(rows, reasons = null, limited = true) {
+// those reasons arrived. A turn a usage limit stopped counts as 'Usage limit', not 'Turn failed': nothing in it needs
+// the user until the limit resets.
+function readyConversations(rows, reasons = null) {
     const unique = new Map();
-    const counts = (reason, row) => (!reasons || reasons.includes(reason)) && (limited || !(row.limited && reason === 'Turn failed'));
+    const counts = (reason, row) => !reasons || reasons.includes(row.limited && reason === 'Turn failed' ? 'Usage limit' : reason);
     for (const row of rows)
         if (row.target && !unique.has(row.key) && row.unread.some(reason => counts(reason, row)))
             unique.set(row.key, row);
@@ -1337,16 +1336,36 @@ class Tracker {
                 detail.clutter_text.line_wrap = true;
                 text.add_child(detail);
                 item.add_child(text);
+                if (Array.isArray(fallback)) {
+                    // Pick any: one checkbox per option, on lines under the description.
+                    const current = this._setting(key);
+                    const captions = new Map(options.map(([value, caption]) => [caption, value]));
+                    for (const line of chipLines(options.map(([, caption]) => caption), 54)) {
+                        const boxes = new St.BoxLayout({style_class: 'tracker-checks'});
+                        for (const caption of line) {
+                            const value = captions.get(caption);
+                            const box = new CheckBox.CheckBox(caption);
+                            box.add_style_class_name('tracker-check');
+                            box.checked = current.includes(value);
+                            box.connect('clicked', () => {
+                                this._saveSetting(key, options.map(([option]) => option)
+                                    .filter(option => (option === value) !== current.includes(option)));
+                                this._later(() => this._renderRows());
+                            });
+                            boxes.add_child(box);
+                        }
+                        text.add_child(boxes);
+                    }
+                    card.addMenuItem(item);
+                    continue;
+                }
                 const segments = new St.BoxLayout({style_class: 'tracker-segments', y_align: Clutter.ActorAlign.CENTER});
-                const multiple = Array.isArray(fallback);
                 for (const [value, caption] of options) {
                     const current = this._setting(key);
                     const button = new St.Button({label: caption, can_focus: true, toggle_mode: true,
-                        checked: multiple ? current.includes(value) : value === current, style_class: 'tracker-segment'});
-                    // A multiple-choice segment toggles its value, keeping the options' order.
+                        checked: value === current, style_class: 'tracker-segment'});
                     button.connect('clicked', () => {
-                        this._saveSetting(key, multiple ? options.map(([option]) => option)
-                            .filter(option => (option === value) !== current.includes(option)) : value);
+                        this._saveSetting(key, value);
                         this._later(() => this._renderRows());
                     });
                     segments.add_child(button);
@@ -1418,7 +1437,7 @@ class Tracker {
         row(top, [text('✳ project…', 'tracker-quick-button tracker-claude')], limit
             ? `Up to ${limit} chats needing review get a shortcut, as many as fit, the longest waiting first; clicking one brings that `
                 + 'chat forward and clears it. They continue right of the middle when the left half is full; +2 more lists the rest. '
-                + (this._setting('quickLimited') ? 'Chats a usage limit stopped get one too.' : 'A chat stopped only by a usage limit gets none; the Chats tab shows it.')
+                + 'Settings › Top bar › Review buttons for picks the reasons; by default a chat stopped only by a usage limit gets none, and the Chats tab shows it.'
             : 'Review shortcuts are off (Settings › Top bar).');
         if (scheduler) row(top, [text('23%', 'tracker-muted'), text('64%', 'tracker-working'), text('94%', 'tracker-attention')],
             'Cluster CPU: busy cores over the cores allotted to jobs (each host\'s job slots). A host\'s other cores are '
@@ -2369,7 +2388,7 @@ class Tracker {
 
     _renderQuick(rows) {
         for (const [key, after] of this._quickPending) if ((this._snapshot?.updated ?? 0) > after) this._quickPending.delete(key);
-        const ready = readyConversations(rows, this._setting('quickReasons'), this._setting('quickLimited'))
+        const ready = readyConversations(rows, this._setting('quickReasons'))
             .filter(row => !this._quickPending.has(row.key));
         const limit = this._setting('quickLimit'), chars = this._setting('quickChars');
         const shown = ready.slice(0, limit);

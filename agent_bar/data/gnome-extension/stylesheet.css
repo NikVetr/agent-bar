@@ -165,6 +165,9 @@
 .tracker-settings-card { border: 1px solid #474e58; border-radius: 8px; background-color: #25292f; margin-bottom: 6px; }
 .tracker-setting { padding: 10px 14px; spacing: 16px; border-top: 1px solid #3b414a; }
 .tracker-setting-label { font-size: 13px; color: #edf0f5; padding-bottom: 2px; }
+.tracker-checks { spacing: 18px; padding-top: 6px; }
+.tracker-check { font-size: 12px; color: #d4d9e0; }
+.tracker-check StLabel { font-weight: normal; padding-left: 6px; }
 .tracker-segments { padding: 2px; border-radius: 7px; background-color: #1d2025; }
 .tracker-segment { padding: 4px 11px; border-radius: 5px; font-size: 12px; color: #b4bbc5; }
 .tracker-segment:hover { color: #f3f5f8; }

@@ -28,7 +28,7 @@ function fixture() {
             ui: {main: {layoutManager: {primaryIndex: 0,
                 monitors: [{x: 0, y: 0, width: 1280, height: 800}, {x: 1280, y: 0, width: 1280, height: 800}]},
                 activateWindow: () => calls.push(['focus']), notifyError: (_title, error) => errors.push(error)},
-                panelMenu: {}, popupMenu: {}},
+                panelMenu: {}, popupMenu: {}, checkBox: {}},
             byteArray: {toString: value => value},
         },
         global: {get_window_actors: () => [{meta_window: win}], display: {focus_window: null},
@@ -678,11 +678,16 @@ test('a chat copies as its whole name, key, project, folders and how to resume i
     assert.doesNotMatch(f.context.chatIdentity({...row, provider: 'copilot', roots: []}), /Resume|Folder/);
 });
 
-test('a chat a usage limit stopped gets a review button only when the setting asks for it', () => {
+test('a chat a usage limit stopped gets a review button only when its own reason is picked', () => {
     const f = fixture();
     const rows = [{key: 'stopped', target: {}, unread: ['Turn failed'], limited: {at: 5}, completed_at: 5},
         {key: 'failed', target: {}, unread: ['Turn failed'], completed_at: 6},
         {key: 'both', target: {}, unread: ['Turn failed', 'Queues finished'], limited: {at: 7}, completed_at: 7}];
-    assert.equal(f.context.readyConversations(rows, null, false).map(r => r.key).join(','), 'failed,both');
-    assert.equal(f.context.readyConversations(rows, null, true).map(r => r.key).join(','), 'stopped,failed,both');
+    const keys = reasons => f.context.readyConversations(rows, reasons).map(r => r.key).join(',');
+    assert.equal(keys(['Turn failed', 'Queues finished']), 'failed,both');
+    assert.equal(keys(['Turn failed', 'Usage limit']), 'stopped,failed,both');
+    assert.equal(keys(['Usage limit']), 'stopped,both');
+    // The default picks everything but usage-limit stops.
+    const [, , , , fallback, options] = vm.runInContext('SETTINGS', f.context).find(([, key]) => key === 'quickReasons');
+    assert.equal(options.map(([value]) => value).filter(value => !fallback.includes(value)).join(), 'Usage limit');
 });

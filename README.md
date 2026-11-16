@@ -73,10 +73,10 @@ again, leaving your history and settings (`--purge` deletes those too).
   clicking the open tab's part, or anywhere else, closes it.
 - **▾**: every window with a chat, with a dot for its most urgent state; click one to bring it forward. Below
   them, **New VS Code window** opens one maximized on your main display, and **Saved chats** opens History.
-- **Shortcut buttons**: chats needing review get a button that brings them forward (except, unless **Settings › Top
-  bar › Usage-limit stops** says so, chats stopped only by a usage limit), the longest waiting first, as
-  many as fit, continuing right of the middle when the left half is full; **+2 more** lists the rest. **Settings › Top bar** sets the most buttons and
-  which reasons give one: a finished or failed reply, a question or approval, finished queues.
+- **Shortcut buttons**: chats needing review get a button that brings them forward, the longest waiting first, as
+  many as fit, continuing right of the middle when the left half is full; **+2 more** lists the rest. **Settings › Top bar** sets the most buttons and,
+  with checkboxes, which reasons give one: a finished reply, a failed turn, a question, an approval, finished queues
+  (all on by default), and a stop at a 5-hour or weekly usage limit (off by default; the Chats tab shows those chats).
 
 Clicking the counts opens the dropdown, with these tabs:
 
