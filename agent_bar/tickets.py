@@ -18,7 +18,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from . import bridge, messages
-from .state import ROOT, project_names
+from .state import ROOT, agent_ancestor, project_names
 
 LENGTH_LIMIT = 4000
 KEEP = 30 * 86400  # Closed tickets are kept this long.
@@ -36,9 +36,12 @@ AFTER_HELP = ('reset:<claude|codex>[:<limit>], queues, queue:<id>, date:<YYYY-MM
 
 def author(explicit=None):
     """Who is writing: the agent conversation running this command, which cannot pass itself off as the user, or
-    else `explicit`, or the user."""
+    else `explicit`, or the user. A command an agent started with its session variables removed is refused, since
+    the user's tickets can be sent as the user's requests."""
     if os.environ.get('CLAUDE_CODE_SESSION_ID'): return f'claude:{os.environ["CLAUDE_CODE_SESSION_ID"]}'
     if os.environ.get('CODEX_THREAD_ID'): return f'codex:{os.environ["CODEX_THREAD_ID"]}'
+    if agent_ancestor(): raise ValueError('An agent chat started this without its session id, so Agent Bar cannot tell which '
+                                          'chat is writing; run it from the chat\'s own tool environment')
     return explicit or 'user'
 
 

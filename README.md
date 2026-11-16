@@ -121,7 +121,8 @@ Clicking the counts opens the dropdown, with these tabs:
   behind its upstream (as of the last fetch; Agent Bar never fetches or takes git's lock). Clicking one opens VS
   Code's Source Control for it.
 - **Messages**: notes between agents, as threads.
-- **Tickets**: tasks to do later (see below), ready ones first, then those waiting, started, and recently closed. **New
+- **Tickets**: tasks to do later (see below), ready ones first, then those scheduled to be sent to a chat, those
+  waiting, started, and recently closed. **New
   ticket** writes one: its text, its project (the most recently active open folders first), and what it waits for.
   **Start** opens a new Claude Code chat in the ticket's folder, in VS Code (opening a window there if none is), with
   the ticket as its prompt in the input box, unsent, for you to read and send. A copy button copies the same prompt,
@@ -184,6 +185,30 @@ weekly one; `reset:claude:session` picks the 5-hour one), or the queues outstand
 waits have passed. An agent's ticket goes in its own folder unless `--project` names another, and is marked as
 coming from that chat; agents cannot write tickets as you. A ticket's prompt asks the chat to run `take` and `done`.
 Codex's VS Code extension offers no way to open a new chat with a prompt, so Start makes Claude chats only. Closed tickets are kept 30 days.
+
+### Scheduled messages
+
+A ticket can instead be sent to an open Claude Code or Codex chat once it is ready, as a message: a one-off
+reminder or request, or one that repeats.
+
+```
+agent-bar ticket add "Draft this week's update" --to codex:<id> --after "date:2026-11-23 09:00" --repeat week
+```
+
+`--repeat` takes `day`, `week`, `month`, or `<N>h`, `<N>d` or `<N>w` (at least hourly), and needs one time to start
+from. Repeats count from that first time (a monthly send on the 31st comes back to the 31st, or the month's last day);
+sends missed while the computer was off are skipped, not sent late. A one-off ticket closes once sent; a repeating one
+stays under **Scheduled** in Tickets until you drop it. If the chat has closed, the ticket shows the reason and tries
+again every 10 minutes.
+
+The **Schedule** button (a clock) on each Claude or Codex chat in the Chats tab opens a column beside the list: the
+message, when to send it (in an hour, tomorrow at 9, next Monday at 9, or a typed time), how often to repeat it, and
+what is already scheduled for that chat. The **New ticket** form can also send a ticket to one of its project's chats.
+
+Your scheduled messages arrive as your own requests: the chat's note says so, unlike messages from other agents,
+which are information only. So only you can schedule them. A ticket an agent writes with `--to` arrives from that
+agent, under the loop guard, and Agent Bar refuses a ticket from a command an agent started without its session id.
+With **Wake idle chats** off, a scheduled message waits for your next prompt in that chat.
 
 ## Optional: the parallel-workers scheduler
 

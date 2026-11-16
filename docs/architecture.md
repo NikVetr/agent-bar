@@ -106,6 +106,15 @@ time, or another ticket's number. Readiness is computed on listing: times agains
 (a forgotten queue finished long ago), tickets against those still open. The service puts the listing in the
 snapshot, rereading it when the database or the queues change, and every 30 s for waits on time. Numbers are never
 reused, so prompts and `ticket:` waits keep pointing at the same ticket; closed tickets are pruned after 30 days.
+A ticket with `deliver_to` is sent rather than kept: the service's loop checks the listing each pass and, off the
+loop, `tickets.deliver_due` sends each ready one with `messages.send` from its author, then closes it, or for a
+`repeat` moves its date wait to the next occurrence counted from the first (`anchor`), skipping missed ones. A
+failure is stored on the ticket (`delivery_error`, `tried_at`) and retried after 10 minutes. Only this path sends
+as `user`: `send` refuses that sender otherwise, the user's messages skip the loop guard, and the turn-start note and
+`inbox` call them the user's requests rather than information. Commands reserved for the user (writing a ticket as the
+user, resetting the loop guard) also refuse when a `claude` or `codex` process is among their ancestors
+(`state.agent_ancestor`), since an agent can unset its session variables but not its ancestry.
+
 `ticket start` and `resume` share `bridge.in_folder`: it leaves a request under `resume/` and runs `code <folder>`,
 which focuses the window open there or opens one; the first bridge on that folder takes the request and either
 reopens a chat or runs `claude-vscode.editor.open` with no session and the prompt, which Claude Code puts in a new

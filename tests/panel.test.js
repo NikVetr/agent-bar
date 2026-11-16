@@ -726,3 +726,27 @@ test('the top-bar ticket count shows the ones that came due, every ready one, or
     assert.equal(f.context.countedTickets(listing, 'ready').length, 2);
     assert.equal(f.context.countedTickets(listing, 'off').length, 0);
 });
+
+test('tickets sent to a chat group as scheduled, say where they go, and count in the top bar only when sending failed', () => {
+    const f = fixture();
+    const now = Date.now() / 1000;
+    const sent = {id: 5, body: 'Weekly draft', project: 'p', author: 'user', at: now, status: 'open', ready: false, after: [{kind: 'date'}],
+        waiting: ['Mon Nov 23, 09:00, then every week'], deliver_to: 'codex:b', deliver_title: 'Reports', sent_count: 2};
+    const failed = {...sent, id: 6, ready: true, waiting: [], delivery_error: 'codex:b is not an open chat', sent_count: 0};
+    const listing = {open: [sent, failed, {id: 7, body: 'x', project: 'p', status: 'open', ready: true, after: [], waiting: []}], closed: []};
+    assert.equal(f.context.ticketGroups(listing).map(([name, t]) => `${name}:${t.map(x => x.id)}`).join(' '), 'Ready:7 Scheduled:5,6');
+    assert.equal(f.context.ticketNote(sent), 'Sends to ⌘ Reports when Mon Nov 23, 09:00, then every week · sent 2 times');
+    assert.match(f.context.ticketNote(failed), /^Not sent to ⌘ Reports yet: codex:b is not an open chat/);
+    assert.equal([sent, failed].map(t => f.context.ticketStatus(t)[0]).join(), 'Scheduled,Not sent');
+    assert.equal(f.context.countedTickets(listing, 'ready').map(t => t.id).join(), '6,7');
+    assert.equal(f.context.scheduledFor(listing, 'codex:b').length, 2);
+});
+
+test('quick send times are an hour from now, tomorrow at 9 and the next Monday at 9', () => {
+    const f = fixture();
+    // A Wednesday afternoon.
+    const choices = f.context.whenChoices(new Date(2026, 10, 18, 14, 30));
+    assert.equal(choices.map(([value]) => value).join(' | '), '+1h | 2026-11-19 09:00 | 2026-11-23 09:00');
+    // On a Monday, "Monday" is the next one.
+    assert.equal(f.context.whenChoices(new Date(2026, 10, 16, 8))[2][0], '2026-11-23 09:00');
+});

@@ -26,6 +26,21 @@ def project_names(paths, home=None):
     return names
 
 
+def agent_ancestor():
+    """Whether a Claude Code or Codex process started this one. An agent can unset the session variables its tools get,
+    but not its process ancestry, so commands reserved for the user check both. Linux only (/proc); elsewhere False."""
+    pid = os.getpid()
+    for _ in range(64):
+        try:
+            parent = int(Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()[1])
+            if parent <= 1: return False
+            name = Path(f'/proc/{parent}/comm').read_text().strip()
+        except (OSError, ValueError, IndexError): return False
+        if name == 'claude' or name.startswith('codex'): return True
+        pid = parent
+    return False
+
+
 def atomic_json(path, value, indent=None):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)

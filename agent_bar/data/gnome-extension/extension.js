@@ -184,13 +184,38 @@ function limitedConversations(rows) {
     return [...unique.values()].sort((a, b) => (a.provider !== 'codex') - (b.provider !== 'codex'));
 }
 
-// The Tickets tab's groups, each non-empty: ready to start, waiting, started, then recently closed.
+// The Tickets tab's groups, each non-empty: ready to start, scheduled to be sent to a chat, waiting, started, then
+// recently closed.
 function ticketGroups(listing, query = '') {
-    const match = ticket => `#${ticket.id} ${ticket.body} ${ticket.project} ${ticket.author_title || ''}`.toLowerCase().includes(query);
+    const match = ticket => `#${ticket.id} ${ticket.body} ${ticket.project} ${ticket.author_title || ''} ${ticket.deliver_title || ''}`
+        .toLowerCase().includes(query);
     const open = (listing?.open || []).filter(match);
-    return [['Ready', open.filter(ticket => ticket.ready)], ['Waiting', open.filter(ticket => ticket.status === 'open' && !ticket.ready)],
+    const kept = open.filter(ticket => !ticket.deliver_to);
+    return [['Ready', kept.filter(ticket => ticket.ready)], ['Scheduled', open.filter(ticket => ticket.deliver_to && ticket.status === 'open')],
+        ['Waiting', kept.filter(ticket => ticket.status === 'open' && !ticket.ready)],
         ['Started', open.filter(ticket => ticket.status === 'started')], ['Closed', (listing?.closed || []).filter(match)]]
         .filter(([, tickets]) => tickets.length);
+}
+
+// The open tickets to be sent to one chat.
+function scheduledFor(listing, key) {
+    return (listing?.open || []).filter(ticket => ticket.deliver_to === key && ticket.status === 'open');
+}
+
+// A local time as a ticket's date wait reads it: YYYY-MM-DD HH:MM.
+function localStamp(date) {
+    const two = n => `${n}`.padStart(2, '0');
+    return `${date.getFullYear()}-${two(date.getMonth() + 1)}-${two(date.getDate())} ${two(date.getHours())}:${two(date.getMinutes())}`;
+}
+
+// Quick choices of when to send: in an hour, tomorrow at 9, and next Monday at 9.
+function whenChoices(now = new Date()) {
+    const at = (days, hour) => {
+        const date = new Date(now.getFullYear(), now.getMonth(), now.getDate() + days, hour, 0);
+        return localStamp(date);
+    };
+    const monday = (8 - now.getDay()) % 7 || 7;
+    return [['+1h', 'In an hour'], [at(1, 9), 'Tomorrow 9:00'], [at(monday, 9), 'Monday 9:00']];
 }
 
 // Who wrote or took a ticket: you, or a chat by its provider's symbol and title.
@@ -205,6 +230,12 @@ function ticketMeta(ticket) {
 
 // What an open ticket waits for, who took a started one, or how a closed one ended.
 function ticketNote(ticket) {
+    if (ticket.status === 'open' && ticket.deliver_to) {
+        const to = `${PROVIDERS[ticket.deliver_to.split(':')[0]]?.[0] || '•'} ${ticket.deliver_title || ticket.deliver_to}`;
+        if (ticket.delivery_error) return `Not sent to ${to} yet: ${ticket.delivery_error}. Tries again every 10 minutes.`;
+        return `Sends to ${to} ${ticket.waiting?.length ? `when ${ticket.waiting.join(' and ')}` : 'now'}`
+            + (ticket.sent_count ? ` · sent ${ticket.sent_count} time${ticket.sent_count === 1 ? '' : 's'}` : '');
+    }
     if (ticket.status === 'open') return ticket.waiting?.length ? `Waits until ${ticket.waiting.join(' and ')}` : '';
     if (ticket.status === 'started') return `Taken by ${ticketWho(ticket.taken_by, ticket.taken_title)} ${age(ticket.status_at)}`;
     return `${ticket.status === 'done' ? 'Done' : 'Dropped'} ${age(ticket.status_at)}${ticket.note ? `: ${ticket.note}` : ''}`;
@@ -212,13 +243,16 @@ function ticketNote(ticket) {
 
 // A ticket's status chip and its tone.
 function ticketStatus(ticket) {
+    if (ticket.status === 'open' && ticket.deliver_to) return ticket.delivery_error ? ['Not sent', 'failed'] : ['Scheduled', 'working'];
     if (ticket.status !== 'open') return {started: ['Started', 'working'], done: ['Done', 'finished'], dropped: ['Dropped', 'muted']}[ticket.status];
     return ticket.ready ? ['Ready', 'attention'] : ['Waiting', 'waiting'];
 }
 
 // The tickets the top-bar count shows: ready ones that waited for something ('due'), every ready one ('ready'), or none.
 function countedTickets(listing, which) {
-    return (listing?.open || []).filter(ticket => ticket.ready && (which === 'ready' || which === 'due' && ticket.after?.length > 0));
+    // A ticket to be sent counts only when sending it failed: otherwise it goes on its own.
+    return (listing?.open || []).filter(ticket => ticket.deliver_to ? !!ticket.delivery_error
+        : ticket.ready && (which === 'ready' || which === 'due' && ticket.after?.length > 0));
 }
 
 // Folders a new ticket can go in: open chats' folders, most recently active first, then other open windows'.
@@ -1042,6 +1076,7 @@ class Tracker {
     enable() {
         this._enabled = true;
         // A screen lock disables and re-enables this same object; disable() destroyed these widgets.
+        this._side = this._sideScroll = this._schedule = null;
         this._body = this._scroll = this._pickerList = this._clusterCards = this._clusterBarSignature = this._quotaSignature = null;
         this._cancel = new Gio.Cancellable();
         this._borrowed = new Map();
@@ -1230,7 +1265,10 @@ class Tracker {
         this._button.menu.connect('open-state-changed', (_menu, open) => {
             const tab = this._openOn;
             this._openOn = null;
-            if (!open) this._markPart();
+            if (!open) {
+                this._markPart();
+                this._schedule = null;
+            }
             if (open) {
                 // Each opening starts on a list, the last tab used unless settings say Conversations.
                 this._page = null;
@@ -1609,6 +1647,10 @@ class Tracker {
             + 'later, in one project; write one with New ticket, or an agent runs `agent-bar ticket add`.');
         row(tickets, [text('waits until', 'tracker-detail')], 'A ticket can wait for a usage limit to reset, the project\'s queues to finish, a time, '
             + 'or another ticket to close; each is fixed when it is written (that reset, the queues outstanding then), and it is ready once all have passed.');
+        row(tickets, [new St.Icon({icon_name: 'alarm-symbolic', icon_size: 14, style_class: 'tracker-help-icon'})], 'On a chat in Chats: '
+            + 'schedule a message to it, once or repeating, in a column beside the list. It is a ticket sent to that chat when its time '
+            + 'comes, listed under Scheduled in Tickets; it arrives as your request, and waits for your next prompt there if Wake idle '
+            + 'chats is off. The number beside the clock counts what is scheduled for that chat.');
         row(tickets, [text('Start', 'tracker-filter')], 'Opens a new Claude Code chat in the ticket\'s folder, in VS Code (opening a window there if '
             + 'none is), with the ticket as its prompt in the input box, unsent. The prompt asks the chat to run `agent-bar ticket take` before starting '
             + 'and `agent-bar ticket done` after, which move it to Started and Closed.');
@@ -2859,7 +2901,17 @@ class Tracker {
         this._section = new PopupMenu.PopupMenuSection();
         this._scroll.add_actor(this._section.actor);
         this._body.add_child(this._scroll);
-        this._button.menu.box.add_child(this._body);
+        // A column right of the rows, for scheduling a message to one chat; it widens the dropdown while open.
+        const split = new St.BoxLayout({x_expand: true});
+        split.add_child(this._body);
+        this._side = new St.BoxLayout({vertical: true, style_class: 'tracker-side'});
+        this._sideScroll = new St.ScrollView({style_class: 'tracker-side-scroll', overlay_scrollbars: true, visible: false,
+            y_align: Clutter.ActorAlign.START, hscrollbar_policy: St.PolicyType.NEVER, vscrollbar_policy: St.PolicyType.AUTOMATIC});
+        this._sideScroll.set_style(`max-height: ${Math.min(650, Main.layoutManager.primaryMonitor.height - 270)}px;`);
+        this._sideScroll.add_actor(this._side);
+        split.add_child(this._sideScroll);
+        this._button.menu.box.add_child(split);
+        this._renderSide();
         this._search.clutter_text.connect('text-changed', () => { this._togglePicker(null); this._renderRows(); });
         this._button.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
         this._footer = this._item('', 'tracker-footer');
@@ -3994,6 +4046,29 @@ class Tracker {
         when.x_expand = false;
         when.x_align = Clutter.ActorAlign.START;
         field('Ready when', [line, when]);
+        // Once ready: kept here to start by hand, or sent as a message to one of the project's open chats.
+        const chats = [...new Map((snapshot.rows || []).filter(row => ['claude', 'codex'].includes(row.provider)
+            && (row.roots || []).includes(draft.folder)).map(row => [row.key, row])).values()];
+        if (!chats.some(row => row.key === draft.to)) draft.to = null;
+        if (chats.length && this._setting('messages')) {
+            const targets = [[null, 'Keep it here'], ...chats.map(row => [row.key,
+                `${PROVIDERS[row.provider][0]} ${row.title.length > 30 ? `${row.title.slice(0, 29)}…` : row.title}`])];
+            const sends = targets.map(([key, label]) => this._chip(label, draft.to === key, key ? `Send it to ${label}` : label, button => {
+                draft.to = key;
+                for (const other of sends) other.checked = other === button;
+                repeat.visible = !!key;
+            }));
+            field('Then', this._chipRows(sends, 62));
+            const repeat = new St.BoxLayout({style_class: 'tracker-ticket-chips'});
+            const choices = [['', 'Once'], ['day', 'Daily'], ['week', 'Weekly'], ['month', 'Monthly']];
+            const repeats = choices.map(([value, label]) => this._chip(label, (draft.repeat || '') === value, `Send it ${label.toLowerCase()}`, button => {
+                draft.repeat = value;
+                for (const other of repeats) other.checked = other === button;
+            }));
+            for (const chip of repeats) repeat.add_child(chip);
+            repeat.visible = !!draft.to;
+            card.add_child(repeat);
+        }
         const footer = new St.BoxLayout({style_class: 'tracker-ticket-footer'});
         const note = new St.Label({text: this._ticketError || 'Ready at once if nothing is picked; with several, when all have passed',
             x_expand: true, style_class: this._ticketError ? 'tracker-warning' : 'tracker-detail', y_align: Clutter.ActorAlign.CENTER});
@@ -4015,7 +4090,8 @@ class Tracker {
                 return;
             }
             const args = ['add', ...draft.folder ? ['--project', draft.folder] : [], ...draft.waits.flatMap(wait => ['--after', wait]),
-                ...draft.date.trim() ? ['--after', `date:${draft.date.trim()}`] : [], '--', draft.text];
+                ...draft.date.trim() ? ['--after', `date:${draft.date.trim()}`] : [], ...draft.to ? ['--to', draft.to] : [],
+                ...draft.to && draft.repeat ? ['--repeat', draft.repeat] : [], '--', draft.text];
             this._ticketAction(args, () => { this._ticketDraft = null; });
         });
         footer.add_child(add);
@@ -4052,7 +4128,7 @@ class Tracker {
             actions.add_child(widget);
         };
         const closed = ticket.status === 'done' || ticket.status === 'dropped';
-        if (ticket.status === 'open')
+        if (ticket.status === 'open' && !ticket.deliver_to)
             button('Start', 'tracker-control-primary', 'A new Claude Code chat in its folder, in VS Code, with the ticket as its prompt for you to send',
                 widget => {
                     widget.label = 'Opening…';
@@ -4061,15 +4137,154 @@ class Tracker {
                 });
         if (!closed) actions.add_child(this._copyButton(() => ticket.prompt, 'Copy the prompt, for a Codex chat or any other'));
         for (const [label, action, name] of closed ? [['Reopen', 'reopen', 'Open this ticket again']]
-            : [['Done', 'done', 'Close it as done'], ['Drop', 'drop', 'Close it without doing it']])
+            : ticket.deliver_to ? [['Drop', 'drop', 'Cancel sending it']]
+                : [['Done', 'done', 'Close it as done'], ['Drop', 'drop', 'Close it without doing it']])
             button(label, 'tracker-control-action', name, () => this._ticketAction([action, `${ticket.id}`]));
         box.add_child(actions);
         item.add_child(box);
         return item;
     }
 
+    // The schedule column for one open chat, from the Schedule button on its row; again on the same chat closes it.
+    _openSchedule(row) {
+        this._schedule = this._schedule?.key === row.key ? null : {key: row.key, title: row.title, provider: row.provider,
+            folder: row.roots?.[0] || null, text: '', when: '', repeat: 'never', every: '', error: null};
+        this._renderRows();
+        this._renderSide();
+        if (this._schedule) this._later(() => this._scheduleEntry && global.stage.set_key_focus(this._scheduleEntry.clutter_text));
+    }
+
+    _renderSide() {
+        if (!this._side) return;
+        this._side.destroy_all_children();
+        const draft = this._schedule;
+        const shown = !!draft && !this._page;
+        this._sideScroll.visible = shown;
+        if (shown) this._button.menu.box.add_style_class_name('tracker-menu-wide');
+        else this._button.menu.box.remove_style_class_name('tracker-menu-wide');
+        if (!shown) return;
+        const heading = new St.BoxLayout({style_class: 'tracker-side-heading'});
+        heading.add_child(new St.Label({text: 'Schedule a message', x_expand: true, style_class: 'tracker-ticket-heading',
+            y_align: Clutter.ActorAlign.CENTER}));
+        const close = new St.Button({label: '×', can_focus: true, accessible_name: 'Close', style_class: 'tracker-side-close'});
+        close.connect('clicked', () => this._openSchedule({key: draft.key}));
+        heading.add_child(close);
+        this._side.add_child(heading);
+        const to = new St.Label({text: `to ${PROVIDERS[draft.provider]?.[0] || '•'} ${draft.title}`, style_class: 'tracker-detail'});
+        to.clutter_text.line_wrap = true;
+        this._side.add_child(to);
+        const entry = this._noteEntry(draft, 'text', 'What to send; it arrives as your request');
+        this._scheduleEntry = entry;
+        this._side.add_child(entry);
+        const caption = text => this._side.add_child(new St.Label({text, style_class: 'tracker-ticket-caption'}));
+        caption('When');
+        const times = whenChoices();
+        const whenChips = times.map(([value, label]) => this._chip(label, draft.when === value, label, button => {
+            draft.when = button.checked ? value : '';
+            for (const other of whenChips) if (other !== button) other.checked = false;
+            typed.set_text(draft.when);
+        }));
+        for (const row of this._chipRows(whenChips, 40)) this._side.add_child(row);
+        const typed = this._controlEntry(draft, 'when', 'or at YYYY-MM-DD HH:MM, +3h', 'When to send it',
+            () => { for (const chip of whenChips) chip.checked = chip.label === times.find(([value]) => value === draft.when)?.[1]; },
+            'tracker-ticket-date');
+        typed.x_expand = false;
+        typed.x_align = Clutter.ActorAlign.START;
+        this._side.add_child(typed);
+        caption('Repeat');
+        const repeats = [['never', 'Never'], ['day', 'Daily'], ['week', 'Weekly'], ['month', 'Monthly'], ['every', 'Every…']];
+        const repeatChips = repeats.map(([value, label]) => this._chip(label, draft.repeat === value, label, button => {
+            draft.repeat = value;
+            for (const other of repeatChips) other.checked = other === button;
+            every.visible = value === 'every';
+        }));
+        for (const row of this._chipRows(repeatChips, 40)) this._side.add_child(row);
+        const every = this._controlEntry(draft, 'every', 'every 3d, 12h or 2w (at least 1h)', 'How often to send it', () => {},
+            'tracker-ticket-date');
+        every.x_expand = false;
+        every.x_align = Clutter.ActorAlign.START;
+        every.visible = draft.repeat === 'every';
+        this._side.add_child(every);
+        const note = new St.Label({style_class: draft.error ? 'tracker-warning' : 'tracker-detail',
+            text: draft.error || (this._setting('wake') ? 'At that time, an idle chat is woken to read it; a busy one reads it when its turn ends.'
+                : 'Wake idle chats is off (Settings › Integrations), so it waits for your next prompt in that chat.')});
+        note.clutter_text.line_wrap = true;
+        note.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+        this._side.add_child(note);
+        const footer = new St.BoxLayout({style_class: 'tracker-ticket-footer', x_align: Clutter.ActorAlign.END});
+        const send = new St.Button({label: 'Schedule', can_focus: true, style_class: 'tracker-control-primary'});
+        send.connect('clicked', () => {
+            const repeat = draft.repeat === 'every' ? draft.every.trim() : draft.repeat;
+            const problem = !draft.text.trim() ? 'Write the message first' : !draft.when.trim() ? 'Pick when to send it'
+                : draft.repeat === 'every' && !repeat ? 'Say how often to repeat it' : null;
+            if (problem) {
+                draft.error = problem;
+                this._renderSide();
+                return;
+            }
+            const args = ['add', ...draft.folder ? ['--project', draft.folder] : [], '--to', draft.key, '--after', `date:${draft.when.trim()}`,
+                ...repeat !== 'never' ? ['--repeat', repeat] : [], '--', draft.text];
+            send.label = 'Scheduling…';
+            send.reactive = false;
+            this._ticketAction(args, () => Object.assign(draft, {text: '', when: '', repeat: 'never', every: '', error: null}),
+                error => { draft.error = error; });
+        });
+        footer.add_child(send);
+        this._side.add_child(footer);
+        const pending = scheduledFor(this._menuSnapshot?.tickets, draft.key);
+        if (pending.length) caption('Scheduled for this chat');
+        for (const ticket of pending) {
+            const item = new St.BoxLayout({style_class: 'tracker-side-ticket'});
+            const text = new St.BoxLayout({vertical: true, x_expand: true});
+            for (const [value, style] of [[ticket.body.split('\n')[0], 'tracker-side-ticket-body'], [ticketNote(ticket), 'tracker-detail']]) {
+                const label = new St.Label({text: value, style_class: style});
+                label.clutter_text.line_wrap = true;
+                label.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+                text.add_child(label);
+            }
+            item.add_child(text);
+            const drop = new St.Button({label: 'Drop', can_focus: true, style_class: 'tracker-control-action', y_align: Clutter.ActorAlign.CENTER,
+                accessible_name: `Drop ticket #${ticket.id}`});
+            drop.connect('clicked', () => this._ticketAction(['drop', `${ticket.id}`]));
+            item.add_child(drop);
+            this._side.add_child(item);
+        }
+    }
+
+    // A multi-line text box editing draft[key]; a press anywhere in it, not only on its line of text, types there.
+    _noteEntry(draft, key, hint) {
+        const entry = new St.Entry({text: draft[key], hint_text: hint, can_focus: true, x_expand: true, accessible_name: hint,
+            style_class: 'tracker-search tracker-ticket-entry'});
+        entry.clutter_text.single_line_mode = false;
+        entry.clutter_text.activatable = false;
+        entry.clutter_text.line_wrap = true;
+        entry.clutter_text.connect('text-changed', () => { draft[key] = entry.get_text(); });
+        entry.connect('button-press-event', () => {
+            global.stage.set_key_focus(entry.clutter_text);
+            return Clutter.EVENT_PROPAGATE;
+        });
+        return entry;
+    }
+
+    // A rounded choice; onClick gets the button, already toggled.
+    _chip(label, checked, name, onClick) {
+        const button = new St.Button({label, can_focus: true, toggle_mode: true, checked, accessible_name: name, style_class: 'tracker-ticket-chip'});
+        button.connect('clicked', () => onClick(button));
+        return button;
+    }
+
+    // Chips on lines of at most `room` characters.
+    _chipRows(chips, room) {
+        const queue = [...chips];
+        return chipLines(chips.map(chip => chip.label), room).map(line => {
+            const row = new St.BoxLayout({style_class: 'tracker-ticket-chips'});
+            for (const _ of line) row.add_child(queue.shift());
+            return row;
+        });
+    }
+
     // Runs `agent-bar ticket …`, then redraws from a snapshot taken after it, with any error in the form.
-    async _ticketAction(args, done = null) {
+    async _ticketAction(args, done = null, failed = null) {
         try {
             const asked = Date.now() / 1000;
             await this._run(['ticket', ...args]);
@@ -4077,9 +4292,10 @@ class Tracker {
             done?.();
             await this._snapshotAfter(asked);
         } catch (error) {
-            this._ticketError = error.message;
+            if (failed) failed(error.message);
+            else this._ticketError = error.message;
         }
-        if (this._enabled && this._button.menu.isOpen && this._view === 'tickets' && !this._page) {
+        if (this._enabled && this._button.menu.isOpen && !this._page) {
             this._menuSnapshot = this._snapshot;
             this._buildMenu();
         }
@@ -4621,13 +4837,26 @@ class Tracker {
     }
 
     // A chat's whole title, wrapped, and a button that copies it with what identifies the chat.
-    _chatHeading(row) {
+    _chatHeading(row, schedule = false) {
         const heading = new St.BoxLayout({style_class: 'tracker-row-heading'});
         const title = new St.Label({text: row.title, style_class: 'tracker-title tracker-title-full', x_expand: true,
             y_align: Clutter.ActorAlign.CENTER});
         title.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
         title.clutter_text.line_wrap = true;
         heading.add_child(title);
+        if (schedule && ['claude', 'codex'].includes(row.provider) && this._setting('messages')) {
+            const count = scheduledFor(this._menuSnapshot?.tickets, row.key).length;
+            const name = count ? `${count} message${count === 1 ? '' : 's'} scheduled; schedule another` : 'Schedule a message to this chat';
+            const content = new St.BoxLayout({style_class: 'tracker-copy-content'});
+            content.add_child(new St.Icon({icon_name: 'alarm-symbolic', icon_size: 14, y_align: Clutter.ActorAlign.CENTER}));
+            if (count) content.add_child(new St.Label({text: `${count}`, y_align: Clutter.ActorAlign.CENTER}));
+            const button = new St.Button({child: content, can_focus: true, accessible_name: name, toggle_mode: true,
+                checked: this._schedule?.key === row.key, style_class: 'tracker-copy tracker-copy-compact tracker-schedule-button',
+                y_align: Clutter.ActorAlign.CENTER});
+            this._tooltip(button, name);
+            button.connect('clicked', () => this._openSchedule(row));
+            heading.add_child(button);
+        }
         heading.add_child(this._copyButton(() => chatIdentity(row), 'Copy the chat\'s name, id and folder', true));
         return heading;
     }
@@ -4639,7 +4868,7 @@ class Tracker {
         if (row.unread.length) item.add_style_class_name('tracker-unread');
         item.add_child(this._providerLabel(row.provider));
         const box = new St.BoxLayout({vertical: true, style_class: 'tracker-row', x_expand: true});
-        box.add_child(this._chatHeading(row));
+        box.add_child(this._chatHeading(row, true));
         const native = this._findWindow(snapshot.windows.find(w => w.id === row.window), false);
         const borrowed = native && this._borrowed.get(row.window);
         const action = borrowed?.key === row.key && native === this._menuFocus ? ' · click to return' : '';

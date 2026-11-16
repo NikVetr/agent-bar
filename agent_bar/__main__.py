@@ -6,7 +6,7 @@ import socket
 import sqlite3
 import sys
 
-from .state import ROOT
+from .state import ROOT, agent_ancestor
 
 
 def main():
@@ -81,7 +81,7 @@ def main():
                                        args['text'] if args['text'] is not None else sys.stdin.read(), urgent=args['urgent'])
             elif name == 'reset-limit':
                 # The loop guard is the user's to lift. Agents' tools name their session; the panel's command does not.
-                if os.environ.get('CLAUDE_CODE_SESSION_ID') or os.environ.get('CODEX_THREAD_ID'):
+                if os.environ.get('CLAUDE_CODE_SESSION_ID') or os.environ.get('CODEX_THREAD_ID') or agent_ancestor():
                     raise ValueError("Only the user resets the loop guard, from Agent Bar's Messages tab")
                 result = messages.reset_limit(args['first'], args['second'])
             else: result = messages.inbox(messages.caller(args['sender']), peek=args['peek'])

@@ -1216,6 +1216,10 @@ class TicketTests(unittest.TestCase):
         patcher = unittest.mock.patch.dict(os.environ, {'CLAUDE_CODE_SESSION_ID': '', 'CODEX_THREAD_ID': ''})
         patcher.start()
         self.addCleanup(patcher.stop)
+        # These tests run under an agent; the ancestry check has its own test.
+        ancestry = unittest.mock.patch.object(tickets, 'agent_ancestor', return_value=False)
+        ancestry.start()
+        self.addCleanup(ancestry.stop)
 
     def test_waits_are_fixed_when_written_and_ready_once_all_pass(self):
         t = self.tickets
@@ -1233,6 +1237,13 @@ class TicketTests(unittest.TestCase):
         listing = t.listing(self.root, 5002, {})
         self.assertEqual([(row['id'], row['ready']) for row in listing['open']], [(2, True), (3, True)])
         self.assertEqual([(row['id'], row['status'], row['note']) for row in listing['closed']], [(1, 'done', 'clean')])
+
+    def test_an_agent_that_drops_its_session_id_cannot_write_as_the_user(self):
+        with unittest.mock.patch.object(self.tickets, 'agent_ancestor', return_value=True):
+            with self.assertRaisesRegex(ValueError, 'cannot tell which chat'): self.tickets.add('x', self.folder, root=self.root)
+        from agent_bar import state
+        # This test suite runs under Claude Code or Codex, or under neither (CI); the check must not fail either way.
+        self.assertIsInstance(state.agent_ancestor(), bool)
 
     def test_authors_projects_and_errors(self):
         t = self.tickets
