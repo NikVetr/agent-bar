@@ -1209,9 +1209,6 @@ class Tracker {
         // Shortcuts without room on the left continue at the start of the right-hand box.
         this._quickRight = new St.BoxLayout({style_class: 'tracker-quick tracker-quick-right'});
         this._quickButtons = [];
-        // Room before the left half's shortcuts, when they continue in the right half, so the row meets the middle.
-        this._quickGap = new St.Widget({visible: false});
-        this._quick.add_child(this._quickGap);
         this._quickHidden = [];
         // Chat key -> after what snapshot time its clicked shortcut may show again (Infinity while it is brought forward).
         this._quickPending = new Map();
@@ -2553,13 +2550,8 @@ class Tracker {
             right = squeezed = 0;
             moreRight = false;
         }
-        let gap = 0;
+        // The left half's shortcuts keep their own widths, right after its other buttons.
         if (squeezed) buttons[left - 1].set_width(squeezed);
-        // The next one did not fit even cut short, so the left half's shortcuts, at their own widths, move against
-        // the middle and the row runs on unbroken into the right half.
-        else if (right && left) gap = Math.max(0, leftRoom - usedLeft - spacing);
-        this._quickGap.set_width(gap);
-        this._quickGap.visible = gap > 0;
         // Taking all the room it has, the right half's box starts at the middle, against the left half's shortcuts.
         this._quickRight.visible = right > 0;
         this._quickRight.set_width(right > 0 ? Math.max(0, rightRoom) : -1);
@@ -2571,7 +2563,7 @@ class Tracker {
             box.set_child_at_index(actor, index);
         });
         const unplaced = buttons.slice(left + right);
-        place(this._quick, [this._quickGap, ...buttons.slice(0, left), ...moreRight ? [] : [this._quickMore], ...unplaced]);
+        place(this._quick, [...buttons.slice(0, left), ...moreRight ? [] : [this._quickMore], ...unplaced]);
         place(this._quickRight, [...buttons.slice(left, left + right), ...moreRight ? [this._quickMore] : []]);
         unplaced.forEach(button => button.hide());
         this._quickHidden = ready.slice(left + right);
