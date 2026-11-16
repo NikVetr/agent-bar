@@ -1,12 +1,36 @@
+<p align="center"><img src="docs/images/header.webp" alt="Agent Bar: AI coding agents trading notes at a bar" width="820"></p>
+
 # Agent Bar
 
 Agent Bar puts your open AI coding agent chats in your desktop's menu bar. You can see at a glance which ones have
 finished and need your review, which are still working, and which are waiting on you, and one click brings a chat's
-window forward. It also shows your projects' git status, lets agents in different chats leave each other notes, and
-can follow job queues from the optional parallel-workers scheduler.
+window forward. It also shows your projects' git status and usage limits, lets agents in different chats leave each
+other notes and tickets for later, and can follow job queues from the optional parallel-workers scheduler.
 
 It reads only local files that the agent tools already write, plus small hooks that record when a turn starts and
-ends. Nothing leaves your computer.
+ends. Nothing leaves your computer unless you turn on reading Claude's usage limits (see [Privacy](#privacy)).
+
+<!-- Placeholder: a short screen recording (GIF or MP4, under 10 MB) of the top bar: a reply finishes, its review
+     button appears, a click brings the chat forward. -->
+
+## A tour
+
+<!-- Placeholders: one screenshot per item, 1000-1400 px wide, taken in the disposable test shell
+     (tmp/scripts/session-shot.sh) with fixture data rather than real projects. -->
+
+- **The top bar.** Chats needing review / open per provider, weekly limit left, working and waiting counts, agent
+  mail, ready tickets, queue progress, and a button for each chat that needs you.
+  *(screenshot: top bar)*
+- **Chats.** Every open chat by project and window, with its state, why it needs review, and a copy button for its
+  name, id and resume command. *(screenshot: Chats tab)*
+- **Messages and tickets.** Agents in different chats leave each other notes, or tickets for work to do later,
+  waiting for a usage limit to reset, queues to finish, or a time. *(screenshots: Messages tab, Tickets tab)*
+- **Quota.** Each provider's 5-hour, weekly and per-model limits, the pace, and when you would run out compared with
+  the reset. *(screenshot: Quota tab)*
+- **Git and History.** Uncommitted and unpushed work in every open repository; every saved chat, resumable in its
+  folder. *(screenshots: Git tab, History tab)*
+- **Queues and Cluster** (with parallel-workers). Job queues per project, adjustable from the bar, and each host's
+  CPU, memory and disk. *(screenshots: Queues tab, Cluster tab)*
 
 ## What it tracks
 
@@ -46,6 +70,8 @@ agent-bar install
 - a background service (`agent-bar.service`) and a daily inventory scan of saved chats;
 - hooks in Claude Code's and Codex's settings, if you use them (your existing hooks are kept, and the old settings
   file is backed up first);
+- the `agent-messages` skill, which tells Claude Code and Codex agents how to use messages and tickets, unless you
+  already have a skill of that name;
 - the VS Code bridge, a small extension that tells Agent Bar which chats each window has open;
 - the menu-bar front end: on Linux, the GNOME Shell extension. The first time, log out and back in (or on X11 press
   Alt+F2, type `r`, press Enter) so GNOME finds it, then run `agent-bar install` again to enable it.
@@ -222,3 +248,5 @@ node --test tests/panel.test.js
 ## License
 
 GPL-2.0-or-later. See [LICENSE](LICENSE).
+
+<p align="center"><img src="docs/images/footer.webp" alt="" width="640"></p>
