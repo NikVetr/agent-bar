@@ -1174,4 +1174,68 @@ class TrackerTests(unittest.TestCase):
                 self.assertEqual(json.loads(next((Path(root) / 'events').glob('*.json')).read_text())['kind'], kind)
 
 
+class TicketTests(unittest.TestCase):
+    def setUp(self):
+        from agent_bar import tickets
+        self.tickets = tickets
+        self.root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.root)
+        self.folder = str(self.root / 'repos' / 'proj')
+        (self.root / 'snapshot.json').write_text(json.dumps({'rows': [
+            {'key': 'claude:a', 'title': 'Agent chat', 'roots': [self.folder], 'project': 'proj'}],
+            'usage': {'claude': {'limits': [{'key': 'session', 'name': '5-hour', 'resets_at': 1000, 'limiting': False},
+                                            {'key': 'weekly', 'name': 'Weekly', 'resets_at': 5000, 'limiting': True}]}}}))
+        (self.root / 'ledger.json').write_text(json.dumps({'queues': {
+            'q1': {'project': 'proj', 'label': 'fits', 'finished_at': None},
+            'q2': {'project': 'other', 'label': 'x', 'finished_at': None}}}))
+        patcher = unittest.mock.patch.dict(os.environ, {'CLAUDE_CODE_SESSION_ID': '', 'CODEX_THREAD_ID': ''})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_waits_are_fixed_when_written_and_ready_once_all_pass(self):
+        t = self.tickets
+        first = t.add('Audit with Fable', self.folder, ['reset:claude', 'queues'], root=self.root, now=100)
+        self.assertEqual(first['waits'], ['Claude weekly limit resets', 'fits finishes'])
+        t.add('After the audit', self.folder, ['ticket:1', 'date:+1h'], root=self.root, now=100)
+        t.add('Any time', self.folder, [], root=self.root, now=100)
+        state = lambda now, queues=None: [(row['id'], row['ready'], row['waiting'])
+                                          for row in t.listing(self.root, now, queues)['open']]
+        self.assertEqual(state(200), [(1, False, ['Claude weekly limit resets', 'fits finishes']),
+                                      (2, False, ['#1 closes', unittest.mock.ANY]), (3, True, [])])
+        # The reset passed, and a queue the tracker forgot counts as finished; the 5-hour reset was not the one fixed.
+        self.assertEqual(state(5000, {})[0], (1, True, []))
+        t.change(1, 'done', 'clean', root=self.root, now=5001)
+        listing = t.listing(self.root, 5002, {})
+        self.assertEqual([(row['id'], row['ready']) for row in listing['open']], [(2, True), (3, True)])
+        self.assertEqual([(row['id'], row['status'], row['note']) for row in listing['closed']], [(1, 'done', 'clean')])
+
+    def test_authors_projects_and_errors(self):
+        t = self.tickets
+        with unittest.mock.patch.dict(os.environ, {'CLAUDE_CODE_SESSION_ID': 'a'}):
+            # An agent cannot write as the user, and its ticket goes in its own folder by default.
+            t.add('From an agent', who='user', root=self.root, now=100)
+            t.change(1, 'started', root=self.root, now=110)
+        row = t.listing(self.root, 120)['open'][0]
+        self.assertEqual((row['author'], row['author_title'], row['folder'], row['status'], row['taken_title']),
+                         ('claude:a', 'Agent chat', self.folder, 'started', 'Agent chat'))
+        self.assertIn('the agent chat "Agent chat"', row['prompt'])
+        self.assertIn('agent-bar ticket take 1', row['prompt'])
+        t.add('Mine', self.folder, root=self.root, now=130)
+        self.assertIn('written by your user', t.listing(self.root, 140)['open'][1]['prompt'])
+        for wait, error in [('reset:codex', 'No codex usage limit'), ('reset:claude:fable', 'no limit'), ('queue:zz', 'No queue'),
+                            ('ticket:9', 'No ticket #9'), ('date:soon', 'Unreadable time'), ('later', 'Unknown wait')]:
+            with self.assertRaisesRegex(ValueError, error): t.add('x', self.folder, [wait], root=self.root)
+        with self.assertRaisesRegex(ValueError, 'no queues outstanding'): t.add('x', str(self.root / 'elsewhere'), ['queues'], root=self.root)
+        with self.assertRaisesRegex(ValueError, 'Empty'): t.add('  ', self.folder, root=self.root)
+        with self.assertRaisesRegex(ValueError, 'No ticket #7'): t.change(7, 'done', root=self.root)
+
+    def test_closed_tickets_are_kept_for_a_while(self):
+        t = self.tickets
+        t.add('Old', self.folder, root=self.root, now=100)
+        t.change(1, 'dropped', root=self.root, now=100)
+        t.add('New', self.folder, root=self.root, now=100 + t.KEEP + 1)
+        listing = t.listing(self.root, 100 + t.KEEP + 2)
+        self.assertEqual(([row['id'] for row in listing['open']], listing['closed']), ([2], []))
+
+
 if __name__ == '__main__': unittest.main()

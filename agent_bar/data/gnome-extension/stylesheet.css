@@ -40,6 +40,8 @@
 .tracker-summary-value { font-size: 20px; font-weight: bold; }
 .tracker-search { margin: 2px 14px 3px; padding: 9px 12px; border: 1px solid #505761; border-radius: 7px; background-color: #24282e; color: #edf0f4; }
 .tracker-filters { spacing: 7px; padding: 0 14px; }
+.tracker-tabs { spacing: 2px; }
+.tracker-tabs .tracker-filter { padding: 7px 8px; }
 .tracker-filter { padding: 7px 11px; border-radius: 6px; color: #b4bbc5; background-color: transparent; }
 .tracker-filter:hover { background-color: #343a44; }
 .tracker-filter:checked { background-color: #404957; color: #f3f5f8; }
@@ -263,3 +265,13 @@
 .tracker-row-heading { spacing: 6px; }
 .tracker-title-full { max-width: 470px; }
 .tracker-copy-compact { padding: 3px 5px; }
+
+/* Tickets */
+.tracker-ticket-form { padding: 10px 14px; }
+.tracker-ticket-entry { margin: 0; min-height: 44px; }
+.tracker-ticket-line { spacing: 10px; padding-top: 8px; }
+.tracker-ticket-caption { font-size: 12px; color: #9ca3ad; width: 72px; }
+.tracker-ticket-projects { margin-bottom: 4px; }
+.tracker-ticket-date { margin: 6px 0 0; width: 210px; }
+.tracker-ticket-actions { spacing: 6px; padding-left: 8px; }
+.tracker-ticket-new { margin: 2px 14px 4px; }

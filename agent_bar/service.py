@@ -9,7 +9,7 @@ import time
 import uuid
 from pathlib import Path
 
-from . import messages, usage
+from . import messages, tickets, usage
 from .git import Repositories
 from .providers import Providers, queue_snapshot
 from .state import ROOT, Ledger, atomic_json, project_names
@@ -20,6 +20,7 @@ QUIET = 300  # An open turn with no activity this long is waiting on something.
 CONTINUE = 'Please continue where you left off.'  # Sent to chats a usage limit stopped.
 GIT_EVERY = 20  # Seconds between git status reads of the open projects' repositories.
 USAGE_EVERY = 60  # Seconds between reads of the usage limits Claude Code and Codex record.
+TICKET_EVERY = 30  # Seconds a ticket listing stands while nothing it reads changes; its waits on times pass meanwhile.
 PRUNE_EVERY = 3600  # Seconds between clean-ups of what closed chats, windows and old queues left behind.
 STALE_WINDOW = 86400  # A VS Code bridge silent this long has gone with its window.
 SETTINGS = Path.home() / '.config/agent-bar/settings.json'  # Written by the panel.
@@ -42,6 +43,8 @@ class Tracker:
         self.quiet, self.scheduler, self.settings_stamp = QUIET, True, None
         self.git_enabled, self.repositories, self.git = True, Repositories(), None
         self.messages_enabled = True
+        # The ticket listing and what it was read from.
+        self.tickets, self.tickets_read = None, None
         # The usage limits summary (usage.py), refreshed off the collection loop, and why it last failed.
         self.usage, self.usage_error = None, None
         # Whether the user turned on Agent Bar's own reads of Claude's limits (off unless chosen).
@@ -237,7 +240,23 @@ class Tracker:
                 'git': self.git if self.git_enabled else None,
                 'messages': self.message_summary(rows) if self.messages_enabled else None,
                 'usage': self.usage, 'usage_error': self.usage_error,
+                'tickets': self.ticket_summary(now),
                 'returns': self.ledger.data.get('returns', {})}
+
+    def ticket_summary(self, now):
+        """Tickets for the panel, reread when the database or the queues change, or every TICKET_EVERY."""
+        stamps = []
+        for name in ['tickets.sqlite', 'tickets.sqlite-wal']:
+            try: stamps.append((self.root / name).stat().st_mtime_ns)
+            except FileNotFoundError: stamps.append(None)
+        read = (*stamps, self.queue_mtime, int(now // TICKET_EVERY))
+        if read != self.tickets_read:
+            try: self.tickets = tickets.listing(self.root, now, self.ledger.data['queues'])
+            except (OSError, ValueError, sqlite3.Error) as error:
+                self.warnings.append(f'Tickets unreadable: {error}')
+                return None
+            self.tickets_read = read
+        return self.tickets
 
     def message_summary(self, rows):
         """Messages for the panel, with the open chats whose unread ones wait for the user to start a turn."""

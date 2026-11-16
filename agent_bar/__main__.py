@@ -50,6 +50,22 @@ def main():
     box.add_argument('--peek', action='store_true', help='leave them unread')
     reset = subs.add_parser('reset-limit', help='let two conversations exchange another round of messages')
     reset.add_argument('first'); reset.add_argument('second')
+    ticket = subs.add_parser('ticket', help='tasks to do later, each in a project, that can wait for a limit reset, queues, a time or another ticket')
+    actions = ticket.add_subparsers(dest='action', required=True)
+    new = actions.add_parser('add', help='write a ticket; text from the argument or stdin')
+    new.add_argument('text', nargs='?')
+    new.add_argument('--project', help="its project folder (default: the writing chat's folder, or the current one)")
+    new.add_argument('--after', action='append', default=[], metavar='WAIT',
+                     help='wait for reset:<claude|codex>[:<limit>], queues (the project\'s outstanding ones), queue:<id>, '
+                          'date:<YYYY-MM-DD[ HH:MM]>, date:+<N>h|d, or ticket:<number>; repeat to wait for several')
+    new.add_argument('--as', dest='sender', help='author when not run from a Claude Code or Codex tool (default: user)')
+    actions.add_parser('list', help='open tickets with what each waits for, then recently closed ones')
+    for action, words in [('take', 'mark a ticket started by this chat'), ('done', 'close a ticket as done'),
+                          ('drop', 'close a ticket without doing it'), ('reopen', 'open a closed or started ticket again')]:
+        one = actions.add_parser(action, help=words)
+        one.add_argument('number', type=int)
+        if action in ['done', 'drop']: one.add_argument('--note', help='one line on the outcome')
+        one.add_argument('--as', dest='sender')
     args = vars(parser.parse_args())
     name = args.pop('command')
     if name in ['agents', 'send', 'inbox', 'reset-limit']:
@@ -65,6 +81,19 @@ def main():
                     raise ValueError("Only the user resets the loop guard, from Agent Bar's Messages tab")
                 result = messages.reset_limit(args['first'], args['second'])
             else: result = messages.inbox(messages.caller(args['sender']), peek=args['peek'])
+        except (OSError, ValueError, KeyError, sqlite3.Error) as error: result = {'ok': False, 'error': str(error)}
+        print(json.dumps(result, ensure_ascii=False))
+        sys.exit(0 if result['ok'] else 1)
+    if name == 'ticket':
+        from . import tickets
+        action = args['action']
+        try:
+            if action == 'add':
+                result = tickets.add(args['text'] if args['text'] is not None else sys.stdin.read(), args['project'], args['after'], args['sender'])
+            elif action == 'list': result = tickets.listing()
+            else:
+                status = {'take': 'started', 'done': 'done', 'drop': 'dropped', 'reopen': 'open'}[action]
+                result = tickets.change(args['number'], status, args.get('note'), args['sender'])
         except (OSError, ValueError, KeyError, sqlite3.Error) as error: result = {'ok': False, 'error': str(error)}
         print(json.dumps(result, ensure_ascii=False))
         sys.exit(0 if result['ok'] else 1)

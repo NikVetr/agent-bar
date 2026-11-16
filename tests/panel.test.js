@@ -691,3 +691,27 @@ test('a chat a usage limit stopped gets a review button only when its own reason
     const [, , , , fallback, options] = vm.runInContext('SETTINGS', f.context).find(([, key]) => key === 'quickReasons');
     assert.equal(options.map(([value]) => value).filter(value => !fallback.includes(value)).join(), 'Usage limit');
 });
+
+test('tickets group as ready, waiting, started and closed, and say what they wait for', () => {
+    const f = fixture();
+    const now = Date.now() / 1000;
+    const base = {project: 'p', author: 'user', at: now, status_at: now, waiting: []};
+    const listing = {open: [{...base, id: 1, body: 'Audit', status: 'open', ready: false, waiting: ['Claude weekly limit resets', 'fits finishes']},
+        {...base, id: 2, body: 'Tidy', status: 'open', ready: true},
+        {...base, id: 3, body: 'Port', status: 'started', ready: false, taken_by: 'codex:x', taken_title: 'Porter'}],
+    closed: [{...base, id: 4, body: 'Old', status: 'done', note: 'merged', author: 'claude:y', author_title: 'Helper'}]};
+    const groups = f.context.ticketGroups(listing);
+    assert.equal(groups.map(([name, tickets]) => `${name}:${tickets.map(t => t.id)}`).join(' '), 'Ready:2 Waiting:1 Started:3 Closed:4');
+    assert.equal(f.context.ticketGroups(listing, 'audit').map(([name]) => name).join(), 'Waiting');
+    assert.equal(f.context.ticketGroups(listing, '#4').map(([name]) => name).join(), 'Closed');
+    assert.equal(f.context.ticketDetail(listing.open[0]), '#1 · p · by you · just now · waits until Claude weekly limit resets and fits finishes');
+    assert.equal(f.context.ticketDetail(listing.open[2]), '#3 · p · by you · just now · taken by ⌘ Porter just now');
+    assert.equal(f.context.ticketDetail(listing.closed[0]), '#4 · p · by ✳ Helper · just now · done just now: merged');
+});
+
+test('a new ticket can go in any open folder, the most recently active chat\'s first', () => {
+    const f = fixture();
+    const snapshot = {rows: [{roots: ['/r/old'], state_at: 1}, {roots: ['/r/new', '/r/old'], state_at: 5}],
+        windows: [{kind: 'vscode', roots: ['/r/idle']}, {kind: 'app', roots: ['/r/app']}]};
+    assert.equal(f.context.ticketFolders(snapshot).map(([folder, name]) => `${name}=${folder}`).join(), 'new=/r/new,old=/r/old,idle=/r/idle');
+});

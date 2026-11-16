@@ -94,6 +94,17 @@ other turn start clears both markers, since that turn hears of unread messages i
 unread messages wait for the user to start a turn: Codex chats with no note queued, and Claude chats no waiter will
 wake (waking off, or idle with no live waiter left).
 
+## Tickets
+
+`tickets.py` keeps tickets in `tickets.sqlite`, written and read by the CLI directly; the panel runs the same CLI. The
+author comes from `CLAUDE_CODE_SESSION_ID` or `CODEX_THREAD_ID` when set (so an agent cannot write as the user), else
+the user. Each wait is resolved when the ticket is written and stored as data: a reset time from the snapshot's usage
+summary, the ids of the project's outstanding queues from the ledger (by `project_names` of the ticket's folder), a
+time, or another ticket's number. Readiness is computed on listing: times against now, queues against the ledger
+(a forgotten queue finished long ago), tickets against those still open. The service puts the listing in the
+snapshot, rereading it when the database or the queues change, and every 30 s for waits on time. Numbers are never
+reused, so prompts and `ticket:` waits keep pointing at the same ticket; closed tickets are pruned after 30 days.
+
 ## GNOME Shell extension
 
 `agent_bar/data/gnome-extension` renders the snapshot in GNOME Shell 42 and runs the `agent-bar` CLI for actions.

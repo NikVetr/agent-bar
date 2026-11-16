@@ -37,6 +37,8 @@ const SETTINGS = [
             ['Queues finished', 'Queues finished'], ['Usage limit', 'Stopped at a usage limit']]],
     ['Top bar', 'quotaBar', 'Limits left', 'Each provider\'s weekly usage limit left, after the chat counts', true,
         [[true, 'Show'], [false, 'Hide']]],
+    ['Top bar', 'ticketBar', 'Ticket count', 'Tickets ready to start, when there are any', true,
+        [[true, 'Show'], [false, 'Hide']]],
     ['Top bar', 'queueBar', 'Queue count', 'Q finished / outstanding since each project\'s last turn', true,
         [[true, 'Show'], [false, 'Hide']]],
     ['Cluster', 'clusterBar', 'Top-bar indicator', 'What it shows; with only Warnings it appears just when one fires', ['cpu', 'warnings'],
@@ -90,6 +92,8 @@ const APP_MENU_MAX = 300;
 const MENU_SWITCH_DELAY = 500;
 // History rows shown while searching; folders otherwise build rows only when expanded.
 const HISTORY_SEARCH_LIMIT = 40;
+// Recently active folders a new ticket offers before All lists the rest.
+const TICKET_FOLDERS = 6;
 // Symbol and name of each provider; .tracker-<provider> gives its color. Claude and Codex always have a
 // top-bar count, the others only while one of their chats is open.
 const PROVIDERS = {claude: ['✳', 'Claude'], codex: ['⌘', 'Codex'], copilot: ['◆', 'Copilot'], antigravity: ['▲', 'Antigravity']};
@@ -178,6 +182,36 @@ function limitedConversations(rows) {
     for (const row of rows)
         if (row.limited && ['tab', 'codex-sidebar'].includes(row.target?.kind) && !unique.has(row.key)) unique.set(row.key, row);
     return [...unique.values()].sort((a, b) => (a.provider !== 'codex') - (b.provider !== 'codex'));
+}
+
+// The Tickets tab's groups, each non-empty: ready to start, waiting, started, then recently closed.
+function ticketGroups(listing, query = '') {
+    const match = ticket => `#${ticket.id} ${ticket.body} ${ticket.project} ${ticket.author_title || ''}`.toLowerCase().includes(query);
+    const open = (listing?.open || []).filter(match);
+    return [['Ready', open.filter(ticket => ticket.ready)], ['Waiting', open.filter(ticket => ticket.status === 'open' && !ticket.ready)],
+        ['Started', open.filter(ticket => ticket.status === 'started')], ['Closed', (listing?.closed || []).filter(match)]]
+        .filter(([, tickets]) => tickets.length);
+}
+
+// A ticket's number, project, author and age, then what it waits for, who took it, or how it closed.
+function ticketDetail(ticket) {
+    const who = key => key === 'user' ? 'you' : `${PROVIDERS[key.split(':')[0]]?.[0] || '•'}`;
+    const parts = [`#${ticket.id}`, ticket.project, `by ${ticket.author === 'user' ? 'you' : `${who(ticket.author)} ${ticket.author_title || ticket.author}`}`, age(ticket.at)];
+    if (ticket.status === 'open' && ticket.waiting?.length) parts.push(`waits until ${ticket.waiting.join(' and ')}`);
+    if (ticket.status === 'started')
+        parts.push(`taken by ${ticket.taken_by === 'user' ? 'you' : `${who(ticket.taken_by)} ${ticket.taken_title || ticket.taken_by}`} ${age(ticket.status_at)}`);
+    if (ticket.status === 'done' || ticket.status === 'dropped') parts.push(`${ticket.status} ${age(ticket.status_at)}${ticket.note ? `: ${ticket.note}` : ''}`);
+    return parts.join(' · ');
+}
+
+// Folders a new ticket can go in: open chats' folders, most recently active first, then other open windows'.
+function ticketFolders(snapshot) {
+    const folders = new Map();
+    const rows = [...(snapshot?.rows || [])].sort((a, b) => (b.state_at || 0) - (a.state_at || 0));
+    for (const folder of [...rows.flatMap(row => row.roots || []),
+        ...(snapshot?.windows || []).flatMap(window => window.kind === 'app' ? [] : window.roots || [])])
+        if (!folders.has(folder)) folders.set(folder, folder.split('/').filter(Boolean).at(-1) || folder);
+    return [...folders];
 }
 
 function matchesFilter(row, filter) {
@@ -665,6 +699,17 @@ function paintGlyph(cr, size, kind, used, rgba) {
         cr.lineTo(c, top + (bottom - top) * 0.6);
         cr.lineTo(size - 1, top + 0.8);
         cr.stroke();
+    } else if (kind === 'ticket') {
+        // A ticket stub: a card with a notch in each side.
+        const top = size * 0.24, bottom = size * 0.76, notch = size * 0.14;
+        cr.moveTo(1, top);
+        cr.lineTo(size - 1, top);
+        cr.arcNegative(size - 1, c, notch, -Math.PI / 2, Math.PI / 2);
+        cr.lineTo(size - 1, bottom);
+        cr.lineTo(1, bottom);
+        cr.arcNegative(1, c, notch, Math.PI / 2, -Math.PI / 2);
+        cr.closePath();
+        cr.fill();
     } else if (kind === 'mail-open') {
         const fold = size * 0.45, bottom = size - 1.5;
         cr.setLineJoin(1);  // round
@@ -1063,6 +1108,15 @@ class Tracker {
         this._mail.add_child(this._glyph('mail'));
         this._mailCount = new St.Label({style_class: 'tracker-attention', y_align: Clutter.ActorAlign.CENTER});
         this._mail.add_child(this._mailCount);
+        // Tickets ready to start.
+        this._ticketPart = part(new St.BoxLayout({style_class: 'tracker-mail', visible: false, y_align: Clutter.ActorAlign.CENTER}), 'tickets');
+        this._ticketPart.add_child(this._glyph('ticket', null, 'help-bright'));
+        this._ticketCount = new St.Label({style_class: 'tracker-help-bright', y_align: Clutter.ActorAlign.CENTER});
+        this._ticketPart.add_child(this._ticketCount);
+        this._tooltip(this._ticketPart, () => {
+            const ready = (this._snapshot?.tickets?.open || []).filter(ticket => ticket.ready).length;
+            return `${ready} ticket${ready === 1 ? '' : 's'} ready to start`;
+        });
         // Each part is a box around its labels: the labels keep the widths they have needed, and the part's padding
         // must stay out of those.
         this._queuePart = part(new St.BoxLayout({y_align: Clutter.ActorAlign.CENTER}), 'queues');
@@ -1302,9 +1356,16 @@ class Tracker {
             else actor.remove_style_class_name('tracker-colorblind');
         }
         this._queuePart.visible = this._labels.queues.visible = this._queuesShown(this._snapshot);
+        if (this._snapshot && !this._error) this._showTicketCount(this._snapshot);
         if (this._clusterButton) this._renderClusterBar();
         this._quickSignature = null;
         if (this._snapshot && !this._error) this._renderQuick(this._snapshot.rows);
+    }
+
+    _showTicketCount(snapshot) {
+        const ready = (snapshot.tickets?.open || []).filter(ticket => ticket.ready).length;
+        this._ticketPart.visible = this._setting('ticketBar') && ready > 0;
+        this._ticketCount.text = `${ready}`;
     }
 
     // Whether queue counts show: the scheduler integration is on and parallel-workers is set up here.
@@ -1381,7 +1442,7 @@ class Tracker {
     _renderHelp() {
         // Opened from a tab, the Guide starts at the part about it.
         const cards = {};
-        const from = {conversations: 'Chats', queues: 'Queues', cluster: 'Cluster', git: 'Git', messages: 'Messages', quota: 'Quota'}[this._helpFrom];
+        const from = {conversations: 'Chats', queues: 'Queues', cluster: 'Cluster', git: 'Git', messages: 'Messages', tickets: 'Tickets', quota: 'Quota'}[this._helpFrom];
         this._helpFrom = null;
         if (from) this._scrollTo(() => {
             const heading = cards[from];
@@ -1524,6 +1585,14 @@ class Tracker {
                 + 'chats on, a message starts a turn in an idle Claude Code chat (up to a week after its last turn), once per message, and in a Codex '
                 + 'chat open in VS Code, after any turn in progress ends, if the message is still unread then.');
         }
+
+        const tickets = card('Tickets');
+        row(tickets, [this._glyph('ticket', null, 'help-bright'), text('2', 'tracker-help-bright')], 'In the top bar: tickets ready to start. A ticket '
+            + 'is a task you or an agent wants done later, in one project; write one at the top of Tickets, or an agent runs `agent-bar ticket add`.');
+        row(tickets, [text('waits until', 'tracker-detail')], 'A ticket can wait for a usage limit to reset, the project\'s queues to finish, a time, '
+            + 'or another ticket to close; each is fixed when it is written (that reset, the queues outstanding then), and it is ready once all have passed.');
+        row(tickets, [this._copyButton(() => '', 'Copy', true)], 'Copies a prompt to paste into a chat: the ticket, and to run `agent-bar ticket take` '
+            + 'before starting and `agent-bar ticket done` after, which move it to Started and Closed. Done and Drop close it here; Reopen undoes either.');
 
         const quota = card('Quota');
         const bar = new St.Widget({style_class: 'tracker-progress tracker-help-progress', y_align: Clutter.ActorAlign.CENTER});
@@ -2549,11 +2618,12 @@ class Tracker {
                 const stranded = snapshot.messages?.stranded || [];
                 this._mail.visible = stranded.length > 0;
                 this._mailCount.text = `${stranded.length}`;
+                this._showTicketCount(snapshot);
                 this._queuePart.visible = this._labels.queues.visible = this._queuesShown(snapshot);
                 this._labels.queues.text = `Q ${c.done} / ${c.queues}${Date.now() / 1000 - snapshot.queue_updated > 120 ? ' ?' : ''}`;
                 this._renderQuotaBar(snapshot.usage);
                 restyle(this._labels.queues, c.done ? 'color: #f1f3f5; font-weight: bold;' : 'color: #9ca3ad;');
-                for (const label of [...Object.values(this._labels), this._mailCount]) if (label.visible) holdWidth(label);
+                for (const label of [...Object.values(this._labels), this._mailCount, this._ticketCount]) if (label.visible) holdWidth(label);
                 this._renderQuick(snapshot.rows);
                 this._button.accessible_name = `${Object.entries(PROVIDERS).filter(([key]) => c[key])
                     .map(([key, [, name]]) => `${name} ${c[key]}`).join(', ') || 'No chats'}, ${c.working} working, ${c.waiting} waiting, ${c.review} need review, ${c.done} of ${c.queues} queues finished since the last turn`
@@ -2563,7 +2633,7 @@ class Tracker {
                 this._error = error.message;
                 this._labels.working.text = '● ?';
                 this._labels.waiting.visible = false;
-                this._mail.visible = false;
+                this._mail.visible = this._ticketPart.visible = false;
                 for (const provider of PINNED) this._labels[provider].text = '? / ?';
                 this._labels.queues.text = 'Q ?';
                 this._quota.visible = false;
@@ -2702,12 +2772,12 @@ class Tracker {
         };
         this._search = new St.Entry({hint_text: 'Search conversations, projects, or queues…',
             can_focus: true, x_expand: true, style_class: 'tracker-search'});
-        const tabs = new St.BoxLayout({style_class: 'tracker-filters'});
+        const tabs = new St.BoxLayout({style_class: 'tracker-filters tracker-tabs'});
         // Integrations turned off in settings take their tabs with them.
         const shown = {queues: this._setting('scheduler'), cluster: this._setting('scheduler') && !!this._cluster,
             git: this._setting('git'), messages: this._setting('messages')};
         if (shown[this._view] === false) this._view = 'conversations';
-        for (const [value, label] of [['conversations', 'Chats'], ['queues', 'Queues'], ['cluster', 'Cluster'], ['git', 'Git'], ['messages', 'Messages'], ['history', 'History'], ['quota', 'Quota'], ['info', 'Info']]
+        for (const [value, label] of [['conversations', 'Chats'], ['queues', 'Queues'], ['cluster', 'Cluster'], ['git', 'Git'], ['messages', 'Messages'], ['tickets', 'Tickets'], ['history', 'History'], ['quota', 'Quota'], ['info', 'Info']]
             .filter(([value]) => shown[value] !== false)) {
             const button = new St.Button({label, toggle_mode: true, checked: this._view === value,
                 can_focus: true, style_class: 'tracker-filter'});
@@ -2722,7 +2792,7 @@ class Tracker {
         const toolbar = new St.BoxLayout({x_expand: true, style_class: 'tracker-toolbar'});
         {
             // Messages have one order, newest conversation pair first; an Agent or Project filter picks one of them.
-            const pickers = this._view === 'info' ? ['project'] : this._view !== 'messages' ? ['sort', 'filter']
+            const pickers = this._view === 'info' ? ['project'] : this._view === 'tickets' ? [] : this._view !== 'messages' ? ['sort', 'filter']
                 : ['agent', 'project'].includes(this._messageFilter) ? ['filter', 'value'] : ['filter'];
             for (const picker of pickers) {
                 const [options, current] = this._pickerOptions(picker);
@@ -2931,6 +3001,7 @@ class Tracker {
             queues: `From parallel-workers · updated ${age(snapshot.queue_updated)} · counts reset at each turn in the project`,
             history: 'Saved conversations, rescanned daily · click one to resume it in its folder',
             messages: 'A chat sees its unread count at its next turn start · at most 10 to one chat between your prompts',
+            tickets: 'Agents write them with `agent-bar ticket add` · ready once what each waits for has passed',
             info: 'Read from local files when this tab opens, and again after 30 s · nothing polls in the background',
             cluster: '',
             cluster: 'From the parallel-workers collector',
@@ -2951,6 +3022,10 @@ class Tracker {
         }
         if (this._view === 'messages') {
             this._renderMessages(snapshot, query);
+            return;
+        }
+        if (this._view === 'tickets') {
+            this._renderTickets(snapshot, query);
             return;
         }
         if (this._view === 'info') {
@@ -3780,6 +3855,180 @@ class Tracker {
                 });
                 body.addMenuItem(item);
             }
+        }
+    }
+
+    // A form for a new ticket, then the tickets ready to start, waiting, started and recently closed.
+    _renderTickets(snapshot, query) {
+        if (this._ticketDraft?.open) this._section.addMenuItem(this._ticketForm(snapshot));
+        else {
+            const item = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
+            item._ornamentLabel?.hide();
+            const button = new St.Button({label: '+ New ticket', can_focus: true, style_class: 'tracker-filter tracker-ticket-new'});
+            button.connect('clicked', () => {
+                (this._ticketDraft ||= {text: '', folder: null, waits: [], date: ''}).open = true;
+                this._renderRows();
+            });
+            item.add_child(button);
+            if (this._ticketError) item.add_child(new St.Label({text: this._ticketError, style_class: 'tracker-warning', y_align: Clutter.ActorAlign.CENTER}));
+            this._section.addMenuItem(item);
+        }
+        const listing = snapshot.tickets || {open: [], closed: []};
+        const groups = ticketGroups(listing, query);
+        if (!groups.length) this._section.addMenuItem(this._item(listing.open.length || listing.closed.length ? 'No matching tickets'
+            : 'No tickets yet. Write one above, or have an agent run `agent-bar ticket add`.', 'tracker-empty'));
+        if (!this._ticketsShown) {
+            this._ticketsShown = true;
+            this._collapsedProjects.add('tickets:Closed');
+        }
+        for (const [name, tickets] of groups)
+            this._projectSection(`tickets:${name}`, name, '', `${tickets.length}`, name === 'Ready', null,
+                body => { for (const ticket of tickets) body.addMenuItem(this._ticketItem(ticket)); });
+    }
+
+    _ticketForm(snapshot) {
+        const draft = this._ticketDraft;
+        const every = ticketFolders(snapshot);
+        if (!every.some(([folder]) => folder === draft.folder)) draft.folder = every[0]?.[0] ?? null;
+        // The most recently active few, and the chosen one, until All lists every open folder.
+        const folders = draft.allFolders ? every : every.filter(([folder], index) => index < TICKET_FOLDERS || folder === draft.folder);
+        const item = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false, style_class: 'tracker-ticket-form'});
+        item._ornamentLabel?.hide();
+        const box = new St.BoxLayout({vertical: true, x_expand: true});
+        const entry = new St.Entry({text: draft.text, hint_text: 'A task to do later…', can_focus: true, x_expand: true,
+            accessible_name: 'New ticket', style_class: 'tracker-search tracker-ticket-entry'});
+        entry.clutter_text.single_line_mode = false;
+        entry.clutter_text.activatable = false;
+        entry.clutter_text.line_wrap = true;
+        entry.clutter_text.connect('text-changed', () => { draft.text = entry.get_text(); });
+        box.add_child(entry);
+        const line = (caption, children) => {
+            const row = new St.BoxLayout({style_class: 'tracker-ticket-line'});
+            row.add_child(new St.Label({text: caption, style_class: 'tracker-ticket-caption', y_align: Clutter.ActorAlign.CENTER}));
+            const holder = new St.BoxLayout({vertical: true, x_expand: true});
+            for (const group of children) holder.add_child(group);
+            row.add_child(holder);
+            box.add_child(row);
+        };
+        // The project, from the open ones.
+        const choices = [], lines = [];
+        let index = 0;
+        for (const group of chipLines(folders.map(([, name]) => name), 58)) {
+            const segments = new St.BoxLayout({style_class: 'tracker-segments tracker-ticket-projects'});
+            for (const name of group) {
+                // chipLines keeps the order, so the folders follow along.
+                const folder = folders[index++][0];
+                const button = new St.Button({label: name, can_focus: true, toggle_mode: true, checked: folder === draft.folder,
+                    accessible_name: folder, style_class: 'tracker-segment'});
+                this._tooltip(button, folder);
+                button.connect('clicked', () => {
+                    draft.folder = folder;
+                    for (const other of choices) other.checked = other === button;
+                });
+                choices.push(button);
+                segments.add_child(button);
+            }
+            lines.push(segments);
+        }
+        if (every.length > folders.length || draft.allFolders) {
+            const more = new St.Button({label: draft.allFolders ? 'Fewer' : `All ${every.length}`, can_focus: true,
+                style_class: 'tracker-filter tracker-ticket-more', x_align: Clutter.ActorAlign.START});
+            more.connect('clicked', () => {
+                draft.allFolders = !draft.allFolders;
+                this._renderRows();
+            });
+            lines.push(more);
+        }
+        line('Project', lines.length ? lines : [new St.Label({text: 'No open projects; use agent-bar ticket add --project', style_class: 'tracker-detail'})]);
+        // What it waits for: any of the limits recorded here, the project's queues, a time.
+        const waits = new St.BoxLayout({style_class: 'tracker-checks'});
+        const options = [...Object.keys(snapshot.usage || {}).filter(provider => snapshot.usage[provider]?.limits?.some(limit => limit.resets_at))
+            .map(provider => [`reset:${provider}`, `${PROVIDERS[provider]?.[1] || provider} limit resets`]),
+            ...this._setting('scheduler') ? [['queues', 'Its queues finish']] : []];
+        for (const [value, caption] of options) {
+            const check = new CheckBox.CheckBox(caption);
+            check.add_style_class_name('tracker-check');
+            check.checked = draft.waits.includes(value);
+            this._tooltip(check, value === 'queues' ? 'The project\'s queues outstanding now' : 'The limit binding now, or else the weekly one, as it stands now');
+            check.connect('clicked', () => {
+                draft.waits = check.checked ? [...draft.waits, value] : draft.waits.filter(other => other !== value);
+            });
+            waits.add_child(check);
+        }
+        const when = this._controlEntry(draft, 'date', 'or at YYYY-MM-DD HH:MM, +3h', 'Wait until a time', () => {}, 'tracker-ticket-date');
+        line('Wait until', [waits, when]);
+        const footer = new St.BoxLayout({style_class: 'tracker-ticket-line'});
+        const note = new St.Label({text: this._ticketError || 'Ready at once if it waits for nothing; every wait must pass',
+            x_expand: true, style_class: this._ticketError ? 'tracker-warning' : 'tracker-detail', y_align: Clutter.ActorAlign.CENTER});
+        note.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+        note.clutter_text.line_wrap = true;
+        footer.add_child(note);
+        const cancel = new St.Button({label: 'Cancel', can_focus: true, style_class: 'tracker-filter', y_align: Clutter.ActorAlign.CENTER});
+        cancel.connect('clicked', () => {
+            this._ticketDraft = this._ticketError = null;
+            this._renderRows();
+        });
+        footer.add_child(cancel);
+        const add = new St.Button({label: 'Add ticket', can_focus: true, style_class: 'tracker-filter tracker-ticket-add',
+            y_align: Clutter.ActorAlign.CENTER});
+        add.connect('clicked', () => {
+            if (!draft.text.trim()) {
+                note.text = 'Write what the ticket is for first';
+                note.style_class = 'tracker-warning';
+                return;
+            }
+            const args = ['add', ...draft.folder ? ['--project', draft.folder] : [], ...draft.waits.flatMap(wait => ['--after', wait]),
+                ...draft.date.trim() ? ['--after', `date:${draft.date.trim()}`] : [], '--', draft.text];
+            this._ticketAction(args, () => { this._ticketDraft = null; });
+        });
+        footer.add_child(add);
+        box.add_child(footer);
+        item.add_child(box);
+        return item;
+    }
+
+    _ticketItem(ticket) {
+        const item = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
+        item._ornamentLabel?.hide();
+        item.add_style_class_name('tracker-conversation');
+        if (ticket.ready) item.add_style_class_name('tracker-unread');
+        const box = new St.BoxLayout({vertical: true, style_class: 'tracker-row', x_expand: true});
+        for (const [value, style] of [[ticket.body.length > 1500 ? `${ticket.body.slice(0, 1499)}…` : ticket.body, 'tracker-title tracker-title-full'],
+            [ticketDetail(ticket), 'tracker-detail']]) {
+            const label = new St.Label({text: value, style_class: style});
+            label.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+            label.clutter_text.line_wrap = true;
+            box.add_child(label);
+        }
+        item.add_child(box);
+        const actions = new St.BoxLayout({style_class: 'tracker-ticket-actions', y_align: Clutter.ActorAlign.CENTER});
+        const closed = ticket.status === 'done' || ticket.status === 'dropped';
+        if (!closed) actions.add_child(this._copyButton(() => ticket.prompt, 'Copy a prompt that has a chat do this ticket', true));
+        for (const [label, action, name] of closed ? [['Reopen', 'reopen', 'Open this ticket again']]
+            : [['Done', 'done', 'Close this ticket as done'], ['Drop', 'drop', 'Close this ticket without doing it']]) {
+            const button = new St.Button({label, can_focus: true, accessible_name: name, style_class: 'tracker-filter tracker-ticket-action',
+                y_align: Clutter.ActorAlign.CENTER});
+            button.connect('clicked', () => this._ticketAction([action, `${ticket.id}`]));
+            actions.add_child(button);
+        }
+        item.add_child(actions);
+        return item;
+    }
+
+    // Runs `agent-bar ticket …`, then redraws from a snapshot taken after it, with any error in the form.
+    async _ticketAction(args, done = null) {
+        try {
+            const asked = Date.now() / 1000;
+            await this._run(['ticket', ...args]);
+            this._ticketError = null;
+            done?.();
+            await this._snapshotAfter(asked);
+        } catch (error) {
+            this._ticketError = error.message;
+        }
+        if (this._enabled && this._button.menu.isOpen && this._view === 'tickets' && !this._page) {
+            this._menuSnapshot = this._snapshot;
+            this._buildMenu();
         }
     }
 

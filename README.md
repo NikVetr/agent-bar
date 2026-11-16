@@ -67,9 +67,10 @@ again, leaving your history and settings (`--purge` deletes those too).
 - **● 3** working, **◌ 1** waiting: a turn that has gone quiet, or ended with background work still pending.
 - **✉ 2**: chats where messages from other agents wait for you to start a turn, with no wake-up coming: waking off,
   a Claude chat idle over a week, or a Codex chat not open in VS Code. Clicking it opens the Messages tab.
+- **🎫 2**: tickets ready to start, while there are any. Clicking it opens the Tickets tab.
 - **Q 2 / 5**: queues finished / outstanding since each project's last turn, with the scheduler integration.
 - Each part lights on its own and opens the dropdown on its tab: the chat counts on Chats, Q on Queues, ✉ on Messages,
-  the limits on Quota, the cluster indicator on Cluster. With the dropdown open, clicking another part switches tabs;
+  the ticket count on Tickets, the limits on Quota, the cluster indicator on Cluster. With the dropdown open, clicking another part switches tabs;
   clicking the open tab's part, or anywhere else, closes it.
 - **▾**: every window with a chat, with a dot for its most urgent state; click one to bring it forward. Below
   them, **New VS Code window** opens one maximized on your main display, and **Saved chats** opens History.
@@ -93,6 +94,9 @@ Clicking the counts opens the dropdown, with these tabs:
   behind its upstream (as of the last fetch; Agent Bar never fetches or takes git's lock). Clicking one opens VS
   Code's Source Control for it.
 - **Messages**: notes between agents, as threads.
+- **Tickets**: tasks to do later (see below), ready ones first, then those waiting, started, and recently closed. **New
+  ticket** writes one: its text, its project (the most recently active open folders first), and what it waits for.
+  Each has a button that copies a prompt to paste into a chat, and **Done**, **Drop** or **Reopen**.
 - **History**: every saved Claude and Codex chat, including closed ones, with the same copy button; Resume reopens one
   in its folder.
 - **Quota**: each provider's usage limits as Claude Code and Codex record them on this computer: the weekly limit, the
@@ -132,6 +136,25 @@ you write to the sender again, and more than 10 an hour; the sender is told whic
 send again; you can lift it from the Messages tab. Agents are told to treat
 messages as information, not as your instructions. You can turn messages off in settings.
 
+## Tickets
+
+A ticket is a task you or an agent wants done later, in one project, for work that cannot or need not happen now:
+
+```
+agent-bar ticket add "Fable audit of this repo" --after reset:claude   # wait for Claude's limit to reset
+agent-bar ticket add "Compare the fits" --after queues                 # wait for this project's queues to finish
+agent-bar ticket list                                                  # open tickets, then recently closed ones
+agent-bar ticket take 3                                                # this chat starts it
+agent-bar ticket done 3 --note "findings in tmp/audit.md"              # or drop, or reopen
+```
+
+`--after` can also be `date:2026-11-20 09:00`, `date:+3h`, `queue:<id>` or `ticket:<number>`; repeat it to wait for
+several. A wait is fixed when the ticket is written: the reset then due (by default the limit binding now, else the
+weekly one; `reset:claude:session` picks the 5-hour one), or the queues outstanding then. A ticket is ready once all its
+waits have passed. An agent's ticket goes in its own folder unless `--project` names another, and is marked as
+coming from that chat; agents cannot write tickets as you. The prompt a ticket copies asks the chat to run `take` and
+`done`. Closed tickets are kept 30 days.
+
 ## Optional: the parallel-workers scheduler
 
 The Queues tab, the Q count and the cluster indicator read the files the parallel-workers job scheduler writes in
@@ -167,6 +190,7 @@ agent-bar queues        # queues and their progress
 agent-bar git           # git status of repositories holding open projects
 agent-bar info          # skills, hook health, instruction files
 agent-bar usage         # usage limits, with pace, run-out time and use by day
+agent-bar ticket list   # tickets and what each waits for
 agent-bar inventory     # rescan saved chats
 agent-bar resume <key>  # reopen a saved chat in VS Code
 ```
