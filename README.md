@@ -46,9 +46,9 @@ ends. Nothing leaves your computer unless you turn on reading Claude's usage lim
 | Platform | Where it appears | Status |
 | --- | --- | --- |
 | Linux, GNOME Shell 42 (Ubuntu 22.04), X11 | the top bar | available |
-| Linux, GNOME Shell 45 and later | the top bar | in progress |
-| macOS | the menu bar | in progress |
-| Windows | the system tray | in progress |
+| Linux, GNOME Shell 45 and later | the top bar | planned |
+| macOS | the menu bar | planned |
+| Windows | the system tray | planned |
 
 The service, command line, hooks and VS Code bridge are shared by every platform; each platform has its own small
 menu-bar front end.
