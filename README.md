@@ -102,7 +102,10 @@ again, leaving your history and settings (`--purge` deletes those too).
 - **▾**: every window with a chat, with a dot for its most urgent state; click one to bring it forward. Below
   them, **New VS Code window** opens one maximized on your main display, and **Saved chats** opens History.
 - **Shortcut buttons**: chats needing review get a button that brings them forward, the longest waiting first, as
-  many as fit, continuing right of the middle when the left half is full; **+2 more** lists the rest. **Settings › Top bar** sets the most buttons and,
+  many as fit, continuing right of the middle when the left half is full; **+2 more** lists the rest. Spare room shows
+  more of each name. Several chats in one project share a button: the project's name, then a numbered bubble per chat
+  in its provider's color; a bubble brings that chat forward, the name the longest-waiting one, and the others
+  renumber from 1. **Settings › Top bar** sets the most buttons and,
   with checkboxes, which reasons give one: a finished reply, a failed turn, a question, an approval, finished queues
   (all on by default), and a stop at a 5-hour or weekly usage limit (off by default; the Chats tab shows those chats).
 

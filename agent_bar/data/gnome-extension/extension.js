@@ -27,7 +27,7 @@ const SCHEDULER_URL = null;
 // [section, key, label, description, default, [[value, caption]...]]; a list default makes the setting
 // multiple-choice. The service reads quietMinutes.
 const SETTINGS = [
-    ['Top bar', 'quickLimit', 'Review buttons', 'At most this many shortcuts, as room allows; +N more lists the rest', 6,
+    ['Top bar', 'quickLimit', 'Review buttons', 'At most this many shortcuts, one per project, as room allows; +N more lists the rest', 6,
         [[0, 'Off'], [3, '3'], [6, '6'], [10, '10']]],
     ['Top bar', 'quickChars', 'Button name length', 'Characters of the folder name on each shortcut', 16,
         [[12, '12'], [16, '16'], [24, '24']]],
@@ -174,6 +174,33 @@ function readyConversations(rows, reasons = null) {
         return times.length ? Math.min(...times) : completionTime(row);
     };
     return [...unique.values()].sort((a, b) => since(a) - since(b));
+}
+
+// Chats needing review by project, one shortcut each, in the order of each project's longest-waiting chat.
+function quickGroups(rows) {
+    const groups = new Map();
+    for (const row of rows) {
+        if (!groups.has(row.project)) groups.set(row.project, []);
+        groups.get(row.project).push(row);
+    }
+    return [...groups.values()];
+}
+
+// Grow `widths` by up to `extra` in total, none past its `limits`, sharing it evenly (what one cannot use goes to the
+// others).
+function shareWidth(widths, limits, extra) {
+    const result = [...widths];
+    let left = Math.max(0, extra);
+    for (let open = result.map((_, i) => i).filter(i => limits[i] > result[i]); left > 0.5 && open.length;
+        open = open.filter(i => limits[i] > result[i])) {
+        const each = left / open.length;
+        for (const i of open) {
+            const add = Math.min(each, limits[i] - result[i]);
+            result[i] += add;
+            left -= add;
+        }
+    }
+    return result.map(Math.floor);
 }
 
 // Open VS Code chats a usage limit stopped, which Continue can have go on; Codex ones first, as they need no window.
@@ -1551,8 +1578,8 @@ class Tracker {
             + 'the limits on Quota, the cluster indicator on Cluster. With the dropdown open, clicking another part switches tabs; '
             + 'clicking the open tab\'s part, or anywhere else, closes it. ? opens this guide at the part about the tab you were on.');
         row(top, [text('✳ project…', 'tracker-quick-button tracker-claude')], limit
-            ? `Up to ${limit} chats needing review get a shortcut, as many as fit, the longest waiting first; clicking one brings that `
-                + 'chat forward and clears it. They continue right of the middle when the left half is full; +2 more lists the rest. '
+            ? `Up to ${limit} projects with chats needing review get a shortcut, as many as fit, the longest waiting first; clicking one brings that `
+                + 'chat forward and clears it. Several chats in one project share one, with a numbered bubble per chat in its provider\'s color.  They continue right of the middle when the left half is full; +2 more lists the rest. '
                 + 'Settings › Top bar › Review buttons for picks the reasons; by default a chat stopped only by a usage limit gets none, and the Chats tab shows it.'
             : 'Review shortcuts are off (Settings › Top bar).');
         if (scheduler) row(top, [text('23%', 'tracker-muted'), text('64%', 'tracker-working'), text('94%', 'tracker-attention')],
@@ -2522,37 +2549,68 @@ class Tracker {
         for (const [key, after] of this._quickPending) if ((this._snapshot?.updated ?? 0) > after) this._quickPending.delete(key);
         const ready = readyConversations(rows, this._setting('quickReasons'))
             .filter(row => !this._quickPending.has(row.key));
+        const groups = quickGroups(ready);
         const limit = this._setting('quickLimit'), chars = this._setting('quickChars');
-        const shown = ready.slice(0, limit);
-        const signature = JSON.stringify(shown.map(row => [row.key, row.window, row.project]));
+        const shown = groups.slice(0, limit);
+        const signature = JSON.stringify(shown.map(group => group.map(row => [row.key, row.window, row.provider])));
         if (signature !== this._quickSignature) this._buildQuick(signature, shown, chars);
-        this._fitQuick(limit ? ready : []);
+        this._fitQuick(limit ? groups : []);
     }
 
-    // One shortcut per chat in `shown`, placed by _fitQuick.
+    // One shortcut per project in `shown`, placed by _fitQuick: a chat alone is a button in its provider's color; several
+    // share a neutral button with the project's name and a numbered bubble per chat, in its provider's color, the
+    // longest waiting first. Each keeps its name's short (`chars`) and full forms, for _fitQuick to show as room allows.
     _buildQuick(signature, shown, chars) {
         this._quickSignature = signature;
         for (const box of [this._quick, this._quickRight]) this._releaseFocus(null, box);
         for (const button of this._quickButtons) button.destroy();
-        this._quickButtons = shown.map(row => {
-            const name = row.project.length > chars ? `${row.project.slice(0, chars - 1)}…` : row.project;
-            const button = new St.Button({label: `${PROVIDERS[row.provider]?.[0] || '•'} ${name}`,
-                style_class: `tracker-quick-button tracker-${row.provider}`, can_focus: true,
-                y_align: Clutter.ActorAlign.CENTER, accessible_name: `Show ${row.project}: ${row.title}`});
-            button.connect('clicked', () => {
-                button.hide();
+        this._quickButtons = shown.map(group => {
+            const [first] = group;
+            const short = first.project.length > chars ? `${first.project.slice(0, chars - 1)}…` : first.project;
+            const open = row => {
+                // The snapshot after it drops this chat; until then its bubble goes and the rest renumber.
                 this._openShortcut(row);
-            });
+                this._later(() => this._renderQuick(this._snapshot?.rows || []));
+            };
+            let item, name;
+            if (group.length === 1) {
+                const symbol = PROVIDERS[first.provider]?.[0] || '•';
+                item = new St.Button({label: `${symbol} ${short}`, style_class: `tracker-quick-button tracker-${first.provider}`, can_focus: true,
+                    y_align: Clutter.ActorAlign.CENTER, accessible_name: `Show ${first.project}: ${first.title}`});
+                name = item;
+                item._names = [`${symbol} ${short}`, `${symbol} ${first.project}`];
+                item.connect('clicked', () => {
+                    item.hide();
+                    open(first);
+                });
+            } else {
+                item = new St.BoxLayout({style_class: 'tracker-quick-button tracker-quick-group', y_align: Clutter.ActorAlign.CENTER,
+                    reactive: true, track_hover: true});
+                name = new St.Button({label: short, style_class: 'tracker-quick-group-name', can_focus: true, x_expand: true,
+                    y_align: Clutter.ActorAlign.CENTER, accessible_name: `Show ${first.project}'s longest-waiting chat: ${first.title}`});
+                name.connect('clicked', () => open(first));
+                item.add_child(name);
+                group.forEach((row, index) => {
+                    const bubble = new St.Button({label: `${index + 1}`, can_focus: true, y_align: Clutter.ActorAlign.CENTER,
+                        style_class: `tracker-quick-bubble tracker-quick-bubble-${row.provider}`,
+                        accessible_name: `Show ${PROVIDERS[row.provider]?.[1] || row.provider} chat ${row.title}`});
+                    this._tooltip(bubble, `${PROVIDERS[row.provider]?.[0] || '•'} ${row.title}`);
+                    bubble.connect('clicked', () => open(row));
+                    item.add_child(bubble);
+                });
+                item._names = [short, first.project];
+            }
+            item._name = name;
             // _fitQuick puts it in its place.
-            this._quick.add_child(button);
-            return button;
+            this._quick.add_child(item);
+            return item;
         });
     }
 
     // Shortcuts as room allows, the longest waiting first: in the top bar's left half after its other buttons, then
     // at the start of the right half. +N more, after the last one shown, lists the rest of `ready`.
-    _fitQuick(ready) {
-        const panel = Main.panel, total = ready.length;
+    _fitQuick(groups) {
+        const panel = Main.panel, total = groups.length;
         // Each side's box gets at most half of what the centre box leaves.
         const side = Math.floor((panel.width - panel._centerBox.get_preferred_width(-1)[1]) / 2) - 2;
         const width = actor => actor.get_preferred_width(-1)[1];
@@ -2564,7 +2622,11 @@ class Tracker {
         buttons.forEach(button => {
             button.show();
             button.set_width(-1);
+            button._name.label = button._names[1];
         });
+        // As wide as the full name would make it, and as wide as the short one does.
+        const full = buttons.map(width);
+        buttons.forEach(button => { button._name.label = button._names[0]; });
         const widths = buttons.map(width);
         this._quickMore.label = `+${total} more`;
         const more = width(this._quickMore) + spacing;
@@ -2582,18 +2644,31 @@ class Tracker {
         let [left, usedLeft] = fill(leftRoom, 0, false);
         // The next shortcut, its name cut short, takes what the left half has left, so the row runs on unbroken.
         let squeezed = leftRoom - usedLeft - spacing;
-        if (left < buttons.length && squeezed >= 90) left++;
+        // Enough of it to show a few letters: its narrowest (an ellipsis and any bubbles) and room for them.
+        if (left < buttons.length && squeezed >= Math.max(60, buttons[left].get_preferred_width(-1)[0] + 30)) left++;
         else squeezed = 0;
         let [right, usedRight] = fill(rightRoom, left, true);
         let moreRight = true;
         if (total > left + right && (!right || usedRight + more > rightRoom)) {
             // +N more ends the left side instead, next to the shortcuts it continues.
-            [left] = fill(leftRoom, 0, true);
+            [left, usedLeft] = fill(leftRoom, 0, true);
+            usedLeft += more;
             right = squeezed = 0;
             moreRight = false;
         }
-        // The left half's shortcuts keep their own widths, right after its other buttons.
+        const grow = (start, end, extra) => shareWidth(widths.slice(start, end), full.slice(start, end), extra).forEach((value, i) => {
+            if (value <= widths[start + i]) return;
+            buttons[start + i]._name.label = buttons[start + i]._names[1];
+            buttons[start + i].set_width(value);
+        });
         if (squeezed) buttons[left - 1].set_width(squeezed);
+        else {
+            // Room the left half's shortcuts leave goes to more of their names, never to padding, so a row that
+            // continues in the right half meets the middle without a gap unless every name is already whole.
+            grow(0, left, leftRoom - usedLeft);
+        }
+        // The right half's too, with what it has left after them and +N more.
+        if (right) grow(left, left + right, rightRoom - usedRight - (moreRight && total > left + right ? more : 0));
         // Taking all the room it has, the right half's box starts at the middle, against the left half's shortcuts.
         this._quickRight.visible = right > 0;
         this._quickRight.set_width(right > 0 ? Math.max(0, rightRoom) : -1);
@@ -2608,7 +2683,7 @@ class Tracker {
         place(this._quick, [...buttons.slice(0, left), ...moreRight ? [] : [this._quickMore], ...unplaced]);
         place(this._quickRight, [...buttons.slice(left, left + right), ...moreRight ? [this._quickMore] : []]);
         unplaced.forEach(button => button.hide());
-        this._quickHidden = ready.slice(left + right);
+        this._quickHidden = groups.slice(left + right).flat();
         const hidden = this._quickHidden.length;
         this._quickMore.label = `+${hidden} more`;
         this._quickMore.visible = hidden > 0;

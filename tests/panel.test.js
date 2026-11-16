@@ -112,9 +112,9 @@ test('a clicked shortcut stays away until a snapshot after its acknowledgment, o
     const row = {key: 'k', window: 'w', target: {}, unread: ['Reply finished'], project: 'p'};
     const shown = [];
     f.tracker._setting = key => ({quickReasons: null, quickLimit: 6, quickChars: 16})[key];
-    f.tracker._buildQuick = (signature, rows) => {
+    f.tracker._buildQuick = (signature, groups) => {
         f.tracker._quickSignature = signature;
-        shown.push(rows.map(r => r.key).join(','));
+        shown.push(groups.flat().map(r => r.key).join(','));
     };
     f.tracker._fitQuick = () => {};
     f.tracker._quickPending = new Map();
@@ -749,4 +749,14 @@ test('quick send times are an hour from now, tomorrow at 9 and the next Monday a
     assert.equal(choices.map(([value]) => value).join(' | '), '+1h | 2026-11-19 09:00 | 2026-11-23 09:00');
     // On a Monday, "Monday" is the next one.
     assert.equal(f.context.whenChoices(new Date(2026, 10, 16, 8))[2][0], '2026-11-23 09:00');
+});
+
+test('review shortcuts group chats by project, longest waiting first, and spare room goes to names, never past whole', () => {
+    const f = fixture();
+    const rows = [{key: 'a', project: 'p'}, {key: 'b', project: 'q'}, {key: 'c', project: 'p'}];
+    assert.equal(f.context.quickGroups(rows).map(group => group.map(row => row.key).join('+')).join(' '), 'a+c b');
+    // 30 to share: the first can take only 5 more, so the other two split the rest.
+    assert.equal(f.context.shareWidth([100, 100, 100], [105, 200, 200], 30).join(), '105,112,112');
+    assert.equal(f.context.shareWidth([100, 100], [100, 100], 50).join(), '100,100');
+    assert.equal(f.context.shareWidth([100], [300], -10).join(), '100');
 });

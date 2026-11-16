@@ -21,6 +21,16 @@
 .tracker-quick-button { padding: 1px 9px; border-radius: 10px; font-weight: bold; background-color: rgba(255, 255, 255, 0.08); }
 .tracker-quick-button:hover { background-color: rgba(255, 255, 255, 0.18); }
 .tracker-quick-more { color: #c3cad4; font-weight: normal; }
+/* Several chats in one project: a neutral name, then a numbered bubble per chat in its provider's color. */
+.tracker-quick-group { padding: 1px 3px 1px 9px; spacing: 4px; }
+.tracker-quick-group-name { font-weight: bold; color: #e9edf2; }
+.tracker-quick-bubble { min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; font-size: 11px; font-weight: bold;
+    color: #1d2025; text-align: center; }
+.tracker-quick-bubble:hover { color: #000000; }
+.tracker-quick-bubble-claude { background-color: #e6a187; }
+.tracker-quick-bubble-codex { background-color: #79cfbf; }
+.tracker-quick-bubble-copilot { background-color: #e892d0; }
+.tracker-quick-bubble-antigravity { background-color: #9fb4ff; }
 /* Before the tone colors, so `tracker-detail tracker-<tone>` takes the tone. */
 .tracker-detail { font-size: 12px; color: #a6afbd; }
 .tracker-claude { color: #e6a187; }
