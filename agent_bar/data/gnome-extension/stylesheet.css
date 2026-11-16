@@ -267,11 +267,22 @@
 .tracker-copy-compact { padding: 3px 5px; }
 
 /* Tickets */
-.tracker-ticket-form { padding: 10px 14px; }
-.tracker-ticket-entry { margin: 0; min-height: 44px; }
-.tracker-ticket-line { spacing: 10px; padding-top: 8px; }
-.tracker-ticket-caption { font-size: 12px; color: #9ca3ad; width: 72px; }
-.tracker-ticket-projects { margin-bottom: 4px; }
-.tracker-ticket-date { margin: 6px 0 0; width: 210px; }
-.tracker-ticket-actions { spacing: 6px; padding-left: 8px; }
-.tracker-ticket-new { margin: 2px 14px 4px; }
+.tracker-ticket-bar { padding: 4px 14px 10px; spacing: 12px; }
+.tracker-ticket-form { padding: 0 6px 12px; }
+.tracker-ticket-card { spacing: 6px; padding: 12px 14px 14px; border: 1px solid #474e58; border-radius: 8px; background-color: #25292f; }
+.tracker-ticket-heading { font-size: 13px; font-weight: bold; color: #edf0f5; padding-bottom: 2px; }
+.tracker-ticket-entry { margin: 0; min-height: 52px; }
+.tracker-ticket-caption { font-size: 11px; font-weight: bold; color: #8f98a6; padding-top: 6px; }
+.tracker-ticket-chips { spacing: 6px; }
+.tracker-ticket-chip { padding: 4px 11px; border-radius: 12px; font-size: 12px; color: #c3cad4; background-color: #30353d; }
+.tracker-ticket-chip:hover { background-color: #3b414b; color: #f3f5f8; }
+.tracker-ticket-chip:checked { background-color: #3a6aa8; color: #ffffff; }
+.tracker-ticket-date { margin: 0; width: 230px; padding: 4px 10px; border-radius: 12px; font-size: 12px; }
+.tracker-ticket-footer { spacing: 8px; padding-top: 10px; }
+.tracker-ticket-empty { padding: 26px 40px; }
+.tracker-ticket-empty-title { font-size: 14px; font-weight: bold; color: #c3cad4; padding-bottom: 6px; }
+.tracker-ticket-row { spacing: 6px; }
+.tracker-ticket-body { font-size: 14px; color: #edf0f5; max-width: 600px; }
+.tracker-ticket-meta { spacing: 8px; }
+.tracker-ticket-wait { font-size: 12px; color: #c4a7f2; }
+.tracker-ticket-actions { spacing: 6px; padding-top: 2px; }

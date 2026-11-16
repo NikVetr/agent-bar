@@ -704,9 +704,12 @@ test('tickets group as ready, waiting, started and closed, and say what they wai
     assert.equal(groups.map(([name, tickets]) => `${name}:${tickets.map(t => t.id)}`).join(' '), 'Ready:2 Waiting:1 Started:3 Closed:4');
     assert.equal(f.context.ticketGroups(listing, 'audit').map(([name]) => name).join(), 'Waiting');
     assert.equal(f.context.ticketGroups(listing, '#4').map(([name]) => name).join(), 'Closed');
-    assert.equal(f.context.ticketDetail(listing.open[0]), '#1 · p · by you · just now · waits until Claude weekly limit resets and fits finishes');
-    assert.equal(f.context.ticketDetail(listing.open[2]), '#3 · p · by you · just now · taken by ⌘ Porter just now');
-    assert.equal(f.context.ticketDetail(listing.closed[0]), '#4 · p · by ✳ Helper · just now · done just now: merged');
+    assert.equal(f.context.ticketMeta(listing.closed[0]), '#4 · p · by ✳ Helper · just now');
+    assert.equal(f.context.ticketNote(listing.open[0]), 'Waits until Claude weekly limit resets and fits finishes');
+    assert.equal(f.context.ticketNote(listing.open[1]), '');
+    assert.equal(f.context.ticketNote(listing.open[2]), 'Taken by ⌘ Porter just now');
+    assert.equal(f.context.ticketNote(listing.closed[0]), 'Done just now: merged');
+    assert.equal([...listing.open, ...listing.closed].map(t => f.context.ticketStatus(t)[0]).join(), 'Waiting,Ready,Started,Done');
 });
 
 test('a new ticket can go in any open folder, the most recently active chat\'s first', () => {

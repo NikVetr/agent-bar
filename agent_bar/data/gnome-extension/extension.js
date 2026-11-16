@@ -193,15 +193,27 @@ function ticketGroups(listing, query = '') {
         .filter(([, tickets]) => tickets.length);
 }
 
-// A ticket's number, project, author and age, then what it waits for, who took it, or how it closed.
-function ticketDetail(ticket) {
-    const who = key => key === 'user' ? 'you' : `${PROVIDERS[key.split(':')[0]]?.[0] || '•'}`;
-    const parts = [`#${ticket.id}`, ticket.project, `by ${ticket.author === 'user' ? 'you' : `${who(ticket.author)} ${ticket.author_title || ticket.author}`}`, age(ticket.at)];
-    if (ticket.status === 'open' && ticket.waiting?.length) parts.push(`waits until ${ticket.waiting.join(' and ')}`);
-    if (ticket.status === 'started')
-        parts.push(`taken by ${ticket.taken_by === 'user' ? 'you' : `${who(ticket.taken_by)} ${ticket.taken_title || ticket.taken_by}`} ${age(ticket.status_at)}`);
-    if (ticket.status === 'done' || ticket.status === 'dropped') parts.push(`${ticket.status} ${age(ticket.status_at)}${ticket.note ? `: ${ticket.note}` : ''}`);
-    return parts.join(' · ');
+// Who wrote or took a ticket: you, or a chat by its provider's symbol and title.
+function ticketWho(key, title) {
+    return key === 'user' ? 'you' : `${PROVIDERS[key.split(':')[0]]?.[0] || '•'} ${title || key}`;
+}
+
+// A ticket's number, project, author and age.
+function ticketMeta(ticket) {
+    return [`#${ticket.id}`, ticket.project, `by ${ticketWho(ticket.author, ticket.author_title)}`, age(ticket.at)].join(' · ');
+}
+
+// What an open ticket waits for, who took a started one, or how a closed one ended.
+function ticketNote(ticket) {
+    if (ticket.status === 'open') return ticket.waiting?.length ? `Waits until ${ticket.waiting.join(' and ')}` : '';
+    if (ticket.status === 'started') return `Taken by ${ticketWho(ticket.taken_by, ticket.taken_title)} ${age(ticket.status_at)}`;
+    return `${ticket.status === 'done' ? 'Done' : 'Dropped'} ${age(ticket.status_at)}${ticket.note ? `: ${ticket.note}` : ''}`;
+}
+
+// A ticket's status chip and its tone.
+function ticketStatus(ticket) {
+    if (ticket.status !== 'open') return {started: ['Started', 'working'], done: ['Done', 'finished'], dropped: ['Dropped', 'muted']}[ticket.status];
+    return ticket.ready ? ['Ready', 'attention'] : ['Waiting', 'waiting'];
 }
 
 // The tickets the top-bar count shows: ready ones that waited for something ('due'), every ready one ('ready'), or none.
@@ -1197,6 +1209,9 @@ class Tracker {
         // Shortcuts without room on the left continue at the start of the right-hand box.
         this._quickRight = new St.BoxLayout({style_class: 'tracker-quick tracker-quick-right'});
         this._quickButtons = [];
+        // Room before the left half's shortcuts, when they continue in the right half, so the row meets the middle.
+        this._quickGap = new St.Widget({visible: false});
+        this._quick.add_child(this._quickGap);
         this._quickHidden = [];
         // Chat key -> after what snapshot time its clicked shortcut may show again (Infinity while it is brought forward).
         this._quickPending = new Map();
@@ -2485,8 +2500,6 @@ class Tracker {
             const button = new St.Button({label: `${PROVIDERS[row.provider]?.[0] || '•'} ${name}`,
                 style_class: `tracker-quick-button tracker-${row.provider}`, can_focus: true,
                 y_align: Clutter.ActorAlign.CENTER, accessible_name: `Show ${row.project}: ${row.title}`});
-            // Centred when _fitQuick widens the button.
-            button.get_child().x_align = Clutter.ActorAlign.CENTER;
             button.connect('clicked', () => {
                 button.hide();
                 this._openShortcut(row);
@@ -2540,13 +2553,13 @@ class Tracker {
             right = squeezed = 0;
             moreRight = false;
         }
+        let gap = 0;
         if (squeezed) buttons[left - 1].set_width(squeezed);
-        else if (right) {
-            // The next one did not fit even cut short, so the left half's shortcuts share its leftover width and
-            // the row runs on unbroken into the right half.
-            const extra = leftRoom - usedLeft;
-            for (let i = 0; i < left; i++) buttons[i].set_width(widths[i] + Math.floor(extra * (i + 1) / left) - Math.floor(extra * i / left));
-        }
+        // The next one did not fit even cut short, so the left half's shortcuts, at their own widths, move against
+        // the middle and the row runs on unbroken into the right half.
+        else if (right && left) gap = Math.max(0, leftRoom - usedLeft - spacing);
+        this._quickGap.set_width(gap);
+        this._quickGap.visible = gap > 0;
         // Taking all the room it has, the right half's box starts at the middle, against the left half's shortcuts.
         this._quickRight.visible = right > 0;
         this._quickRight.set_width(right > 0 ? Math.max(0, rightRoom) : -1);
@@ -2558,7 +2571,7 @@ class Tracker {
             box.set_child_at_index(actor, index);
         });
         const unplaced = buttons.slice(left + right);
-        place(this._quick, [...buttons.slice(0, left), ...moreRight ? [] : [this._quickMore], ...unplaced]);
+        place(this._quick, [this._quickGap, ...buttons.slice(0, left), ...moreRight ? [] : [this._quickMore], ...unplaced]);
         place(this._quickRight, [...buttons.slice(left, left + right), ...moreRight ? [this._quickMore] : []]);
         unplaced.forEach(button => button.hide());
         this._quickHidden = ready.slice(left + right);
@@ -3867,25 +3880,46 @@ class Tracker {
         }
     }
 
-    // A form for a new ticket, then the tickets ready to start, waiting, started and recently closed.
+    // New ticket (or its form), then the tickets ready to start, waiting, started and recently closed.
     _renderTickets(snapshot, query) {
+        const listing = snapshot.tickets || {open: [], closed: []};
+        const groups = ticketGroups(listing, query);
         if (this._ticketDraft?.open) this._section.addMenuItem(this._ticketForm(snapshot));
         else {
-            const item = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
+            const item = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false, style_class: 'tracker-ticket-bar'});
             item._ornamentLabel?.hide();
-            const button = new St.Button({label: '+ New ticket', can_focus: true, style_class: 'tracker-filter tracker-ticket-new'});
+            const button = new St.Button({label: '+  New ticket', can_focus: true, style_class: 'tracker-control-primary',
+                y_align: Clutter.ActorAlign.CENTER});
             button.connect('clicked', () => {
                 (this._ticketDraft ||= {text: '', folder: null, waits: [], date: ''}).open = true;
                 this._renderRows();
+                this._later(() => this._ticketEntry && global.stage.set_key_focus(this._ticketEntry.clutter_text));
             });
             item.add_child(button);
-            if (this._ticketError) item.add_child(new St.Label({text: this._ticketError, style_class: 'tracker-warning', y_align: Clutter.ActorAlign.CENTER}));
+            const counts = groups.filter(([name]) => name !== 'Closed').map(([name, tickets]) => `${tickets.length} ${name.toLowerCase()}`);
+            const note = new St.Label({text: this._ticketError || counts.join(' · '), x_expand: true, x_align: Clutter.ActorAlign.END,
+                style_class: this._ticketError ? 'tracker-warning' : 'tracker-detail', y_align: Clutter.ActorAlign.CENTER});
+            note.clutter_text.line_wrap = true;
+            item.add_child(note);
             this._section.addMenuItem(item);
         }
-        const listing = snapshot.tickets || {open: [], closed: []};
-        const groups = ticketGroups(listing, query);
-        if (!groups.length) this._section.addMenuItem(this._item(listing.open.length || listing.closed.length ? 'No matching tickets'
-            : 'No tickets yet. Write one above, or have an agent run `agent-bar ticket add`.', 'tracker-empty'));
+        if (!groups.length) {
+            const item = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false, style_class: 'tracker-ticket-empty'});
+            item._ornamentLabel?.hide();
+            const box = new St.BoxLayout({vertical: true, x_expand: true});
+            const searching = listing.open.length || listing.closed.length;
+            for (const [text, style] of searching ? [['No matching tickets', 'tracker-ticket-empty-title']] : [
+                ['No tickets yet', 'tracker-ticket-empty-title'],
+                ['A ticket is a task to do later in one project. It can wait for a usage limit to reset, the project\'s queues to '
+                    + 'finish, or a time, and then shows here as ready. Agents write them with agent-bar ticket add.', 'tracker-detail']]) {
+                const label = new St.Label({text, style_class: style, x_align: Clutter.ActorAlign.CENTER});
+                label.clutter_text.line_wrap = true;
+                label.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+                box.add_child(label);
+            }
+            item.add_child(box);
+            this._section.addMenuItem(item);
+        }
         if (!this._ticketsShown) {
             this._ticketsShown = true;
             this._collapsedProjects.add('tickets:Closed');
@@ -3899,91 +3933,93 @@ class Tracker {
         const draft = this._ticketDraft;
         const every = ticketFolders(snapshot);
         if (!every.some(([folder]) => folder === draft.folder)) draft.folder = every[0]?.[0] ?? null;
-        // The most recently active few, and the chosen one, until All lists every open folder.
+        // The most recently active few, and the chosen one, until More lists every open folder.
         const folders = draft.allFolders ? every : every.filter(([folder], index) => index < TICKET_FOLDERS || folder === draft.folder);
         const item = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false, style_class: 'tracker-ticket-form'});
         item._ornamentLabel?.hide();
-        const box = new St.BoxLayout({vertical: true, x_expand: true});
-        const entry = new St.Entry({text: draft.text, hint_text: 'A task to do later…', can_focus: true, x_expand: true,
-            accessible_name: 'New ticket', style_class: 'tracker-search tracker-ticket-entry'});
+        const card = new St.BoxLayout({vertical: true, x_expand: true, style_class: 'tracker-ticket-card'});
+        card.add_child(new St.Label({text: 'New ticket', style_class: 'tracker-ticket-heading'}));
+        const entry = new St.Entry({text: draft.text, hint_text: 'What should be done later, and anything a chat needs to know to do it',
+            can_focus: true, x_expand: true, accessible_name: 'New ticket', style_class: 'tracker-search tracker-ticket-entry'});
         entry.clutter_text.single_line_mode = false;
         entry.clutter_text.activatable = false;
         entry.clutter_text.line_wrap = true;
         entry.clutter_text.connect('text-changed', () => { draft.text = entry.get_text(); });
-        box.add_child(entry);
-        const line = (caption, children) => {
-            const row = new St.BoxLayout({style_class: 'tracker-ticket-line'});
-            row.add_child(new St.Label({text: caption, style_class: 'tracker-ticket-caption', y_align: Clutter.ActorAlign.CENTER}));
-            const holder = new St.BoxLayout({vertical: true, x_expand: true});
-            for (const group of children) holder.add_child(group);
-            row.add_child(holder);
-            box.add_child(row);
+        // A press anywhere in the box, not only on the line of text, puts the cursor there.
+        entry.connect('button-press-event', () => {
+            global.stage.set_key_focus(entry.clutter_text);
+            return Clutter.EVENT_PROPAGATE;
+        });
+        this._ticketEntry = entry;
+        card.add_child(entry);
+        const field = (caption, children) => {
+            card.add_child(new St.Label({text: caption, style_class: 'tracker-ticket-caption'}));
+            for (const child of children) card.add_child(child);
         };
-        // The project, from the open ones.
-        const choices = [], lines = [];
-        let index = 0;
-        for (const group of chipLines(folders.map(([, name]) => name), 58)) {
-            const segments = new St.BoxLayout({style_class: 'tracker-segments tracker-ticket-projects'});
-            for (const name of group) {
-                // chipLines keeps the order, so the folders follow along.
-                const folder = folders[index++][0];
-                const button = new St.Button({label: name, can_focus: true, toggle_mode: true, checked: folder === draft.folder,
-                    accessible_name: folder, style_class: 'tracker-segment'});
-                this._tooltip(button, folder);
-                button.connect('clicked', () => {
-                    draft.folder = folder;
-                    for (const other of choices) other.checked = other === button;
-                });
-                choices.push(button);
-                segments.add_child(button);
-            }
-            lines.push(segments);
-        }
-        if (every.length > folders.length || draft.allFolders) {
-            const more = new St.Button({label: draft.allFolders ? 'Fewer' : `All ${every.length}`, can_focus: true,
-                style_class: 'tracker-filter tracker-ticket-more', x_align: Clutter.ActorAlign.START});
-            more.connect('clicked', () => {
+        // Chips on lines of at most `room` characters.
+        const chipRows = (chips, room) => chipLines(chips.map(chip => chip.label), room).map(line => {
+            const row = new St.BoxLayout({style_class: 'tracker-ticket-chips'});
+            for (const _ of line) row.add_child(chips.shift());
+            return row;
+        });
+        const chip = (label, checked, name, onClick) => {
+            const button = new St.Button({label, can_focus: true, toggle_mode: true, checked, accessible_name: name,
+                style_class: 'tracker-ticket-chip'});
+            button.connect('clicked', () => onClick(button));
+            return button;
+        };
+        const projects = folders.map(([folder, name]) => {
+            const button = chip(name, folder === draft.folder, folder, () => {
+                draft.folder = folder;
+                for (const other of projects) other.checked = other === button;
+            });
+            this._tooltip(button, folder);
+            return button;
+        });
+        const chips = [...projects];
+        if (every.length > TICKET_FOLDERS) chips.push(chip(draft.allFolders ? 'Fewer' : `${every.length - folders.length} more…`, false,
+            'Show every open folder', () => {
                 draft.allFolders = !draft.allFolders;
                 this._renderRows();
+            }));
+        field('Project', chips.length ? chipRows(chips, 62)
+            : [new St.Label({text: 'No open folders; agent-bar ticket add --project DIR writes one anywhere', style_class: 'tracker-detail'})]);
+        // What it waits for: any limit recorded here with a reset, the project's queues, a time.
+        const waits = [...Object.keys(snapshot.usage || {}).filter(provider => snapshot.usage[provider]?.limits?.some(limit => limit.resets_at))
+            .map(provider => [`reset:${provider}`, `${PROVIDERS[provider]?.[1] || provider} limit resets`,
+                'The limit binding now, or else the weekly one: its reset as it stands now']),
+            ...this._setting('scheduler') ? [['queues', 'Its queues finish', 'The project\'s queues outstanding now']] : []]
+            .map(([value, label, tip]) => {
+                const button = chip(label, draft.waits.includes(value), tip, () => {
+                    draft.waits = button.checked ? [...draft.waits, value] : draft.waits.filter(other => other !== value);
+                });
+                this._tooltip(button, tip);
+                return button;
             });
-            lines.push(more);
-        }
-        line('Project', lines.length ? lines : [new St.Label({text: 'No open projects; use agent-bar ticket add --project', style_class: 'tracker-detail'})]);
-        // What it waits for: any of the limits recorded here, the project's queues, a time.
-        const waits = new St.BoxLayout({style_class: 'tracker-checks'});
-        const options = [...Object.keys(snapshot.usage || {}).filter(provider => snapshot.usage[provider]?.limits?.some(limit => limit.resets_at))
-            .map(provider => [`reset:${provider}`, `${PROVIDERS[provider]?.[1] || provider} limit resets`]),
-            ...this._setting('scheduler') ? [['queues', 'Its queues finish']] : []];
-        for (const [value, caption] of options) {
-            const check = new CheckBox.CheckBox(caption);
-            check.add_style_class_name('tracker-check');
-            check.checked = draft.waits.includes(value);
-            this._tooltip(check, value === 'queues' ? 'The project\'s queues outstanding now' : 'The limit binding now, or else the weekly one, as it stands now');
-            check.connect('clicked', () => {
-                draft.waits = check.checked ? [...draft.waits, value] : draft.waits.filter(other => other !== value);
-            });
-            waits.add_child(check);
-        }
-        const when = this._controlEntry(draft, 'date', 'or at YYYY-MM-DD HH:MM, +3h', 'Wait until a time', () => {}, 'tracker-ticket-date');
-        line('Wait until', [waits, when]);
-        const footer = new St.BoxLayout({style_class: 'tracker-ticket-line'});
-        const note = new St.Label({text: this._ticketError || 'Ready at once if it waits for nothing; every wait must pass',
+        const line = new St.BoxLayout({style_class: 'tracker-ticket-chips'});
+        for (const button of waits) line.add_child(button);
+        const when = this._controlEntry(draft, 'date', 'or a time: +3h, 2026-11-20 09:00', 'Wait until a time', () => {}, 'tracker-ticket-date');
+        when.x_expand = false;
+        when.x_align = Clutter.ActorAlign.START;
+        field('Ready when', [line, when]);
+        const footer = new St.BoxLayout({style_class: 'tracker-ticket-footer'});
+        const note = new St.Label({text: this._ticketError || 'Ready at once if nothing is picked; with several, when all have passed',
             x_expand: true, style_class: this._ticketError ? 'tracker-warning' : 'tracker-detail', y_align: Clutter.ActorAlign.CENTER});
         note.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
         note.clutter_text.line_wrap = true;
         footer.add_child(note);
-        const cancel = new St.Button({label: 'Cancel', can_focus: true, style_class: 'tracker-filter', y_align: Clutter.ActorAlign.CENTER});
+        const cancel = new St.Button({label: 'Cancel', can_focus: true, style_class: 'tracker-control-action', y_align: Clutter.ActorAlign.CENTER});
         cancel.connect('clicked', () => {
             this._ticketDraft = this._ticketError = null;
             this._renderRows();
         });
         footer.add_child(cancel);
-        const add = new St.Button({label: 'Add ticket', can_focus: true, style_class: 'tracker-filter tracker-ticket-add',
-            y_align: Clutter.ActorAlign.CENTER});
+        const add = new St.Button({label: 'Add ticket', can_focus: true, style_class: 'tracker-control-primary', y_align: Clutter.ActorAlign.CENTER});
         add.connect('clicked', () => {
             if (!draft.text.trim()) {
                 note.text = 'Write what the ticket is for first';
                 note.style_class = 'tracker-warning';
+                global.stage.set_key_focus(entry.clutter_text);
                 return;
             }
             const args = ['add', ...draft.folder ? ['--project', draft.folder] : [], ...draft.waits.flatMap(wait => ['--after', wait]),
@@ -3991,8 +4027,8 @@ class Tracker {
             this._ticketAction(args, () => { this._ticketDraft = null; });
         });
         footer.add_child(add);
-        box.add_child(footer);
-        item.add_child(box);
+        card.add_child(footer);
+        item.add_child(card);
         return item;
     }
 
@@ -4001,36 +4037,42 @@ class Tracker {
         item._ornamentLabel?.hide();
         item.add_style_class_name('tracker-conversation');
         if (ticket.ready) item.add_style_class_name('tracker-unread');
-        const box = new St.BoxLayout({vertical: true, style_class: 'tracker-row', x_expand: true});
-        for (const [value, style] of [[ticket.body.length > 1500 ? `${ticket.body.slice(0, 1499)}…` : ticket.body, 'tracker-title tracker-title-full'],
-            [ticketDetail(ticket), 'tracker-detail']]) {
-            const label = new St.Label({text: value, style_class: style});
+        const box = new St.BoxLayout({vertical: true, style_class: 'tracker-ticket-row', x_expand: true});
+        const wrapped = (text, style) => {
+            const label = new St.Label({text, style_class: style, y_align: Clutter.ActorAlign.CENTER});
             label.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
             label.clutter_text.line_wrap = true;
-            box.add_child(label);
-        }
-        item.add_child(box);
-        const actions = new St.BoxLayout({style_class: 'tracker-ticket-actions', y_align: Clutter.ActorAlign.CENTER});
+            return label;
+        };
+        box.add_child(wrapped(ticket.body.length > 1500 ? `${ticket.body.slice(0, 1499)}…` : ticket.body, 'tracker-ticket-body'));
+        const [status, tone] = ticketStatus(ticket);
+        const meta = new St.BoxLayout({style_class: 'tracker-ticket-meta'});
+        meta.add_child(new St.Label({text: status, style_class: `tracker-chip tracker-chip-${tone}`, y_align: Clutter.ActorAlign.CENTER}));
+        meta.add_child(wrapped(ticketMeta(ticket), 'tracker-detail'));
+        box.add_child(meta);
+        const note = ticketNote(ticket);
+        if (note) box.add_child(wrapped(note, ticket.status === 'open' ? 'tracker-ticket-wait' : 'tracker-detail'));
+        const actions = new St.BoxLayout({style_class: 'tracker-ticket-actions', x_align: Clutter.ActorAlign.END});
+        const button = (label, style, name, onClick) => {
+            const widget = new St.Button({label, can_focus: true, accessible_name: name, style_class: style, y_align: Clutter.ActorAlign.CENTER});
+            this._tooltip(widget, name);
+            widget.connect('clicked', () => onClick(widget));
+            actions.add_child(widget);
+        };
         const closed = ticket.status === 'done' || ticket.status === 'dropped';
-        if (!closed) actions.add_child(this._copyButton(() => ticket.prompt, 'Copy a prompt that has a chat do this ticket', true));
-        const choices = closed ? [['Reopen', 'reopen', 'Open this ticket again']]
-            : [['Done', 'done', 'Close this ticket as done'], ['Drop', 'drop', 'Close this ticket without doing it']];
-        if (ticket.status === 'open') choices.unshift(['Start', 'start', 'Open a new Claude Code chat in its folder, in VS Code, with the ticket '
-            + 'as its prompt, for you to read and send']);
-        for (const [label, action, name] of choices) {
-            const button = new St.Button({label, can_focus: true, accessible_name: name, style_class: 'tracker-filter tracker-ticket-action',
-                y_align: Clutter.ActorAlign.CENTER});
-            if (action === 'start') {
-                this._tooltip(button, name);
-                button.connect('clicked', () => {
-                    button.label = 'Opening…';
-                    button.reactive = false;
-                    this._ticketAction([action, `${ticket.id}`], () => this._button.menu.close());
+        if (ticket.status === 'open')
+            button('Start', 'tracker-control-primary', 'A new Claude Code chat in its folder, in VS Code, with the ticket as its prompt for you to send',
+                widget => {
+                    widget.label = 'Opening…';
+                    widget.reactive = false;
+                    this._ticketAction(['start', `${ticket.id}`], () => this._button.menu.close());
                 });
-            } else button.connect('clicked', () => this._ticketAction([action, `${ticket.id}`]));
-            actions.add_child(button);
-        }
-        item.add_child(actions);
+        if (!closed) actions.add_child(this._copyButton(() => ticket.prompt, 'Copy the prompt, for a Codex chat or any other'));
+        for (const [label, action, name] of closed ? [['Reopen', 'reopen', 'Open this ticket again']]
+            : [['Done', 'done', 'Close it as done'], ['Drop', 'drop', 'Close it without doing it']])
+            button(label, 'tracker-control-action', name, () => this._ticketAction([action, `${ticket.id}`]));
+        box.add_child(actions);
+        item.add_child(box);
         return item;
     }
 
