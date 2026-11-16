@@ -386,6 +386,11 @@ class Tracker:
         except Exception as error:
             print(f'Wake-up delivery failed: {type(error).__name__}: {error}', flush=True)
 
+    async def deliver_tickets(self):
+        try: await asyncio.to_thread(tickets.deliver_due, self.root)
+        except Exception as error:
+            print(f'Ticket delivery failed: {type(error).__name__}: {error}', flush=True)
+
     async def read_usage(self):
         """Usage limit readings into their history and the snapshot's summary, off the collection loop; the first read
         of Codex's session logs takes a few seconds, later ones only their new lines."""
@@ -406,7 +411,7 @@ class Tracker:
         server = await asyncio.start_unix_server(self.client, path=str(socket))
         os.chmod(socket, 0o600)
         refresh = asyncio.create_task(self.read_git())
-        delivery = None
+        delivery = sending = None
         limits = asyncio.create_task(self.read_usage())
         async with server:
             while True:
@@ -416,5 +421,8 @@ class Tracker:
                 # Wake-up notes held back while their Codex chats were in a turn go once the turn has ended.
                 if (delivery is None or delivery.done()) and messages.deferred(self.root):
                     delivery = asyncio.create_task(self.deliver_wakes())
+                # Tickets sent to a chat go once ready; the listing in the snapshot says which are.
+                if (sending is None or sending.done()) and any(tickets.due(ticket, time.time()) for ticket in (self.tickets or {}).get('open', [])):
+                    sending = asyncio.create_task(self.deliver_tickets())
                 await asyncio.sleep(3)
 

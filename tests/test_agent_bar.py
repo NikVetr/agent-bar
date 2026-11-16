@@ -1,4 +1,5 @@
 import contextlib
+import datetime
 import io
 import json
 import tempfile
@@ -1206,7 +1207,7 @@ class TicketTests(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.root)
         self.folder = str(self.root / 'repos' / 'proj')
         (self.root / 'snapshot.json').write_text(json.dumps({'rows': [
-            {'key': 'claude:a', 'title': 'Agent chat', 'roots': [self.folder], 'project': 'proj'}],
+            {'key': 'claude:a', 'provider': 'claude', 'title': 'Agent chat', 'roots': [self.folder], 'project': 'proj', 'state': 'finished'}],
             'usage': {'claude': {'limits': [{'key': 'session', 'name': '5-hour', 'resets_at': 1000, 'limiting': False},
                                             {'key': 'weekly', 'name': 'Weekly', 'resets_at': 5000, 'limiting': True}]}}}))
         (self.root / 'ledger.json').write_text(json.dumps({'queues': {
@@ -1291,6 +1292,63 @@ class TicketTests(unittest.TestCase):
         self.assertEqual(list((self.root / 'resume').iterdir()), [])
         t.change(1, 'done', root=self.root)
         with self.assertRaisesRegex(ValueError, 'is done'): t.start(1, root=self.root)
+
+
+    def test_a_sent_ticket_arrives_as_the_users_request_and_a_repeating_one_moves_on(self):
+        from agent_bar import messages
+        t = self.tickets
+        snapshot = json.loads((self.root / 'snapshot.json').read_text())
+        snapshot['rows'].append({'key': 'codex:b', 'provider': 'codex', 'title': 'Weekly report', 'project': 'proj', 'state': 'finished'})
+        (self.root / 'snapshot.json').write_text(json.dumps(snapshot))
+        ledger = json.loads((self.root / 'ledger.json').read_text())
+        (self.root / 'ledger.json').write_text(json.dumps({**ledger, 'conversations': {}}))
+        with unittest.mock.patch.object(messages, 'SETTINGS', self.root / 'settings.json'):
+            once = t.add('Run the audit', self.folder, ['date:2026-11-20 09:00'], root=self.root, now=100, to='codex:b')
+            weekly = t.add('Draft the weekly update', self.folder, ['date:2026-11-20 09:00'], root=self.root, now=100,
+                           to='codex:b', repeat='week')
+            self.assertEqual((once['to'], weekly['repeat']), ('Weekly report', 'every week'))
+            start = datetime.datetime(2026, 11, 20, 9).timestamp()
+            self.assertEqual(t.deliver_due(self.root, start - 60), [])
+            self.assertEqual(t.deliver_due(self.root, start + 5), [1, 2])
+            box = messages.inbox('codex:b', self.root, peek=True)
+            self.assertEqual([(m['sender'], m['sender_title'], m['body']) for m in box['messages']],
+                             [('user', 'You (ticket #1)', 'Run the audit'), ('user', 'You (ticket #2)', 'Draft the weekly update')])
+            self.assertIn("your user's own requests", box['note'])
+            self.assertIn('2 messages your user scheduled', messages.notice('codex:b', self.root) or '')
+            listing = t.listing(self.root, start + 10)
+            self.assertEqual([(row['id'], row['status'], row['note']) for row in listing['closed']], [(1, 'done', 'Sent to Weekly report')])
+            [row] = listing['open']
+            self.assertEqual((row['ready'], row['sent_count']), (False, 1))
+            self.assertEqual(datetime.datetime.fromtimestamp(row['after'][0]['at']), datetime.datetime(2026, 11, 27, 9))
+            # A week of missed sends (the computer was off) is one send, not seven.
+            self.assertEqual(t.deliver_due(self.root, start + 40 * 86400), [2])
+            self.assertEqual(t.listing(self.root, start + 40 * 86400)['open'][0]['sent_count'], 2)
+            # Nothing run in a chat may send as the user.
+            with self.assertRaisesRegex(ValueError, 'Only a ticket the user scheduled'):
+                messages.send('user', 'codex:b', 'pretend', self.root)
+
+    def test_a_ticket_to_a_closed_chat_records_the_failure_and_tries_again_later(self):
+        from agent_bar import messages
+        t = self.tickets
+        (self.root / 'ledger.json').write_text(json.dumps({'queues': {}, 'conversations': {}}))
+        with unittest.mock.patch.object(messages, 'SETTINGS', self.root / 'settings.json'):
+            # An agent's ticket goes from that agent.
+            with unittest.mock.patch.dict(os.environ, {'CLAUDE_CODE_SESSION_ID': 'b'}):
+                snapshot = json.loads((self.root / 'snapshot.json').read_text())
+                (self.root / 'snapshot.json').write_text(json.dumps(snapshot))
+                t.add('Check the fit', self.folder, [], root=self.root, now=100, to='claude:a')
+            (self.root / 'snapshot.json').write_text(json.dumps({'rows': []}))
+            self.assertEqual(t.deliver_due(self.root, 200), [])
+            row = t.listing(self.root, 201)['open'][0]
+            self.assertIn('not an open', row['delivery_error'])
+            self.assertFalse(t.due(row, 201 + t.RETRY - 10))
+            self.assertTrue(t.due(row, 200 + t.RETRY))
+            (self.root / 'snapshot.json').write_text(json.dumps(snapshot))
+        for repeat, error in [('fortnightly', 'Unreadable repeat'), ('0.5h', 'at most hourly')]:
+            with self.assertRaisesRegex(ValueError, error): t.add('x', self.folder, ['date:+1h'], root=self.root, to='claude:a', repeat=repeat)
+        with self.assertRaisesRegex(ValueError, 'needs one time'): t.add('x', self.folder, [], root=self.root, to='claude:a', repeat='day')
+        with self.assertRaisesRegex(ValueError, 'Only a ticket sent'): t.add('x', self.folder, ['date:+1h'], root=self.root, repeat='day')
+        with self.assertRaisesRegex(ValueError, 'not an open'): t.add('x', self.folder, [], root=self.root, to='codex:gone')
 
 
 if __name__ == '__main__': unittest.main()

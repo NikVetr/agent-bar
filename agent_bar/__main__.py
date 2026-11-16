@@ -58,6 +58,8 @@ def main():
     new.add_argument('--after', action='append', default=[], metavar='WAIT',
                      help='wait for reset:<claude|codex>[:<limit>], queues (the project\'s outstanding ones), queue:<id>, '
                           'date:<YYYY-MM-DD[ HH:MM]>, date:+<N>h|d, or ticket:<number>; repeat to wait for several')
+    new.add_argument('--to', metavar='KEY', help='once ready, send it as a message to this open chat (see agents), then close it')
+    new.add_argument('--repeat', metavar='EVERY', help='with --to and a date wait: send it again every day, week, month, or <N>h|d|w')
     new.add_argument('--as', dest='sender', help='author when not run from a Claude Code or Codex tool (default: user)')
     actions.add_parser('list', help='open tickets with what each waits for, then recently closed ones')
     begin = actions.add_parser('start', help="open a new Claude Code chat in the ticket's folder with its prompt, unsent")
@@ -91,7 +93,8 @@ def main():
         action = args['action']
         try:
             if action == 'add':
-                result = tickets.add(args['text'] if args['text'] is not None else sys.stdin.read(), args['project'], args['after'], args['sender'])
+                result = tickets.add(args['text'] if args['text'] is not None else sys.stdin.read(), args['project'], args['after'],
+                                     args['sender'], to=args['to'], repeat=args['repeat'])
             elif action == 'list': result = tickets.listing()
             elif action == 'start': result = tickets.start(args['number'])
             else:
