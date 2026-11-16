@@ -76,7 +76,9 @@ event kind, session, time and folder, never prompt or tool text, and never block
 about unread agent messages (`additionalContext` on `UserPromptSubmit`). For Claude, a second Stop hook,
 `python -m agent_bar.hook wait`, runs in the background (`asyncRewake`, one-week timeout); with waking on, it exits 2
 once per new message, which Claude Code turns into a wake. `agent-bar install` adds both and removes hooks left by an
-earlier installation's interpreter.
+earlier installation's interpreter. It also copies the skill in `agent_bar/data/skills` (how agents use
+messages and tickets) into `~/.claude/skills` and `~/.agents/skills`, only where no skill of that name exists; a
+copy it made holds a `.installed-by-agent-bar` file, and only such copies are updated or removed.
 
 ## Messages
 

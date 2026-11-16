@@ -1,5 +1,5 @@
 """Install, remove or check agent-bar for this user: its background service and daily inventory scan, the provider
-hooks, the VS Code bridge and the GNOME Shell extension. Nothing here needs root or restarts the desktop."""
+hooks and skill, the VS Code bridge and the GNOME Shell extension. Nothing here needs root or restarts the desktop."""
 import json
 import os
 import shutil
@@ -13,6 +13,9 @@ from .state import ROOT
 
 UUID = 'agent-bar@nikvetr.github.io'
 EXTENSION = Path(__file__).with_name('data') / 'gnome-extension'
+# The skills that teach agents to use agent-bar's messages and tickets.
+SKILLS = Path(__file__).with_name('data') / 'skills'
+MARK = '.installed-by-agent-bar'  # In a skill folder agent-bar copied, which it may replace or remove.
 UNITS = Path.home() / '.config/systemd/user'
 SERVICE, INVENTORY = 'agent-bar.service', 'agent-bar-inventory'
 GNOME = ['42']  # Shell versions the extension supports.
@@ -76,6 +79,33 @@ def providers():
     return [name for name, folder in [('claude', '.claude'), ('codex', '.codex')] if (Path.home() / folder).is_dir()]
 
 
+def skill_folders():
+    """Where each agent tool this user has looks for the user's own skills."""
+    return [Path.home() / {'claude': '.claude/skills', 'codex': '.agents/skills'}[provider] for provider in providers()]
+
+
+def install_skills():
+    """Copy agent-bar's skills where none of the same name is, and update the copies it made before."""
+    for folder in skill_folders():
+        for skill in sorted(SKILLS.iterdir()):
+            target = folder / skill.name
+            if target.exists() or target.is_symlink():
+                if target.is_symlink() or not (target / MARK).exists():
+                    print(f'Skill {skill.name}: kept the one already in {folder}')
+                    continue
+                shutil.rmtree(target)
+            shutil.copytree(skill, target)
+            (target / MARK).write_text('agent-bar install copied this skill; it replaces or removes only folders with this file\n')
+            print(f'Skill {skill.name} installed in {folder}')
+
+
+def remove_skills():
+    for folder in skill_folders():
+        for skill in SKILLS.iterdir():
+            target = folder / skill.name
+            if not target.is_symlink() and (target / MARK).exists(): shutil.rmtree(target)
+
+
 def install():
     if not shutil.which('systemctl'):
         raise SystemExit('agent-bar runs as a systemd user service on Linux, and this system has no systemctl')
@@ -87,6 +117,7 @@ def install():
     run(['systemctl', '--user', 'start', '--no-block', f'{INVENTORY}.service'])
     print(f'Service: {SERVICE} running; inventory refreshed daily')
     for provider in providers(): hooks.install(provider)
+    install_skills()
     if shutil.which('code'):
         run(['code', '--install-extension', str(bridge.build()), '--force'])
         print('VS Code bridge installed; open windows start a new bridge on their own, '
@@ -114,6 +145,7 @@ def uninstall(purge=False):
     for name in units(): (UNITS / name).unlink(missing_ok=True)
     run(['systemctl', '--user', 'daemon-reload'], check=False)
     for provider in ['claude', 'codex']: hooks.remove(provider)
+    remove_skills()
     if shutil.which('code'): run(['code', '--uninstall-extension', bridge.ID], check=False)
     if shutil.which('gnome-extensions'): run(['gnome-extensions', 'uninstall', UUID], check=False)
     if purge:
@@ -135,6 +167,8 @@ def doctor():
     for provider in providers():
         found = hooks.installed(provider)
         check(f'{provider} hooks', found and all(found.values()), 'agent-bar install')
+    missing = [str(folder / skill.name) for folder in skill_folders() for skill in SKILLS.iterdir() if not (folder / skill.name / 'SKILL.md').exists()]
+    check('agent skills', not missing, f'agent-bar install (missing: {", ".join(missing)})')
     if shutil.which('code'):
         listed = run(['code', '--list-extensions'], check=False).stdout.lower().split()
         check('VS Code bridge', bridge.ID in listed, 'agent-bar install')

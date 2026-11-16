@@ -1174,6 +1174,30 @@ class TrackerTests(unittest.TestCase):
                 self.assertEqual(json.loads(next((Path(root) / 'events').glob('*.json')).read_text())['kind'], kind)
 
 
+class SkillInstallTests(unittest.TestCase):
+    def test_skills_go_only_where_none_of_that_name_is_and_only_ours_are_replaced_or_removed(self):
+        from agent_bar import install
+        home = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, home)
+        (home / '.codex').mkdir()
+        own = home / 'mine' / 'agent-messages'
+        own.mkdir(parents=True)
+        (own / 'SKILL.md').write_text('the user\'s own')
+        (home / '.claude/skills').mkdir(parents=True)
+        (home / '.claude/skills/agent-messages').symlink_to(own)
+        with unittest.mock.patch.dict(os.environ, {'HOME': str(home)}), contextlib.redirect_stdout(io.StringIO()):
+            install.install_skills()
+            ours = home / '.agents/skills/agent-messages'
+            self.assertIn('ticket take', (ours / 'SKILL.md').read_text())
+            self.assertEqual((home / '.claude/skills/agent-messages/SKILL.md').read_text(), "the user's own")
+            (ours / 'SKILL.md').write_text('old copy')
+            install.install_skills()
+            self.assertIn('ticket take', (ours / 'SKILL.md').read_text())
+            install.remove_skills()
+        self.assertFalse(ours.exists())
+        self.assertEqual((own / 'SKILL.md').read_text(), "the user's own")
+
+
 class TicketTests(unittest.TestCase):
     def setUp(self):
         from agent_bar import tickets
