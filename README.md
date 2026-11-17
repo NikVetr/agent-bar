@@ -204,7 +204,7 @@ sends missed while the computer was off are skipped, not sent late. A one-off ti
 stays under **Scheduled** in Tickets until you drop it. If the chat has closed, the ticket shows the reason and tries
 again every 10 minutes.
 
-The **Schedule** button (a clock) on each Claude or Codex chat in the Chats tab opens a column beside the list: the
+The **Schedule** button (a clock) on each Claude or Codex chat in the Chats tab opens a second dropdown beside the main one: the
 message, when to send it (in an hour, tomorrow at 9, next Monday at 9, or a typed time), how often to repeat it, and
 what is already scheduled for that chat. The **New ticket** form can also send a ticket to one of its project's chats.
 
@@ -216,7 +216,7 @@ With **Wake idle chats** off, a scheduled message waits for your next prompt in 
 ## Task checklists
 
 Agents keep task checklists in each project's `tmp/agent/checklists/` (the format the `task-checklists` skill
-describes). The **list** button on a chat in the Chats tab shows its project's checklists beside the list: those the
+describes). The **list** button on a chat in the Chats tab shows its project's checklists in a second dropdown beside the main one: those the
 chat was seen editing, then others updated in the last 14 days, then older ones that still have open items (folded,
 with any items that need you kept in view). For each: a progress bar, a suggested next item, what needs you, what
 waits or was deferred, the checklists it links to, and which open chats last edited it. **Open** shows it in VS Code.

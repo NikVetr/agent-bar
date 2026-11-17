@@ -1693,11 +1693,11 @@ class Tracker {
         row(tickets, [text('waits until', 'tracker-detail')], 'A ticket can wait for a usage limit to reset, the project\'s queues to finish, a time, '
             + 'or another ticket to close; each is fixed when it is written (that reset, the queues outstanding then), and it is ready once all have passed.');
         row(tickets, [new St.Icon({icon_name: 'alarm-symbolic', icon_size: 14, style_class: 'tracker-help-icon'})], 'On a chat in Chats: '
-            + 'schedule a message to it, once or repeating, in a column beside the list. It is a ticket sent to that chat when its time '
+            + 'schedule a message to it, once or repeating, in a second dropdown beside this one. It is a ticket sent to that chat when its time '
             + 'comes, listed under Scheduled in Tickets; it arrives as your request, and waits for your next prompt there if Wake idle '
             + 'chats is off. The number beside the clock counts what is scheduled for that chat.');
         row(tickets, [new St.Icon({icon_name: 'view-list-symbolic', icon_size: 14, style_class: 'tracker-help-icon'})], 'On a chat in Chats: '
-            + 'the task checklists (tmp/agent/checklists) of its project, beside the list: the ones it edited first, then recent ones, then older '
+            + 'the task checklists (tmp/agent/checklists) of its project, in a second dropdown beside this one: the ones it edited first, then recent ones, then older '
             + 'ones with open items. Each shows its progress (dropped items left out), a suggested next item, what needs you, and who last edited '
             + 'it; Open shows it in VS Code. An amber number counts items that need you.');
         row(tickets, [text('Start', 'tracker-filter')], 'Opens a new Claude Code chat in the ticket\'s folder, in VS Code (opening a window there if '
@@ -2998,16 +2998,18 @@ class Tracker {
         this._section = new PopupMenu.PopupMenuSection();
         this._scroll.add_actor(this._section.actor);
         this._body.add_child(this._scroll);
-        // A column right of the rows, for scheduling a message to one chat; it widens the dropdown while open.
-        const split = new St.BoxLayout({x_expand: true});
-        split.add_child(this._body);
+        this._button.menu.box.add_child(this._body);
+        // A second dropdown beside this one, for scheduling a message to a chat or its project's checklists. It is a
+        // child of the menu, drawn outside the menu's edge from a holder of no size, so it gets input during the menu's
+        // grab and a press on it does not count as one outside the menu.
+        this._sideHolder = new St.Widget({layout_manager: new Clutter.FixedLayout(), width: 0, height: 0});
         this._side = new St.BoxLayout({vertical: true, style_class: 'tracker-side'});
         this._sideScroll = new St.ScrollView({style_class: 'tracker-side-scroll', overlay_scrollbars: true, visible: false,
-            y_align: Clutter.ActorAlign.START, hscrollbar_policy: St.PolicyType.NEVER, vscrollbar_policy: St.PolicyType.AUTOMATIC});
-        this._sideScroll.set_style(`max-height: ${Math.min(650, Main.layoutManager.primaryMonitor.height - 270)}px;`);
+            hscrollbar_policy: St.PolicyType.NEVER, vscrollbar_policy: St.PolicyType.AUTOMATIC});
+        this._sideScroll.set_style(`max-height: ${Main.layoutManager.primaryMonitor.height - 120}px;`);
         this._sideScroll.add_actor(this._side);
-        split.add_child(this._sideScroll);
-        this._button.menu.box.add_child(split);
+        this._sideHolder.add_child(this._sideScroll);
+        this._button.menu.box.insert_child_at_index(this._sideHolder, 0);
         this._renderSide();
         this._search.clutter_text.connect('text-changed', () => { this._togglePicker(null); this._renderRows(); });
         this._button.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
@@ -4258,9 +4260,8 @@ class Tracker {
         const draft = this._schedule;
         const shown = (!!draft || !!this._checklistView) && !this._page;
         this._sideScroll.visible = shown;
-        if (shown) this._button.menu.box.add_style_class_name('tracker-menu-wide');
-        else this._button.menu.box.remove_style_class_name('tracker-menu-wide');
         if (!shown) return;
+        this._later(() => this._placeSide());
         if (this._checklistView) {
             this._renderChecklists();
             return;
@@ -4351,6 +4352,21 @@ class Tracker {
             item.add_child(drop);
             this._side.add_child(item);
         }
+    }
+
+    // Puts the side dropdown just right of the menu, level with its top.
+    _placeSide() {
+        if (!this._sideScroll?.visible) return;
+        const frame = this._button.menu.actor.bin || this._button.menu.actor;
+        const [x, y] = frame.get_transformed_position();
+        const [width] = frame.get_transformed_size();
+        const [holderX, holderY] = this._sideHolder.get_transformed_position();
+        const gap = 8;
+        // Never past the screen's right edge: then it overlaps the menu's right side instead.
+        const monitor = Main.layoutManager.primaryMonitor;
+        const sideWidth = this._sideScroll.get_preferred_width(-1)[1];
+        const left = Math.min(x + width + gap, monitor.x + monitor.width - sideWidth - gap);
+        this._sideScroll.set_position(Math.round(left - holderX), Math.round(y - holderY));
     }
 
     // The checklists column for one open chat's project, from the list button on its row; again on the same chat closes it.

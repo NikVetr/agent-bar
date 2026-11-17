@@ -44,8 +44,6 @@
 .tracker-muted, .tracker-quiet { color: #9ca3ad; }
 .tracker-finished { color: #a7d797; }
 .tracker-menu { width: 680px; color: #e9edf2; }
-/* With the schedule column open: the column's width more. */
-.tracker-menu-wide { width: 1030px; }
 .tracker-heading { padding: 12px 20px 10px; spacing: 18px; }
 .tracker-heading-title { font-size: 18px; font-weight: bold; color: #f2f4f7; padding-bottom: 4px; }
 .tracker-summary { spacing: 2px; border-left: 1px solid #454a53; padding-left: 18px; }
@@ -298,9 +296,10 @@
 .tracker-ticket-meta { spacing: 8px; }
 .tracker-ticket-wait { font-size: 12px; color: #c4a7f2; }
 .tracker-ticket-actions { spacing: 6px; padding-top: 2px; }
-.tracker-side-scroll { width: 340px; margin: 0 6px 6px 4px; }
-.tracker-side { width: 330px; spacing: 6px; padding: 12px 14px; border: 1px solid #474e58; border-radius: 8px;
-    background-color: #25292f; }
+/* The side dropdown, styled as a menu of its own. */
+.tracker-side-scroll { width: 370px; border: 1px solid #4a4f57; border-radius: 12px; background-color: #303030;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45); }
+.tracker-side { width: 340px; spacing: 6px; padding: 14px 16px; }
 .tracker-side-heading { spacing: 8px; }
 .tracker-side-close { padding: 0 8px; border-radius: 6px; font-size: 16px; color: #b4bbc5; }
 .tracker-side-close:hover { background-color: #343a44; color: #f3f5f8; }

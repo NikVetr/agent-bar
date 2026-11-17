@@ -138,7 +138,9 @@ The top bar is one panel button holding parts (chat counts, limits, working and 
 own hover highlight, beside a separate cluster indicator without a menu of its own; each opens the one dropdown on
 its tab. While the dropdown is open, GNOME 42 routes every event through the menu's actor, where the panel's menu
 manager closes the menu on any press outside it; the extension moves that handler behind its own, which turns a
-press on another part into a tab switch and lets any other press close the menu as before.
+press on another part into a tab switch and lets any other press close the menu as before. The side dropdown (scheduling a message, a chat's checklists) is a child of the same menu, in a zero-size holder
+with a fixed layout, positioned just past the menu's right edge: as a descendant of the grabbed actor it receives
+input, and the manager does not count a press on it as outside the menu.
 
 Continue, for chats a usage limit stopped, runs `agent-bar continue <key>`: the service queues the note for a Codex chat
 with `codex queue`, or returns it for a Claude chat. The panel then brings the Claude chat forward with
