@@ -224,6 +224,24 @@ function ticketGroups(listing, query = '') {
         .filter(([, tickets]) => tickets.length);
 }
 
+// A checklist's progress: done over done and open ([-] dropped items left out), and how to say it; with nothing open,
+// "no open items recorded", never "done", since an empty or dropped-only file is not finished work.
+function checklistProgress(file) {
+    const total = file.done + file.open;
+    const text = file.open ? `${file.done} of ${total} done` : `No open items recorded${file.done ? ` · ${file.done} done` : ''}`;
+    return {fraction: total ? file.done / total : 0,
+        text: text + (file.dropped ? ` · ${file.dropped} dropped` : '') + (file.unknown ? ` · ${file.unknown} with an unrecognized marker` : '')};
+}
+
+// A chat's project checklists in three groups: those it was seen editing, others updated recently, and older ones that
+// still have open items.
+function checklistSections(files, key) {
+    const mine = files.filter(file => (file.editors || []).some(([editor]) => editor === key));
+    const others = files.filter(file => !mine.includes(file));
+    return [['Edited by this chat', mine], ['Recently updated', others.filter(file => file.recent)],
+        ['Older, with open items', others.filter(file => !file.recent)]].filter(([, list]) => list.length);
+}
+
 // The open tickets to be sent to one chat.
 function scheduledFor(listing, key) {
     return (listing?.open || []).filter(ticket => ticket.deliver_to === key && ticket.status === 'open');
@@ -1103,7 +1121,7 @@ class Tracker {
     enable() {
         this._enabled = true;
         // A screen lock disables and re-enables this same object; disable() destroyed these widgets.
-        this._side = this._sideScroll = this._schedule = null;
+        this._side = this._sideScroll = this._schedule = this._checklistView = null;
         this._body = this._scroll = this._pickerList = this._clusterCards = this._clusterBarSignature = this._quotaSignature = null;
         this._cancel = new Gio.Cancellable();
         this._borrowed = new Map();
@@ -1294,7 +1312,7 @@ class Tracker {
             this._openOn = null;
             if (!open) {
                 this._markPart();
-                this._schedule = null;
+                this._schedule = this._checklistView = null;
             }
             if (open) {
                 // Each opening starts on a list, the last tab used unless settings say Conversations.
@@ -1678,6 +1696,10 @@ class Tracker {
             + 'schedule a message to it, once or repeating, in a column beside the list. It is a ticket sent to that chat when its time '
             + 'comes, listed under Scheduled in Tickets; it arrives as your request, and waits for your next prompt there if Wake idle '
             + 'chats is off. The number beside the clock counts what is scheduled for that chat.');
+        row(tickets, [new St.Icon({icon_name: 'view-list-symbolic', icon_size: 14, style_class: 'tracker-help-icon'})], 'On a chat in Chats: '
+            + 'the task checklists (tmp/agent/checklists) of its project, beside the list: the ones it edited first, then recent ones, then older '
+            + 'ones with open items. Each shows its progress (dropped items left out), a suggested next item, what needs you, and who last edited '
+            + 'it; Open shows it in VS Code. An amber number counts items that need you.');
         row(tickets, [text('Start', 'tracker-filter')], 'Opens a new Claude Code chat in the ticket\'s folder, in VS Code (opening a window there if '
             + 'none is), with the ticket as its prompt in the input box, unsent. The prompt asks the chat to run `agent-bar ticket take` before starting '
             + 'and `agent-bar ticket done` after, which move it to Started and Closed.');
@@ -4222,6 +4244,7 @@ class Tracker {
 
     // The schedule column for one open chat, from the Schedule button on its row; again on the same chat closes it.
     _openSchedule(row) {
+        this._checklistView = null;
         this._schedule = this._schedule?.key === row.key ? null : {key: row.key, title: row.title, provider: row.provider,
             folder: row.roots?.[0] || null, text: '', when: '', repeat: 'never', every: '', error: null};
         this._renderRows();
@@ -4233,11 +4256,15 @@ class Tracker {
         if (!this._side) return;
         this._side.destroy_all_children();
         const draft = this._schedule;
-        const shown = !!draft && !this._page;
+        const shown = (!!draft || !!this._checklistView) && !this._page;
         this._sideScroll.visible = shown;
         if (shown) this._button.menu.box.add_style_class_name('tracker-menu-wide');
         else this._button.menu.box.remove_style_class_name('tracker-menu-wide');
         if (!shown) return;
+        if (this._checklistView) {
+            this._renderChecklists();
+            return;
+        }
         const heading = new St.BoxLayout({style_class: 'tracker-side-heading'});
         heading.add_child(new St.Label({text: 'Schedule a message', x_expand: true, style_class: 'tracker-ticket-heading',
             y_align: Clutter.ActorAlign.CENTER}));
@@ -4323,6 +4350,128 @@ class Tracker {
             drop.connect('clicked', () => this._ticketAction(['drop', `${ticket.id}`]));
             item.add_child(drop);
             this._side.add_child(item);
+        }
+    }
+
+    // The checklists column for one open chat's project, from the list button on its row; again on the same chat closes it.
+    _openChecklists(row) {
+        this._schedule = null;
+        this._checklistView = this._checklistView?.key === row.key ? null
+            : {key: row.key, title: row.title, provider: row.provider, folders: row.roots || [], older: false};
+        this._renderRows();
+        this._renderSide();
+        if (!this._checklistView) return;
+        // Written by the service when the checklists change; read only while this column shows them.
+        Gio.File.new_for_path(`${ROOT}/checklists.json`).load_contents_async(this._cancel, (file, result) => {
+            try {
+                const [, bytes] = file.load_contents_finish(result);
+                this._checklistData = JSON.parse(ByteArray.toString(bytes));
+                this._checklistError = null;
+            } catch (error) {
+                this._checklistData = null;
+                this._checklistError = `Checklists unreadable: ${error.message}`;
+            }
+            if (this._enabled && this._checklistView) this._renderSide();
+        });
+    }
+
+    _renderChecklists() {
+        const view = this._checklistView;
+        const add = (text, style, parent = this._side) => {
+            const label = new St.Label({text, style_class: style});
+            label.clutter_text.line_wrap = true;
+            label.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+            parent.add_child(label);
+            return label;
+        };
+        const heading = new St.BoxLayout({style_class: 'tracker-side-heading'});
+        heading.add_child(new St.Label({text: 'Checklists', x_expand: true, style_class: 'tracker-ticket-heading', y_align: Clutter.ActorAlign.CENTER}));
+        const close = new St.Button({label: '×', can_focus: true, accessible_name: 'Close', style_class: 'tracker-side-close'});
+        close.connect('clicked', () => this._openChecklists({key: view.key}));
+        heading.add_child(close);
+        this._side.add_child(heading);
+        add(`${view.folders.map(folder => folder.split('/').at(-1)).join(', ')} · for ${PROVIDERS[view.provider]?.[0] || '•'} ${view.title}`, 'tracker-detail');
+        if (this._checklistError) add(this._checklistError, 'tracker-warning');
+        if (!this._checklistData) {
+            if (!this._checklistError) add('Reading…', 'tracker-detail');
+            return;
+        }
+        const entries = view.folders.map(folder => [folder, this._checklistData.folders?.[folder]]).filter(([, entry]) => entry);
+        const files = entries.flatMap(([folder, entry]) => entry.files.map(file => ({...file, folder})));
+        const byPath = new Map(files.map(file => [file.path, file]));
+        const titles = new Map((this._menuSnapshot?.rows || []).map(row => [row.key, `${PROVIDERS[row.provider]?.[0] || '•'} ${row.title}`]));
+        if (!files.length) add('No checklists with open items or recent changes in tmp/agent/checklists here.', 'tracker-detail');
+        for (const [name, list] of checklistSections(files, view.key)) {
+            const older = name.startsWith('Older');
+            add(older ? `${name} (${list.length})` : name, 'tracker-ticket-caption');
+            // Older ones fold away, but their items that need the user stay in view.
+            if (older && !view.older) {
+                for (const file of list.filter(entry => entry.user.length))
+                    for (const item of file.user) add(`Needs you (${file.title || file.name}): ${item}`, 'tracker-checklist-user');
+                const more = new St.Button({label: `Show ${list.length} older`, can_focus: true, style_class: 'tracker-ticket-chip',
+                    x_align: Clutter.ActorAlign.START});
+                more.connect('clicked', () => {
+                    view.older = true;
+                    this._renderSide();
+                });
+                this._side.add_child(more);
+                continue;
+            }
+            for (const file of list) {
+                const card = new St.BoxLayout({vertical: true, style_class: 'tracker-checklist'});
+                const top = new St.BoxLayout({style_class: 'tracker-side-heading'});
+                const title = new St.Label({text: file.title || file.name, x_expand: true, style_class: 'tracker-side-ticket-body',
+                    y_align: Clutter.ActorAlign.CENTER});
+                title.clutter_text.line_wrap = true;
+                title.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+                top.add_child(title);
+                const open = new St.Button({label: 'Open', can_focus: true, style_class: 'tracker-control-action', y_align: Clutter.ActorAlign.START,
+                    accessible_name: `Open ${file.name} in VS Code`});
+                open.connect('clicked', () => this._openInCode(file.folder, file.path));
+                top.add_child(open);
+                card.add_child(top);
+                add(`${file.name} · updated ${age(file.modified)}`, 'tracker-detail', card);
+                const progress = checklistProgress(file);
+                const bar = new St.Widget({style_class: 'tracker-progress tracker-checklist-progress'});
+                const fill = new St.Widget({style_class: `tracker-progress-fill tracker-progress-${file.open ? 'working' : 'finished'}`});
+                fill.set_width(Math.round(280 * progress.fraction));
+                bar.add_child(fill);
+                card.add_child(bar);
+                add(progress.text, 'tracker-detail', card);
+                if (file.next) add(`Suggested next: ${file.next}`, 'tracker-checklist-next', card);
+                for (const item of file.user) add(`Needs you: ${item}`, 'tracker-checklist-user', card);
+                for (const [kind, label] of [['waiting', 'Waiting'], ['deferred', 'Deferred']])
+                    if (file[kind].length) add(`${label}: ${file[kind].slice(0, 3).join(' · ')}${file[kind].length > 3 ? ` · +${file[kind].length - 3}` : ''}`,
+                        'tracker-detail', card);
+                for (const link of file.links || []) {
+                    const linked = byPath.get(link.path);
+                    const button = new St.Button({can_focus: true, style_class: 'tracker-checklist-link', x_align: Clutter.ActorAlign.START,
+                        label: `↳ ${link.path.split('/').at(-1)}${!link.exists ? ' (missing)' : linked ? ` · ${checklistProgress(linked).text}` : ''}`,
+                        reactive: link.exists});
+                    if (link.exists) button.connect('clicked', () => this._openInCode(file.folder, link.path));
+                    card.add_child(button);
+                }
+                const editors = (file.editors || []).map(([key, at]) => `${titles.get(key) || (key === view.key ? 'this chat' : 'a closed chat')} ${age(at)}`);
+                add(editors.length ? `Last edited by ${editors.slice(0, 3).join(', ')}` : 'Last edited by: not seen in an open chat', 'tracker-detail', card);
+                this._side.add_child(card);
+            }
+        }
+        const closed = entries.reduce((sum, [, entry]) => sum + entry.older_closed, 0);
+        if (closed) add(`${closed} older checklist${closed === 1 ? '' : 's'} with no open items recorded`, 'tracker-detail');
+    }
+
+    // Opens a file in the VS Code window on its folder (`code` focuses that window, or opens one).
+    _openInCode(folder, path) {
+        const code = GLib.find_program_in_path('code');
+        if (!code) {
+            Main.notifyError('Agent Bar', 'The VS Code `code` command is not on PATH');
+            return;
+        }
+        try {
+            new Gio.SubprocessLauncher({flags: Gio.SubprocessFlags.NONE}).spawnv([code, folder, path]);
+            this._button.menu.close();
+        } catch (error) {
+            Main.notifyError('Agent Bar', error.message);
         }
     }
 
@@ -4919,6 +5068,22 @@ class Tracker {
         title.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
         title.clutter_text.line_wrap = true;
         heading.add_child(title);
+        const lists = schedule ? (row.roots || []).map(root => this._menuSnapshot?.checklists?.[root]).filter(Boolean) : [];
+        if (lists.length) {
+            const total = key => lists.reduce((sum, counts) => sum + counts[key], 0);
+            const files = total('files'), open = total('open'), user = total('user');
+            const name = `${files} checklist${files === 1 ? '' : 's'} in this project · ${open} open item${open === 1 ? '' : 's'}`
+                + (user ? ` · ${user} need${user === 1 ? 's' : ''} you` : '');
+            const content = new St.BoxLayout({style_class: 'tracker-copy-content'});
+            content.add_child(new St.Icon({icon_name: 'view-list-symbolic', icon_size: 14, y_align: Clutter.ActorAlign.CENTER}));
+            if (user) content.add_child(new St.Label({text: `${user}`, style_class: 'tracker-attention', y_align: Clutter.ActorAlign.CENTER}));
+            const button = new St.Button({child: content, can_focus: true, accessible_name: name, toggle_mode: true,
+                checked: this._checklistView?.key === row.key, style_class: 'tracker-copy tracker-copy-compact tracker-schedule-button',
+                y_align: Clutter.ActorAlign.CENTER});
+            this._tooltip(button, name);
+            button.connect('clicked', () => this._openChecklists(row));
+            heading.add_child(button);
+        }
         if (schedule && ['claude', 'codex'].includes(row.provider) && this._setting('messages')) {
             const count = scheduledFor(this._menuSnapshot?.tickets, row.key).length;
             const name = count ? `${count} message${count === 1 ? '' : 's'} scheduled; schedule another` : 'Schedule a message to this chat';

@@ -760,3 +760,21 @@ test('review shortcuts group chats by project, longest waiting first, and spare 
     assert.equal(f.context.shareWidth([100, 100], [100, 100], 50).join(), '100,100');
     assert.equal(f.context.shareWidth([100], [300], -10).join(), '100');
 });
+
+test('checklist progress leaves dropped items out and never calls a file with nothing open done', () => {
+    const f = fixture();
+    const base = {done: 0, open: 0, dropped: 0, unknown: 0};
+    assert.deepEqual(JSON.parse(JSON.stringify(f.context.checklistProgress({...base, done: 7, open: 2, dropped: 1}))),
+        {fraction: 7 / 9, text: '7 of 9 done · 1 dropped'});
+    assert.equal(f.context.checklistProgress({...base, done: 3}).text, 'No open items recorded · 3 done');
+    assert.equal(f.context.checklistProgress({...base, dropped: 2}).text, 'No open items recorded · 2 dropped');
+    assert.equal(f.context.checklistProgress({...base, open: 1, unknown: 1}).text, '0 of 1 done · 1 with an unrecognized marker');
+});
+
+test('a chat\'s checklists: the ones it edited, then recent ones, then older ones with open items', () => {
+    const f = fixture();
+    const files = [{path: 'a', recent: true, editors: [['claude:x', 5]]}, {path: 'b', recent: true, editors: []},
+        {path: 'c', recent: false, editors: [['codex:y', 1]]}, {path: 'd', recent: false}];
+    assert.equal(f.context.checklistSections(files, 'claude:x').map(([name, list]) => `${name}:${list.map(x => x.path)}`).join(' | '),
+        'Edited by this chat:a | Recently updated:b | Older, with open items:c,d');
+});

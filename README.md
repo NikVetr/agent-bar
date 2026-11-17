@@ -213,6 +213,29 @@ which are information only. So only you can schedule them. A ticket an agent wri
 agent, under the loop guard, and Agent Bar refuses a ticket from a command an agent started without its session id.
 With **Wake idle chats** off, a scheduled message waits for your next prompt in that chat.
 
+## Task checklists
+
+Agents keep task checklists in each project's `tmp/agent/checklists/` (the format the `task-checklists` skill
+describes). The **list** button on a chat in the Chats tab shows its project's checklists beside the list: those the
+chat was seen editing, then others updated in the last 14 days, then older ones that still have open items (folded,
+with any items that need you kept in view). For each: a progress bar, a suggested next item, what needs you, what
+waits or was deferred, the checklists it links to, and which open chats last edited it. **Open** shows it in VS Code.
+
+What Agent Bar reads, and how:
+
+- Only checkbox lines count, outside fenced code: `[ ]` open, `[x]` or `[X]` done, `[-]` dropped (left out of the
+  total). Any other marker counts as unrecognized, never as done. Indentation and numbered items are fine.
+- An open item starting `User:` needs you, `Waiting:` waits on something else, `Deferred:` was postponed. The first
+  open item without one is the **suggested next**, an ordering guess, not a priority.
+- A file with nothing open says "no open items recorded", not "done".
+- Links to other checklists are listed with their own counts; counts are never added up from links.
+- **Last edited by** names the open chats whose transcripts (the last 2 MB, then what they append) show them writing
+  the file: Claude's Edit and Write, Codex's apply_patch, or a shell command that writes to it. It is evidence, not
+  ownership, and a chat that edited it before Agent Bar was watching is not named.
+
+The service scans the open projects every 30 seconds and writes the result to `checklists.json`, which the panel reads
+when the column opens; files are reread only when they change.
+
 ## Optional: the parallel-workers scheduler
 
 The Queues tab, the Q count and the cluster indicator read the files the parallel-workers job scheduler writes in

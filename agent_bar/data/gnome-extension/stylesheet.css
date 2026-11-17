@@ -307,3 +307,9 @@
 .tracker-side-ticket { spacing: 8px; padding: 8px 0 2px; border-top: 1px solid #3b414a; }
 .tracker-side-ticket-body { font-size: 13px; color: #edf0f5; }
 .tracker-schedule-button:checked { background-color: #3a6aa8; color: #ffffff; }
+.tracker-checklist { spacing: 4px; padding: 10px 0 8px; border-top: 1px solid #3b414a; }
+.tracker-checklist-progress { width: 280px; margin: 2px 0; }
+.tracker-checklist-next { font-size: 12px; color: #dfe4ea; }
+.tracker-checklist-user { font-size: 12px; font-weight: bold; color: #f4c36a; }
+.tracker-checklist-link { font-size: 12px; color: #9fb4ff; padding: 1px 0; }
+.tracker-checklist-link:hover { color: #c7d3ff; }

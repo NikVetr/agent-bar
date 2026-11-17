@@ -67,6 +67,11 @@ state and unread reasons stay separate in the data.
   undocumented endpoint Claude Code's `/usage` reads, with Claude Code's OAuth access token, every 10 minutes, waiting
   up to an hour after failures. It never renews the token; an expired one waits for Claude Code. The answer has the
   same shape as Claude Code's cache, and the newer of the two readings is current.
+- **Checklists** (`checklists.py`): every 30 s, the task checklists in the open projects' `tmp/agent/checklists/`,
+  parsed only when a file's size or modification time changes, with the open chats seen editing each (`Background`
+  notes Claude's Edit/Write/writing Bash calls, `Providers.events` Codex's apply_patch and shell calls, both from the
+  transcript tails they already read). The full result goes to `checklists.json` only when it changes; the snapshot
+  carries per-folder counts for the panel's row buttons.
 - **Info** (`info.py`): read only when the panel's Info tab asks: skills, hook health, and instruction files.
 
 ## Hooks
