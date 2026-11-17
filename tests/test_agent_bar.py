@@ -946,6 +946,19 @@ class TrackerTests(unittest.TestCase):
             from agent_bar.providers import Providers
             self.assertEqual(Providers(root).codex_open({'id': 'w', 'log': str(Path(root) / 'bridge')}), {'abc-1'})
 
+    def test_codex_view_opened_several_rotations_ago_is_still_open(self):
+        with tempfile.TemporaryDirectory() as root:
+            logs = Path(root) / 'openai.chatgpt'; logs.mkdir()
+            view = 'x thread_stream_view_activity_changed active={} conversationId={}\n'
+            # Oldest first: an activation that a later one supersedes, the view opened, then rotations of other lines.
+            (logs / 'Codex.5.log').write_text('Activating Codex extension\n' + view.format('true', 'old-1'))
+            (logs / 'Codex.4.log').write_text('Activating Codex extension\n' + view.format('true', 'abc-1') + view.format('true', 'abc-2'))
+            (logs / 'Codex.3.log').write_text('noise\n' * 1000 + view.format('false', 'abc-2'))
+            for number in [2, 1]: (logs / f'Codex.{number}.log').write_text('noise\n' * 1000)
+            (logs / 'Codex.log').write_text('other line\n')
+            from agent_bar.providers import Providers
+            self.assertEqual(Providers(root).codex_open({'id': 'w', 'log': str(Path(root) / 'bridge')}), {'abc-1'})
+
     def test_terminal_and_app_sessions_get_their_windows(self):
         import sqlite3
         from agent_bar.providers import Providers

@@ -188,6 +188,35 @@ def workspace_panels(storage):
     return data
 
 
+CODEX_VIEW = ('thread_stream_view_activity_changed', 'Activating Codex extension')
+
+
+def codex_view_history(path, limit=32 * 1024 * 1024):
+    """The view-activity and activation lines of a window's rotated Codex logs (Codex.1.log newest), oldest first, back
+    to the last activation: the views open now are the ones these lines leave active. Found by byte search, since a
+    window can keep several 5 MB rotations."""
+    markers = [marker.encode() for marker in CODEX_VIEW]
+    found = []
+    for number in range(1, 100):
+        rotated = path.with_name(f'Codex.{number}.log')
+        try:
+            if rotated.stat().st_size > limit: break
+            data = rotated.read_bytes()
+        except FileNotFoundError: break
+        picked, start = [], 0
+        while True:
+            hits = [index for index in (data.find(marker, start) for marker in markers) if index >= 0]
+            if not hits: break
+            begin = data.rfind(b'\n', 0, min(hits)) + 1
+            end = data.find(b'\n', min(hits))
+            end = len(data) if end < 0 else end
+            picked.append(data[begin:end].decode(errors='replace'))
+            start = end + 1
+        found = picked + found
+        if any(CODEX_VIEW[1] in line for line in picked): break
+    return found
+
+
 class Providers:
     def __init__(self, home=None, proc='/proc'):
         self.home, self.proc = Path(home or Path.home()), proc
@@ -208,12 +237,8 @@ class Providers:
     def codex_open(self, window):
         path = Path(window['log']).parent / 'openai.chatgpt/Codex.log'
         key = window['id']
-        lines = []
-        if key not in self.logs:
-            # Codex rotates its log at 5 MB; the view state may be in the rotated part.
-            rotated = path.with_name('Codex.1.log')
-            if rotated.exists() and rotated.stat().st_size <= 32 * 1024 * 1024:
-                lines = rotated.read_text(errors='replace').splitlines()
+        # Codex rotates its log at 5 MB, and a view opened days ago may be logged several rotations back.
+        lines = codex_view_history(path) if key not in self.logs else []
         tail = self.logs.setdefault(key, Tail(path, initial=32 * 1024 * 1024))
         active = self.active.setdefault(key, set())
         for line in lines + tail.read():
