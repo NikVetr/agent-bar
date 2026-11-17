@@ -18,7 +18,10 @@ PROVIDERS = ['claude', 'codex', 'copilot', 'antigravity']
 TURNS = {'start', 'message'}  # Any turn start, including automatic continuations.
 QUIET = 300  # An open turn with no activity this long is waiting on something.
 CONTINUE = 'Please continue where you left off.'  # Sent to chats a usage limit stopped.
-GIT_EVERY = 20  # Seconds between git status reads of the open projects' repositories.
+GIT_EVERY = 20  # Seconds between git status reads of the open projects' repositories while the Git tab shows them.
+GIT_IDLE = 300  # Seconds between them otherwise.
+GIT_WATCHED = 30  # The panel touches git-watched every 10 s while its Git tab is open; this old, it has closed.
+HEARTBEAT = 10  # Seconds an unchanged snapshot stands before it is written again, so the panel can tell the service runs.
 USAGE_EVERY = 60  # Seconds between reads of the usage limits Claude Code and Codex record.
 CHECKLIST_EVERY = 30  # Seconds between scans of the open projects' task checklists.
 TICKET_EVERY = 30  # Seconds a ticket listing stands while nothing it reads changes; its waits on times pass meanwhile.
@@ -54,6 +57,8 @@ class Tracker:
         self.scheduler_status = 'on'
         self.queue_mtime = max((q.get('observed', 0) for q in self.ledger.data['queues'].values()), default=0)
         self.last_saved = None
+        # The snapshot as last written, without its times, and when.
+        self.snapshot_written, self.snapshot_at = None, 0
         self.navigation = set()
         # Queue ids in the monitor's latest snapshot, once read; pruning keeps every listed queue.
         self.listed, self.pruned_at = None, 0
@@ -163,7 +168,10 @@ class Tracker:
         if now - self.pruned_at > PRUNE_EVERY: self.prune(now)
         if now - self.checklists_at > CHECKLIST_EVERY: self.read_checklists(now)
         snapshot = self.snapshot()
-        atomic_json(self.root / 'snapshot.json', snapshot)
+        content = json.dumps({key: value for key, value in snapshot.items() if key not in ('updated', 'cutoff')}, sort_keys=True)
+        if content != self.snapshot_written or now - self.snapshot_at >= HEARTBEAT:
+            atomic_json(self.root / 'snapshot.json', snapshot)
+            self.snapshot_written, self.snapshot_at = content, now
         serialized = json.dumps(self.ledger.data, sort_keys=True)
         if serialized != self.last_saved:
             atomic_json(self.state_file, self.ledger.data)
@@ -402,15 +410,22 @@ class Tracker:
         await writer.wait_closed()
 
     async def read_git(self):
-        """Git status of the repositories holding open projects, off the collection loop."""
+        """Git status of the repositories holding open projects, off the collection loop: every GIT_EVERY while the
+        panel's Git tab is open (at once when it opens), every GIT_IDLE otherwise, since nothing else shows it."""
+        last, watched_before = 0, False
         while True:
-            if self.git_enabled:
+            try: watched = time.time() - (self.root / 'git-watched').stat().st_mtime < GIT_WATCHED
+            except FileNotFoundError: watched = False
+            due = time.time() - last >= (GIT_EVERY if watched else GIT_IDLE) or (watched and not watched_before)
+            watched_before = watched
+            if self.git_enabled and due:
+                last = time.time()
                 folders = {root for window in self.windows.values() for root in window.get('roots', [])}
                 folders |= {root for row in self.rows for root in row['roots']}
                 try: self.git = {'updated': time.time(), 'repos': await asyncio.to_thread(self.repositories.read, folders)}
                 except Exception as error:
                     print(f'Git status failed: {type(error).__name__}: {error}', flush=True)
-            await asyncio.sleep(GIT_EVERY)
+            await asyncio.sleep(3)
 
     async def deliver_wakes(self):
         try: await asyncio.to_thread(messages.deliver_deferred, self.root)

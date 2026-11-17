@@ -1188,6 +1188,33 @@ class TrackerTests(unittest.TestCase):
                 self.assertEqual(json.loads(next((Path(root) / 'events').glob('*.json')).read_text())['kind'], kind)
 
 
+class GitTests(unittest.TestCase):
+    def test_status_asks_only_git_status_again_until_head_or_config_change(self):
+        from agent_bar import git
+        with tempfile.TemporaryDirectory() as root:
+            env = {**os.environ, 'GIT_AUTHOR_NAME': 't', 'GIT_AUTHOR_EMAIL': 't@x', 'GIT_COMMITTER_NAME': 't', 'GIT_COMMITTER_EMAIL': 't@x'}
+            run = lambda *args: subprocess.run(['git', '-C', root, *args], check=True, capture_output=True, env=env)
+            run('init', '-q'); Path(root, 'a').write_text('1'); run('add', 'a'); run('commit', '-qm', 'first')
+            asked = []
+            real = git.git
+            def counting(top, *args):
+                asked.append(args[0])
+                return real(top, *args)
+            known = {}
+            with unittest.mock.patch.object(git, 'git', counting):
+                self.assertEqual(git.status(root, known)['subject'], 'first')
+                self.assertEqual(sorted(asked), ['log', 'remote', 'remote', 'rev-parse', 'status'])
+                asked.clear()
+                Path(root, 'b').write_text('new')
+                self.assertEqual(git.status(root, known)['untracked'], 1)
+                self.assertEqual(asked, ['status'])
+                time.sleep(0.01)
+                run('add', 'b'); run('commit', '-qm', 'second')
+                asked.clear()
+                self.assertEqual(git.status(root, known)['subject'], 'second')
+                self.assertIn('log', asked)
+
+
 class ChecklistTests(unittest.TestCase):
     def test_only_checkbox_lines_outside_code_count_and_open_items_sort_by_prefix(self):
         from agent_bar import checklists

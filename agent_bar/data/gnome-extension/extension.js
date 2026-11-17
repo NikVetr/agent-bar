@@ -1329,6 +1329,7 @@ class Tracker {
         this._timer = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 3, () => {
             this._read();
             if (this._setting('scheduler')) this._readCluster();
+            if (this._button.menu.isOpen && this._view === 'git' && !this._page) this._watchGit();
             // The scheduler's controls are described again every 10 s while the Queues tab shows them.
             if (this._button.menu.isOpen && this._view === 'queues' && !this._page && Date.now() - this._controlsAt > 10000)
                 this._loadControls();
@@ -2747,11 +2748,24 @@ class Tracker {
             this._reading = false;
             if (!this._enabled) return;
             try {
-                const [ok, bytes] = file.load_contents_finish(result);
+                const [ok, bytes, etag] = file.load_contents_finish(result);
                 if (!ok) throw new Error('Could not read the agent-bar snapshot');
+                // The service rewrites the snapshot only when it changes, and every 10 s regardless; the same file
+                // again needs no parsing or redrawing, only the check that the service still runs.
+                if (etag && etag === this._snapshotEtag && this._snapshot && !this._error) {
+                    if (Date.now() / 1000 - this._snapshot.updated > 20) throw new Error('The agent-bar service is stale');
+                    return;
+                }
                 const snapshot = JSON.parse(ByteArray.toString(bytes));
                 if (snapshot.schema !== 1) throw new Error('Unsupported agent-bar snapshot');
+                this._snapshotEtag = etag;
                 this._snapshot = snapshot;
+                // An open Git tab shows each new reading, which the service takes every 20 s while it is open.
+                if (this._button.menu.isOpen && this._view === 'git' && !this._page
+                    && snapshot.git?.updated !== this._menuSnapshot?.git?.updated) {
+                    this._menuSnapshot = snapshot;
+                    this._later(() => this._renderRows());
+                }
                 if (!this._returnsLoaded) {
                     this._borrowed = new Map(Object.entries(snapshot.returns || {}));
                     this._returnsLoaded = true;
@@ -4868,7 +4882,15 @@ class Tracker {
     }
 
     // One row per repository holding an open project; VS Code's Source Control does the real work.
+    // Tells the service the Git tab is open, so it reads git status every 20 s, not every 5 minutes; at most every 10 s.
+    _watchGit() {
+        if (Date.now() - (this._gitWatchedAt || 0) < 10000) return;
+        this._gitWatchedAt = Date.now();
+        try { GLib.file_set_contents(`${ROOT}/git-watched`, ''); } catch (error) { log(`agent-bar: ${error.message}`); }
+    }
+
     _renderGit(snapshot, query) {
+        this._watchGit();
         if (!snapshot.git) {
             this._section.addMenuItem(this._item('Reading git status…', 'tracker-empty'));
             return;

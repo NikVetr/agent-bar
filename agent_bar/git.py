@@ -49,20 +49,41 @@ def web_url(remote):
     return f'https://{match[1]}/{match[2]}' if match else None
 
 
-def status(top):
-    gitdir = Path(git(top, 'rev-parse', '--absolute-git-dir').strip())
+def stamp(gitdir):
+    """What changes when HEAD moves (a commit, checkout or reset writes HEAD's reflog), or the remotes do."""
+    marks = []
+    for name in ['HEAD', 'logs/HEAD', 'config', 'packed-refs']:
+        try: marks.append((gitdir / name).stat().st_mtime_ns)
+        except OSError: marks.append(None)
+    return tuple(marks)
+
+
+def status(top, known=None):
+    """A repository's state. `known` (kept between calls) holds its git directory and what only a commit, checkout or
+    remote change alters, so those are asked again only when the git directory shows such a change; `git status`,
+    which sees edits to the working tree, runs every time."""
+    known = {} if known is None else known
+    if 'gitdir' not in known: known['gitdir'] = Path(git(top, 'rev-parse', '--absolute-git-dir').strip())
+    gitdir = known['gitdir']
     value = {'top': str(top), 'name': Path(top).name, **parse_status(
         git(top, 'status', '--porcelain=v2', '--branch', '-z', '--untracked-files=normal'))}
     value['operation'] = next((name for marker, name in OPERATIONS if (gitdir / marker).exists()), None)
-    try:
-        stamp, subject = git(top, 'log', '-1', '--format=%ct%x1f%s').rstrip('\n').split('\x1f', 1)
-        value['commit_at'], value['subject'] = int(stamp), subject
-    except ValueError:  # No commits yet.
-        value['commit_at'], value['subject'] = None, None
-    value['remotes'] = len(git(top, 'remote').split())
+    marks = stamp(gitdir)
+    if known.get('stamp') != marks:
+        known.update(stamp=marks, urls={})
+        try:
+            at, subject = git(top, 'log', '-1', '--format=%ct%x1f%s').rstrip('\n').split('\x1f', 1)
+            known['commit'] = int(at), subject
+        except ValueError:  # No commits yet.
+            known['commit'] = None, None
+        known['remotes'] = len(git(top, 'remote').split())
+    value['commit_at'], value['subject'] = known['commit']
+    value['remotes'] = known['remotes']
     remote = (value['upstream'] or 'origin/').split('/')[0]
-    try: value['web'] = web_url(git(top, 'remote', 'get-url', remote).strip())
-    except ValueError: value['web'] = None
+    if remote not in known['urls']:
+        try: known['urls'][remote] = web_url(git(top, 'remote', 'get-url', remote).strip())
+        except ValueError: known['urls'][remote] = None
+    value['web'] = known['urls'][remote]
     if value['web'] and value['branch'] and 'github.com/' in value['web']:
         value['web'] += f'/tree/{value["branch"]}'
     return value
@@ -71,6 +92,7 @@ def status(top):
 class Repositories:
     def __init__(self):
         self.tops = {}  # Folder -> (its repository's top level, or None outside any; when that was found).
+        self.known = {}  # Repository top level -> what status() keeps between reads.
 
     def top(self, folder):
         # A folder outside any repository may become one (git init, or a timeout that passes), so ask again later.
@@ -88,8 +110,9 @@ class Repositories:
             if Path(folder).is_dir() and (top := self.top(folder)): held.setdefault(top, set()).add(folder)
         result = []
         for top, inside in sorted(held.items()):
-            try: value = status(top)
+            try: value = status(top, self.known.setdefault(top, {}))
             except (ValueError, OSError, subprocess.TimeoutExpired) as error:
+                self.known.pop(top, None)
                 value = {'top': top, 'name': Path(top).name, 'error': (str(error) or type(error).__name__).splitlines()[0][:200]}
             result.append({**value, 'folders': sorted(inside)})
         return result

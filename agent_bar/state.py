@@ -45,10 +45,11 @@ def atomic_json(path, value, indent=None):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     temporary = path.with_name(path.name + '.next')
+    # dumps, not dump: dump streams through the pure-Python encoder, several times slower for the snapshot.
+    text = json.dumps(value, ensure_ascii=False, indent=indent, separators=None if indent else (',', ':'))
     with temporary.open('w') as stream:
         os.chmod(temporary, 0o600)
-        json.dump(value, stream, ensure_ascii=False, indent=indent, separators=None if indent else (',', ':'))
-        if indent: stream.write('\n')
+        stream.write(text + ('\n' if indent else ''))
     temporary.replace(path)
 
 
