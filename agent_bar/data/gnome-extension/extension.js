@@ -2113,7 +2113,7 @@ class Tracker {
     // Switches the open dropdown to `tab`.
     _showTab(tab) {
         this._page = null;
-        this._picker = null;
+        this._picker = this._schedule = this._checklistView = null;
         this._view = tab;
         this._buildMenu();
     }
@@ -2854,8 +2854,10 @@ class Tracker {
         // A rebuild of the same tab, as after Clear, keeps the list's place (see _renderRows).
         this._keptScroll = this._scroll?.vscroll.adjustment.value ?? 0;
         this._releaseFocus(this._button.menu);
-        // removeAll() only drops menu items; the list body is a plain actor.
+        // removeAll() only drops menu items; the list body and the side dropdown are plain actors.
         this._body?.destroy();
+        this._sideHolder?.destroy();
+        this._sideHolder = this._side = this._sideScroll = null;
         this._pickerList = null;
         this._pickerButtons = {};
         this._button.menu.removeAll();
@@ -2948,7 +2950,12 @@ class Tracker {
             .filter(([value]) => shown[value] !== false)) {
             const button = new St.Button({label, toggle_mode: true, checked: this._view === value,
                 can_focus: true, style_class: 'tracker-filter'});
-            button.connect('clicked', () => { this._view = value; this._picker = null; this._later(() => this._buildMenu()); });
+            button.connect('clicked', () => {
+                // The side dropdown belongs to the tab it was opened from.
+                this._view = value;
+                this._picker = this._schedule = this._checklistView = null;
+                this._later(() => this._buildMenu());
+            });
             tabs.add_child(button);
         }
         control(tabs);
