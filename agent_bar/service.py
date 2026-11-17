@@ -9,7 +9,7 @@ import time
 import uuid
 from pathlib import Path
 
-from . import messages, tickets, usage
+from . import checklists, messages, tickets, usage
 from .git import Repositories
 from .providers import Providers, queue_snapshot
 from .state import ROOT, Ledger, atomic_json, project_names
@@ -20,6 +20,7 @@ QUIET = 300  # An open turn with no activity this long is waiting on something.
 CONTINUE = 'Please continue where you left off.'  # Sent to chats a usage limit stopped.
 GIT_EVERY = 20  # Seconds between git status reads of the open projects' repositories.
 USAGE_EVERY = 60  # Seconds between reads of the usage limits Claude Code and Codex record.
+CHECKLIST_EVERY = 30  # Seconds between scans of the open projects' task checklists.
 TICKET_EVERY = 30  # Seconds a ticket listing stands while nothing it reads changes; its waits on times pass meanwhile.
 PRUNE_EVERY = 3600  # Seconds between clean-ups of what closed chats, windows and old queues left behind.
 STALE_WINDOW = 86400  # A VS Code bridge silent this long has gone with its window.
@@ -56,6 +57,8 @@ class Tracker:
         self.navigation = set()
         # Queue ids in the monitor's latest snapshot, once read; pruning keeps every listed queue.
         self.listed, self.pruned_at = None, 0
+        # Parsed checklists by path, the per-folder counts in the snapshot, and what checklists.json last held.
+        self.checklist_cache, self.checklist_counts, self.checklists_written, self.checklists_at = {}, {}, None, 0
 
     def collect(self):
         now = time.time()
@@ -158,6 +161,7 @@ class Tracker:
             warnings.append('Queue snapshot stale; start the parallel-workers monitor to refresh it')
         self.windows, self.rows, self.warnings = windows, rows, warnings
         if now - self.pruned_at > PRUNE_EVERY: self.prune(now)
+        if now - self.checklists_at > CHECKLIST_EVERY: self.read_checklists(now)
         snapshot = self.snapshot()
         atomic_json(self.root / 'snapshot.json', snapshot)
         serialized = json.dumps(self.ledger.data, sort_keys=True)
@@ -166,6 +170,32 @@ class Tracker:
             self.last_saved = serialized
         for path in consumed:
             path.unlink(missing_ok=True)
+
+    def read_checklists(self, now):
+        """The open projects' task checklists into checklists.json, which the panel reads when it shows them, with the
+        chats seen editing each; the snapshot keeps only counts per folder."""
+        self.checklists_at = now
+        folders = {root for window in self.windows.values() if window.get('kind') != 'app' for root in window.get('roots') or []}
+        folders |= {root for row in self.rows for root in row.get('roots') or []}
+        try: found = checklists.scan(folders, self.checklist_cache, now)
+        except OSError as error:
+            self.warnings.append(f'Checklists unreadable: {error}')
+            return
+        editors = self.providers.checklist_editors()
+        for entry in found.values():
+            for file in entry['files']:
+                file['editors'] = sorted(([key, at] for key, at in editors.get(file['path'], {}).items()), key=lambda pair: -pair[1])
+        self.checklist_counts = {folder: {'files': len(entry['files']), 'open': sum(file['open'] for file in entry['files']),
+                                          'user': sum(len(file['user']) for file in entry['files']),
+                                          'recent': sum(file['recent'] for file in entry['files'])}
+                                 for folder, entry in found.items()}
+        serialized = json.dumps(found, sort_keys=True)
+        if serialized != self.checklists_written:
+            atomic_json(self.root / 'checklists.json', {'updated': now, 'folders': found})
+            self.checklists_written = serialized
+        # Unchanged files and gone ones leave the cache only when their folder is no longer open.
+        self.checklist_cache = {path: value for path, value in self.checklist_cache.items()
+                                if any(path.startswith(f'{folder}/') for folder in folders)}
 
     def prune(self, now):
         """Drop what closed chats, gone windows and long-seen queues leave behind, keeping anything still in use."""
@@ -241,6 +271,7 @@ class Tracker:
                 'messages': self.message_summary(rows) if self.messages_enabled else None,
                 'usage': self.usage, 'usage_error': self.usage_error,
                 'tickets': self.ticket_summary(now),
+                'checklists': self.checklist_counts,
                 'returns': self.ledger.data.get('returns', {})}
 
     def ticket_summary(self, now):

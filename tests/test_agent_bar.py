@@ -920,7 +920,7 @@ class TrackerTests(unittest.TestCase):
             tracker = service.Tracker(Path(root) / 'state')
             tracker.ledger.data['since'] = 0
             # Automatic turns with background work still pending.
-            tracker.providers.backgrounds['a'] = SimpleNamespace(read=lambda: None, human=False, waiting=lambda at: True)
+            tracker.providers.backgrounds['a'] = SimpleNamespace(read=lambda: None, human=False, waiting=lambda at: True, checklists={})
             def turn(began, ended):
                 for kind, at in [('start', began), ('complete', ended)]:
                     (tracker.root / 'events' / f'{at}.json').write_text(json.dumps(
@@ -1186,6 +1186,70 @@ class TrackerTests(unittest.TestCase):
                                input=json.dumps({'hook_event_name': event, 'session_id': 's', 'tool_name': 'AskUserQuestion'}),
                                env={**os.environ, 'AGENT_BAR_STATE_DIR': root})
                 self.assertEqual(json.loads(next((Path(root) / 'events').glob('*.json')).read_text())['kind'], kind)
+
+
+class ChecklistTests(unittest.TestCase):
+    def test_only_checkbox_lines_outside_code_count_and_open_items_sort_by_prefix(self):
+        from agent_bar import checklists
+        parsed = checklists.parse("""# Fit the model
+
+Status: prose, not counted. A [link](child.md) and [a site](https://x.org/a.md).
+- [x] Done one
+  - [X] Done two, indented
+- [-] Dropped: superseded
+- [ ] Waiting: queue run-42 finishes
+- [ ] Write the results
+- [ ] User: choose the prior
+- [ ] Deferred: appendix figure
+- [~] A legacy marker
+1. [ ] Numbered item
+```markdown
+- [ ] An example in a fence
+```
+""")
+        self.assertEqual({key: parsed[key] for key in ['title', 'done', 'open', 'dropped', 'unknown', 'next', 'user', 'waiting', 'deferred', 'links']},
+                         {'title': 'Fit the model', 'done': 2, 'open': 5, 'dropped': 1, 'unknown': 1, 'next': 'Write the results',
+                          'user': ['choose the prior'], 'waiting': ['queue run-42 finishes'], 'deferred': ['appendix figure'],
+                          'links': ['child.md']})
+
+    def test_edits_are_writes_to_checklist_paths(self):
+        from agent_bar import checklists
+        self.assertEqual(checklists.edited('cat > tmp/agent/checklists/fit.md <<EOF', True, '/r/p'), ['/r/p/tmp/agent/checklists/fit.md'])
+        self.assertEqual(checklists.edited('cat tmp/agent/checklists/fit.md', True, '/r/p'), [])
+        self.assertEqual(checklists.edited('tmp/agent/checklists/fit.md'), [])
+        self.assertEqual(checklists.edited('*** Update File: tmp/agent/checklists/a/b.md', cwd='/r/p'), ['/r/p/tmp/agent/checklists/a/b.md'])
+
+    def test_scan_keeps_recent_files_and_older_ones_with_open_items(self):
+        from agent_bar import checklists
+        with tempfile.TemporaryDirectory() as root:
+            folder = Path(root) / 'tmp/agent/checklists'
+            (folder / 'sub').mkdir(parents=True)
+            for name, text, age in [('new.md', '- [x] a\n- [ ] [child](sub/kid.md)', 0), ('old-open.md', '- [ ] User: decide', 30),
+                                    ('old-done.md', '- [x] a', 30), ('sub/kid.md', '- [ ] b', 1)]:
+                (folder / name).write_text(text)
+                os.utime(folder / name, (time.time() - age * 86400,) * 2)
+            cache = {}
+            found = checklists.scan([root], cache, time.time())[root]
+            self.assertEqual([(f['name'], f['recent']) for f in found['files']], [('new.md', True), ('sub/kid.md', True), ('old-open.md', False)])
+            self.assertEqual((found['older_closed'], found['files'][0]['links']), (1, [{'path': str(folder / 'sub/kid.md'), 'exists': True}]))
+            self.assertEqual(len(cache), 4)
+
+    def test_open_chats_transcripts_say_who_edited_a_checklist(self):
+        from agent_bar.providers import Background, Providers
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / 'chat.jsonl'
+            entry = {'type': 'assistant', 'timestamp': '2026-11-17T10:00:00Z', 'cwd': '/r/p', 'message': {'content': [
+                {'type': 'tool_use', 'id': 't1', 'name': 'Edit', 'input': {'file_path': '/r/p/tmp/agent/checklists/fit.md'}},
+                {'type': 'tool_use', 'id': 't2', 'name': 'Bash', 'input': {'command': 'echo "- [x] b" >> tmp/agent/checklists/two.md'}},
+                {'type': 'tool_use', 'id': 't3', 'name': 'Read', 'input': {'file_path': '/r/p/tmp/agent/checklists/read.md'}}]}}
+            path.write_text(json.dumps(entry) + '\n')
+            background = Background(path)
+            background.read()
+            self.assertEqual(sorted(background.checklists), ['/r/p/tmp/agent/checklists/fit.md', '/r/p/tmp/agent/checklists/two.md'])
+            providers = Providers(root)
+            providers.backgrounds['s1'] = background
+            providers.codex_checklists['codex:c'] = {'/r/p/tmp/agent/checklists/fit.md': 5.0}
+            self.assertEqual(set(providers.checklist_editors()['/r/p/tmp/agent/checklists/fit.md']), {'claude:s1', 'codex:c'})
 
 
 class SkillInstallTests(unittest.TestCase):

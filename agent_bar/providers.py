@@ -8,6 +8,7 @@ import sqlite3
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
+from . import checklists
 from .hook import automatic
 
 UUID = re.compile(r'^[0-9a-f]{8}-[0-9a-f-]{27}$', re.I)
@@ -71,12 +72,14 @@ class Background:
     commands, subagents and monitors, and a scheduled wake-up. Also whether its latest
     prompt came from a person, and when its last turn ended."""
     MARKERS = ('run_in_background', '"Monitor"', 'ScheduleWakeup', 'TaskStop', 'task-notification',
-               'promptSource', 'backgroundTaskId', 'agentId', 'taskId', 'scheduledFor', 'stop_hook_summary')
+               'promptSource', 'backgroundTaskId', 'agentId', 'taskId', 'scheduledFor', 'stop_hook_summary',
+               'tmp/agent/checklists/')
 
     def __init__(self, path):
         self.tail = Tail(path)
         self.pending, self.wakeups = {}, set()
         self.wake_at, self.human, self.ended_at = 0, True, 0
+        self.checklists = {}  # Checklist path -> when this chat last edited it.
 
     def read(self):
         for line in self.tail.read():
@@ -100,6 +103,10 @@ class Background:
                 text += item.get('text', '')
             elif kind == 'tool_use':
                 name, args = item.get('name'), item.get('input') or {}
+                if name in ('Edit', 'Write', 'MultiEdit', 'NotebookEdit'):
+                    touched = checklists.edited(args.get('file_path') or args.get('notebook_path') or '')
+                else: touched = checklists.edited(args.get('command') or '', shell=True, cwd=entry.get('cwd')) if name == 'Bash' else []
+                for path in touched: self.checklists[path] = max(at, self.checklists.get(path, 0))
                 if name == 'Monitor' or (name in ('Bash', 'Agent') and args.get('run_in_background')):
                     limit = args['timeout_ms'] / 1000 if name == 'Monitor' and args.get('timeout_ms') else TASK_LIMIT
                     self.pending[item['id']] = {'task': None, 'expires': at + limit}
@@ -225,7 +232,17 @@ class Providers:
         self.names, self.names_stamp = {}, None
         self.copilot_logs, self.copilot_final = {}, {}
         self.antigravity = {}  # Conversation id -> its summary database, for events.
+        # Codex chat key -> checklist path -> when it last edited it, and the folder its turns run in.
+        self.codex_checklists, self.codex_cwd = {}, {}
         self.external_at, self.external_found = 0, ([], [], [])
+
+    def checklist_editors(self):
+        """Checklist path -> {chat key: when it last edited it}, from the open chats' transcripts read so far."""
+        result = {}
+        for key, edits in [*((f'claude:{sid}', background.checklists) for sid, background in self.backgrounds.items()),
+                           *self.codex_checklists.items()]:
+            for path, at in edits.items(): result.setdefault(path, {})[key] = at
+        return result
 
     def claude_background(self, sid):
         if sid not in self.backgrounds:
@@ -534,7 +551,14 @@ class Providers:
             try: data = json.loads(line)
             except ValueError: continue
             payload = data.get('payload', {})
+            if data.get('type') == 'turn_context' and payload.get('cwd'): self.codex_cwd[row['key']] = payload['cwd']
             if data.get('type') == 'response_item' and payload.get('type') in ['function_call', 'custom_tool_call']:
+                call = payload.get('input') or payload.get('arguments') or ''
+                if 'tmp/agent/checklists/' in call:
+                    cwd = self.codex_cwd.get(row['key']) or (row.get('roots') or [None])[0]
+                    edits = self.codex_checklists.setdefault(row['key'], {})
+                    for touched in checklists.edited(call, shell=payload.get('name') != 'apply_patch', cwd=cwd):
+                        edits[touched] = max(epoch(data.get('timestamp')), edits.get(touched, 0))
                 if payload.get('name') in CODEX_WAITS: continue
                 kind = 'question' if 'request_user_input' in payload.get('name', '') else 'resume'
                 result.append((kind, epoch(data.get('timestamp')), None))
