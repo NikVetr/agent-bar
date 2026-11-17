@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sqlite3
+import time
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
@@ -16,6 +17,7 @@ CODEX_ROLLOUT = re.compile(r'/rollout-[0-9T-]+-([0-9a-f]{8}-[0-9a-f-]{27})\.json
 CODEX_APP = '/usr/lib/chatgpt/'  # The ChatGPT desktop app's bundled Codex server.
 # Terminal and desktop-app sessions change rarely; scanning processes is the costly part.
 EXTERNAL_EVERY = 10
+PROC_RECHECK = 60  # Seconds before processes found not to be Codex terminal or app clients are looked at again.
 NOTIFICATION = re.compile(r'<task-notification>.*?</task-notification>', re.S)
 TASK_ENDED = {'completed', 'failed', 'stopped', 'killed'}
 # A task whose ending was never reported (e.g. VS Code restarted) stops counting after a day.
@@ -235,6 +237,9 @@ class Providers:
         # Codex chat key -> checklist path -> when it last edited it, and the folder its turns run in.
         self.codex_checklists, self.codex_cwd = {}, {}
         self.external_at, self.external_found = 0, ([], [], [])
+        # Process ids found not to be Codex CLI or app clients, skipped until PROC_RECHECK passes, which covers a
+        # process that starts Codex after it was looked at.
+        self.not_codex, self.not_codex_at = set(), 0.0
 
     def checklist_editors(self):
         """Checklist path -> {chat key: when it last edited it}, from the open chats' transcripts read so far."""
@@ -418,21 +423,30 @@ class Providers:
         """Conversations a Codex CLI or desktop-app process has loaded, from the rollouts it holds
         open, as {id: (pid, surface)}. The VS Code extension's servers are left to the bridge."""
         found, sessions = {}, f'{self.home}/.codex/sessions/'
-        for entry in Path(self.proc).iterdir():
-            if not entry.name.isdigit(): continue
+        if time.time() - self.not_codex_at > PROC_RECHECK: self.not_codex, self.not_codex_at = set(), time.time()
+        alive = set()
+        for name in os.listdir(self.proc):
+            if not name.isdigit(): continue
+            alive.add(name)
+            if name in self.not_codex: continue
             try:
-                if (entry / 'comm').read_text().strip() != 'codex': continue
-                exe = os.readlink(entry / 'exe')
-                fds = list((entry / 'fd').iterdir())
+                with open(f'{self.proc}/{name}/comm', 'rb') as stream: comm = stream.read().strip()
+                exe = os.readlink(f'{self.proc}/{name}/exe') if comm == b'codex' else ''
             except OSError:
                 continue
-            if '/.vscode/extensions/' in exe: continue
+            # VS Code's own Codex servers are left to the bridge; only then are a process's open files listed.
+            if comm != b'codex' or '/.vscode/extensions/' in exe:
+                self.not_codex.add(name)
+                continue
+            try: fds = os.listdir(f'{self.proc}/{name}/fd')
+            except OSError: continue
             for fd in fds:
                 with contextlib.suppress(OSError):
-                    link = os.readlink(fd)
+                    link = os.readlink(f'{self.proc}/{name}/fd/{fd}')
                     match = CODEX_ROLLOUT.search(link)
                     if match and link.startswith(sessions):
-                        found.setdefault(match[1], (int(entry.name), 'app' if exe.startswith(CODEX_APP) else 'terminal'))
+                        found.setdefault(match[1], (int(name), 'app' if exe.startswith(CODEX_APP) else 'terminal'))
+        self.not_codex &= alive
         return found
 
     def external(self, windows, now):
