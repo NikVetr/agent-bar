@@ -318,6 +318,8 @@ class Tracker:
         if matches[0]['target']['kind'] == 'window': return {'ok': True}
         window = self.windows.get(window_id)
         row = matches[0]
+        if row['target']['kind'] == 'codex-editor' and not (window or {}).get('codexEditor'):
+            raise ValueError('To open this Codex conversation by ID, run Developer: Reload Window in its VS Code window')
         result = await self.bridge(window_id, {'type': 'navigate', 'target': row['target'], 'input': input})
         # Recheck the live source before acknowledging a sidebar.
         if row['target']['kind'] == 'codex-sidebar':

@@ -535,8 +535,13 @@ class Providers:
         sidebars = active - custom.keys()
         for sid in sorted(active):
             meta = metadata.get(sid, {})
-            target = {'kind': 'tab', **custom[sid]} if sid in custom else (
-                {'kind': 'codex-sidebar'} if len(sidebars) == 1 else None)
+            if sid in custom:
+                target = {'kind': 'tab', **custom[sid]}
+            elif len(sidebars) == 1:
+                target = {'kind': 'codex-sidebar'}
+            else:
+                # The log identifies the thread, but focusing the sidebar could show another one.
+                target = {'kind': 'codex-editor', 'conversation': sid}
             rows.append({'provider': 'codex', 'id': sid, 'title': meta.get('title') or sid[:8],
                          'target': target, 'path': meta.get('path')})
         for row in rows:

@@ -31,7 +31,9 @@ state and unread reasons stay separate in the data.
 
 - **VS Code:** each window's bridge publishes its folders, open tabs, provider versions and a heartbeat. Codex's
   per-window view-activity log establishes open sidebar conversations, and its custom-editor URIs identify editor
-  ones; Claude's saved panel-session IDs are matched against live tab labels, with ambiguous matches rejected.
+  ones. When several Codex IDs have no matching tab in one window, its bridge opens the requested ID in a Codex
+  editor and verifies the active tab's URI. Claude's saved panel-session IDs are matched against live tab labels,
+  with ambiguous matches rejected.
 - **Terminals and apps** (`providers.py`): Claude Code CLI sessions from `~/.claude/sessions/<pid>.json`, checked
   against the process start time; Codex CLI and desktop-app threads from the rollout files a non-VS Code `codex`
   process holds open; Copilot CLI sessions from the `process-<ms>-<pid>.log` that names a live process's foreground

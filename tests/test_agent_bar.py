@@ -938,6 +938,24 @@ class TrackerTests(unittest.TestCase):
             turn(210, 220)
             self.assertEqual(tracker.ledger.unread('claude:a'), ['Reply finished'])
 
+    def test_codex_navigation_targets_when_several_chats_share_a_window(self):
+        from agent_bar.providers import Providers
+        first, second, editor = [f'00000000-0000-4000-8000-{n:012d}' for n in range(3)]
+        tab = {'viewType': 'chatgpt.conversationEditor', 'uri': f'openai-codex://route/local/{editor}'}
+        window = {'id': 'w', 'workspace': 'project', 'roots': [], 'storage': None, 'tabs': [tab]}
+        provider = Providers()
+        metadata = {sid: {'title': 'Same title'} for sid in (first, second, editor)}
+        with unittest.mock.patch.object(provider, 'codex_metadata', return_value=metadata), \
+                unittest.mock.patch.object(provider, 'codex_open', side_effect=[{first, second}, {second}]):
+            rows, warnings = provider.discover(window)
+            self.assertEqual(warnings, [])
+            self.assertEqual({r['id']: r['target'] for r in rows}, {
+                first: {'kind': 'codex-editor', 'conversation': first},
+                second: {'kind': 'codex-editor', 'conversation': second},
+                editor: {'kind': 'tab', **tab}})
+            rows, _ = provider.discover(window)
+            self.assertEqual(next(r['target'] for r in rows if r['id'] == second), {'kind': 'codex-sidebar'})
+
     def test_codex_view_state_survives_log_rotation(self):
         with tempfile.TemporaryDirectory() as root:
             logs = Path(root) / 'openai.chatgpt'; logs.mkdir()

@@ -112,7 +112,9 @@ again, leaving your history and settings (`--purge` deletes those too).
 Clicking the counts opens the dropdown, with these tabs:
 
 - **Chats**: open chats grouped by project and window, with sort and filter, each with its whole name and a copy button
-  for its name, id, folder and resume command. Clicking a chat selects it and brings its window forward; clicking again sends the window back. When a usage limit stops chats open in VS Code, a line above
+  for its name, id, folder and resume command. Clicking a chat selects it and brings its window forward. When several Codex
+  chats share a window and the sidebar could show any of them, the row and review shortcut open the selected chat
+  by ID in an editor tab. Clicking again sends the window back. When a usage limit stops chats open in VS Code, a line above
   them names them and when Claude's limit resets; **Continue** queues "Please continue where you left off." in the
   Codex ones, which start it on their own, and brings each Claude one forward with that text at the end of its input
   box, after any draft, for you to send. If Agent Bar cannot be sure the cursor is in that box (several Claude chats on

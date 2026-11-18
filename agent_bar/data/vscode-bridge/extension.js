@@ -37,7 +37,7 @@ async function activate(context) {
                 roots: (vscode.workspace.workspaceFolders || []).map(x => x.uri.fsPath),
                 storage: context.storageUri?.fsPath || null,
                 log: context.logUri.fsPath, focused: vscode.window.state.focused,
-                nativeId, tabs: tabs(), resume: true, start: true, scm: true,
+                nativeId, tabs: tabs(), resume: true, start: true, scm: true, codexEditor: true,
                 providers: Object.fromEntries(['openai.chatgpt', 'Anthropic.claude-code']
                     .map(key => [key, vscode.extensions.getExtension(key)?.packageJSON.version || null])),
             });
@@ -67,6 +67,18 @@ async function activate(context) {
     }
     const log = vscode.window.createOutputChannel('Agent Bar');
     const report = error => log.appendLine(String(error));
+    async function openCodexEditor(conversation) {
+        if (!/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(conversation))
+            throw new Error('Invalid Codex conversation ID');
+        const uri = vscode.Uri.from({scheme: 'openai-codex', authority: 'route', path: `/local/${conversation}`});
+        const viewType = 'chatgpt.conversationEditor';
+        const matches = tab => tab?.input?.viewType === viewType && tab.input.uri?.toString() === uri.toString();
+        const group = vscode.window.tabGroups.all.find(group => group.tabs.some(matches));
+        await vscode.commands.executeCommand('vscode.openWith', uri, viewType,
+            {viewColumn: group?.viewColumn, preserveFocus: false, preview: false});
+        if (!matches(vscode.window.tabGroups.activeTabGroup.activeTab))
+            throw new Error('VS Code did not select the requested Codex conversation.');
+    }
     async function navigate(action) {
         const target = action.target;
         if (target.kind === 'tab') {
@@ -99,6 +111,8 @@ async function activate(context) {
                 // Only while this window, and this chat's tab in it, still have focus did the cursor land there.
                 return {input: vscode.window.state.focused && vscode.window.tabGroups.activeTabGroup.activeTab === tab};
             }
+        } else if (target.kind === 'codex-editor') {
+            await openCodexEditor(target.conversation);
         } else if (target.kind === 'codex-sidebar') {
             // The service only supplies this target for the single known sidebar
             // conversation; it never opens a historical chat in another surface.
@@ -142,8 +156,7 @@ async function activate(context) {
         if (request.provider === 'claude') {
             await vscode.commands.executeCommand('claude-vscode.editor.open', request.conversation);
         } else if (request.provider === 'codex') {
-            await vscode.commands.executeCommand('vscode.openWith', vscode.Uri.from({scheme: 'openai-codex',
-                authority: 'route', path: `/local/${request.conversation}`}), 'chatgpt.conversationEditor', {preview: false});
+            await openCodexEditor(request.conversation);
         } else {
             throw new Error('Unsupported provider');
         }
