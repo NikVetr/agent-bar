@@ -20,6 +20,48 @@ class TrackerTests(unittest.TestCase):
     def setUp(self):
         self.ledger = Ledger({'since': 100, 'conversations': {}, 'queues': {}, 'project_turns': {}})
 
+    def test_host_projects_uses_reservations_and_sampled_memory(self):
+        from agent_bar.cluster import host_projects
+        with tempfile.TemporaryDirectory() as root:
+            report = Path(root) / '.parallel-workers/adaptive/last-known/node.tsv'
+            report.parent.mkdir(parents=True)
+            updated = int(time.time())
+            header = 'record_type pool_id host_id resource_sample_epoch telemetry_state queue_id state cpu_units current_memory_mib'
+            lines = [header, f'agent pool node {updated} ok - - - -',
+                     'reservation pool node - - a running 3 150', 'reservation pool node - - b running 1 50',
+                     'reservation pool node - - c uncertain 2 0']
+            report.write_text('\n'.join(line.replace(' ', '\t') for line in lines))
+            snapshot = {'updated': updated, 'collector': {'local_host': 'node'},
+                        'hosts': [{'id': 'node', 'ok': True, 'mount': {'ok': True, 'root': root},
+                                   'slots': None, 'memory': {'total_bytes': 2**30}}],
+                        'scheduler': {'ok': True, 'pool': {'id': 'pool'}, 'hosts': [{'id': 'node', 'cpu_units': 8}], 'queues': [
+                            {'queue_id': 'a', 'project': 'one'}, {'queue_id': 'b', 'project': 'one'},
+                            {'queue_id': 'c', 'project': 'two'}]}}
+            result = host_projects('node', snapshot)
+            self.assertEqual(result['cpu_slots'], 8)
+            self.assertEqual(result['projects'], [
+                {'project': 'one', 'jobs': 2, 'cpu_slots': 4, 'memory_mib': 200},
+                {'project': 'two', 'jobs': 1, 'cpu_slots': 2, 'memory_mib': None}])
+            with unittest.mock.patch('time.time', return_value=updated + 300), self.assertRaisesRegex(ValueError, 'node report is stale'):
+                host_projects('node', {**snapshot, 'updated': updated + 300})
+            snapshot['scheduler']['pool']['id'] = 'new'
+            with self.assertRaisesRegex(ValueError, 'current pool'):
+                host_projects('node', snapshot)
+
+    def test_host_projects_fixed_slots_follow_host_order(self):
+        from agent_bar.cluster import host_projects
+        now = time.time()
+        snapshot = {'updated': now, 'scheduler': {'ok': True, 'pool': {'state': 'INACTIVE'}},
+                    'hosts': [{'id': name, 'ok': True, 'slots': 8} for name in ['b', 'a']],
+                    'queue_refresh': {'ok': True, 'updated': now}, 'queues': [
+                        {'group': 'active', 'workers': '2-3', 'project': 'test'},
+                        {'group': 'active', 'workers': '0-?', 'project': 'missing'},
+                        {'group': 'finished', 'workers': '3-3', 'project': 'old'}]}
+        result = host_projects('a', snapshot)
+        self.assertEqual(result['projects'], [{'project': 'test', 'jobs': 0, 'fixed_slots': 3,
+                                              'cpu_slots': 3, 'memory_mib': None}])
+        self.assertTrue(result['incomplete_fixed_slots'])
+
     def test_navigation_cutoff_preserves_newer_and_other_completions(self):
         for key in ['codex:a', 'claude:b']:
             self.ledger.event(key, 'complete', 110)

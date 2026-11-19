@@ -130,6 +130,11 @@ window file) must be reloaded first.
 
 ## GNOME Shell extension
 
+The Cluster tab requests `agent-bar host-projects HOST` while a node's side dropdown is open.
+The command reads the scheduler's last-known reservation table for that node on the locally mounted share,
+matches queue IDs to projects in the collector snapshot and sums reserved CPU units and current sampled memory.
+The report must match the current pool and host and have a recent sample.
+
 `agent_bar/data/gnome-extension` renders the snapshot in GNOME Shell 42 and runs the `agent-bar` CLI for actions.
 Bringing a chat forward saves the window's place, maximizes it on the primary display and asks its VS Code bridge to
 reveal the exact tab or sidebar; only a confirmed navigation acknowledges the chat. A second click while it has focus
@@ -140,7 +145,7 @@ The top bar is one panel button holding parts (chat counts, limits, working and 
 own hover highlight, beside a separate cluster indicator without a menu of its own; each opens the one dropdown on
 its tab. While the dropdown is open, GNOME 42 routes every event through the menu's actor, where the panel's menu
 manager closes the menu on any press outside it; the extension moves that handler behind its own, which turns a
-press on another part into a tab switch and lets any other press close the menu as before. The side dropdown (scheduling a message, a chat's checklists) is a child of the same menu, in a zero-size holder
+press on another part into a tab switch and lets any other press close the menu as before. The side dropdown (scheduling, checklists, or projects on a node) is a child of the same menu, in a zero-size holder
 with a fixed layout, positioned just past the menu's right edge: as a descendant of the grabbed actor it receives
 input, and the manager does not count a press on it as outside the menu.
 

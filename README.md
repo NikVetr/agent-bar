@@ -251,7 +251,11 @@ warning, amber or red when critical, with a count of any others. **Settings › 
 warning thresholds; with only warnings picked, it appears just when one fires. Clicking it opens the **Cluster** tab,
 headed by the cluster's CPU, busy cores and memory, which names each warning's host; **Snooze** keeps a warning off the top bar until it clears, or for at most a time you type (such as 5d or
 120h); parallel-workers keeps checking the host meanwhile. The tab also lists each host's cores, memory and
-disks, and failed jobs by project, with a note to copy for that project's agent and buttons that bring its VS Code
+disks. Click a node name to open a side dropdown with one pair of bars per project using job slots there.
+CPU shows reserved slots as a share of the node's job-slot budget. Memory shows the sampled footprint of the
+project's jobs as a share of the node's physical RAM. Fixed-worker queues report slots only. The dropdown
+refreshes about every 15 seconds while open.
+The tab also lists failed jobs by project, with a note to copy for that project's agent and buttons that bring its VS Code
 window forward. The shared drive's card names the host serving it and shows the scheduler's job slots in use, and
 the drive's throughput and that host's network over the last 10 minutes.
 
@@ -270,6 +274,7 @@ Everything the menu bar shows is available as JSON:
 ```
 agent-bar status        # open chats, their states and counts
 agent-bar queues        # queues and their progress
+agent-bar host-projects HOST  # projects, jobs, reserved CPU slots and sampled memory on one node
 agent-bar git           # git status of repositories holding open projects
 agent-bar info          # skills, hook health, instruction files
 agent-bar usage         # usage limits, with pace, run-out time and use by day

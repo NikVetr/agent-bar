@@ -235,6 +235,10 @@
 .tracker-cluster-row .tracker-cluster-card { width: 176px; }
 .tracker-cluster-card { spacing: 7px; padding: 10px 12px; border-radius: 9px; border: 1px solid #3a414b; background-color: #23272e; }
 .tracker-cluster-host { font-weight: bold; margin-left: 6px; color: #eef1f5; }
+.tracker-host-button { color: #a9cff9; border-radius: 3px; }
+.tracker-host-button:hover, .tracker-host-button:focus { background-color: #414a56; color: white; }
+.tracker-host-projects { spacing: 5px; }
+.tracker-host-project { font-weight: bold; padding-top: 6px; }
 .tracker-cluster-cpu { font-size: 15px; font-weight: bold; }
 .tracker-cluster-cores { height: 26px; }
 .tracker-cluster-memory { height: 6px; }
@@ -299,8 +303,9 @@
 /* The side dropdown, styled as a menu of its own. */
 .tracker-side-scroll { width: 370px; border: 1px solid #4a4f57; border-radius: 12px; background-color: #303030;
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45); }
-.tracker-side { width: 340px; spacing: 6px; padding: 14px 16px; }
+.tracker-side { width: 340px; spacing: 6px; padding: 6px 16px 14px; }
 .tracker-side-heading { spacing: 8px; }
+.tracker-side-title { padding: 14px 16px 0; }
 .tracker-side-close { padding: 0 8px; border-radius: 6px; font-size: 16px; color: #b4bbc5; }
 .tracker-side-close:hover { background-color: #343a44; color: #f3f5f8; }
 .tracker-side-ticket { spacing: 8px; padding: 8px 0 2px; border-top: 1px solid #3b414a; }

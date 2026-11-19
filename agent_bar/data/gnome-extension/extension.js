@@ -1121,7 +1121,7 @@ class Tracker {
     enable() {
         this._enabled = true;
         // A screen lock disables and re-enables this same object; disable() destroyed these widgets.
-        this._side = this._sideScroll = this._schedule = this._checklistView = null;
+        this._side = this._sidePanel = this._schedule = this._checklistView = this._hostView = null;
         this._body = this._scroll = this._pickerList = this._clusterCards = this._clusterBarSignature = this._quotaSignature = null;
         this._cancel = new Gio.Cancellable();
         this._borrowed = new Map();
@@ -1312,7 +1312,7 @@ class Tracker {
             this._openOn = null;
             if (!open) {
                 this._markPart();
-                this._schedule = this._checklistView = null;
+                this._schedule = this._checklistView = this._hostView = null;
             }
             if (open) {
                 // Each opening starts on a list, the last tab used unless settings say Conversations.
@@ -2040,7 +2040,12 @@ class Tracker {
                 this._clusterError = error.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.NOT_FOUND) ? null : error.message;
             }
             this._renderClusterBar();
-            if (this._clusterShown()) this._updateCluster();
+            if (this._clusterShown()) {
+                if (this._hostView && !this._cluster?.hosts.some(host => host.id === this._hostView.id))
+                    this._toggleHost(this._hostView.id);
+                this._updateCluster();
+                this._loadHostProjects();
+            }
         });
     }
 
@@ -2113,7 +2118,7 @@ class Tracker {
     // Switches the open dropdown to `tab`.
     _showTab(tab) {
         this._page = null;
-        this._picker = this._schedule = this._checklistView = null;
+        this._picker = this._schedule = this._checklistView = this._hostView = null;
         this._view = tab;
         this._buildMenu();
     }
@@ -2319,6 +2324,75 @@ class Tracker {
         return button;
     }
 
+    _hostButton(id) {
+        const button = new St.Button({label: id, can_focus: true, x_align: Clutter.ActorAlign.START,
+            y_align: Clutter.ActorAlign.CENTER, style_class: 'tracker-cluster-host tracker-host-button',
+            accessible_name: `Show projects using job slots on ${id}`});
+        this._tooltip(button, button.accessible_name);
+        button.connect('clicked', () => this._toggleHost(id));
+        return button;
+    }
+
+    _toggleHost(id) {
+        this._hostView = this._hostView?.id === id ? null : {id};
+        this._renderSide();
+    }
+
+    async _loadHostProjects() {
+        const host = this._hostView;
+        if (!host || host.loading || Date.now() < (host.nextRead || 0)) return;
+        host.loading = true;
+        try {
+            host.data = await this._run(['host-projects', host.id]);
+            host.error = null;
+        } catch (error) {
+            host.data = null;
+            host.error = error.message;
+        } finally {
+            host.loading = false;
+            host.nextRead = Date.now() + 15000;
+        }
+        if (this._enabled && this._hostView === host && this._clusterShown()) this._renderHostProjects(host);
+    }
+
+    _renderHostProjects(host) {
+        const box = host.body;
+        box.destroy_all_children();
+        const label = (text, style) => {
+            const actor = new St.Label({text, style_class: style});
+            actor.clutter_text.line_wrap = true;
+            actor.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+            box.add_child(actor);
+        };
+        if (!host.data) {
+            label(host.error || 'Reading job allocations…', host.error ? 'tracker-warning' : 'tracker-detail');
+            return;
+        }
+        const {projects, cpu_slots, memory_bytes, incomplete_fixed_slots} = host.data;
+        if (incomplete_fixed_slots) label('Some fixed-worker slot counts are unavailable.', 'tracker-warning');
+        if (!projects.length) {
+            if (!incomplete_fixed_slots) label('No job slots in use on this node.', 'tracker-detail');
+            return;
+        }
+        const gib = value => `${(value / 1024 ** 3).toFixed(1)} GiB`;
+        const measure = (name, value, total, format) => {
+            const ratio = value !== null && total > 0 ? value / total : null;
+            const amount = value === null ? 'unavailable' : format(value);
+            const share = ratio === null ? '' : ` / ${format(total)} · ${Math.round(100 * ratio)}%`;
+            label(`${name}   ${amount}${share}`, 'tracker-detail');
+            if (ratio !== null)
+                box.add_child(this._drawing((cr, w, h) => paintMemory(cr, w, h, Math.min(1, ratio), 0),
+                    {style_class: 'tracker-cluster-line', x_expand: true}));
+        };
+        for (const project of projects) {
+            const counts = [project.jobs && `${project.jobs} ${project.jobs === 1 ? 'job' : 'jobs'}`,
+                project.fixed_slots && `${project.fixed_slots} fixed ${project.fixed_slots === 1 ? 'slot' : 'slots'}`];
+            label([project.project, ...counts.filter(Boolean)].join(' · '), 'tracker-host-project');
+            measure('CPU slots reserved', project.cpu_slots, cpu_slots, String);
+            measure('Job memory', project.memory_mib === null ? null : project.memory_mib * 1024 ** 2, memory_bytes, gib);
+        }
+    }
+
     // One card per host, three to a row.
     _clusterHosts(columns, cluster) {
         const cards = new Map();
@@ -2328,20 +2402,21 @@ class Tracker {
                 row = new St.BoxLayout({x_expand: true, style_class: 'tracker-cluster-row'});
                 columns.add_child(row);
             }
-            cards.set(host.id, this._clusterCard(row));
+            cards.set(host.id, this._clusterCard(row, host.id));
         });
         return cards;
     }
 
-    _clusterCard(row) {
+    _clusterCard(row, id) {
         const card = new St.BoxLayout({vertical: true, x_expand: true, style_class: 'tracker-cluster-card'});
         const line = new St.BoxLayout();
         const dot = new St.Label({text: '●', y_align: Clutter.ActorAlign.CENTER});
-        const name = new St.Label({x_expand: true, style_class: 'tracker-cluster-host', y_align: Clutter.ActorAlign.CENTER});
+        const name = this._hostButton(id);
+        name.x_expand = true;
         const cpu = new St.Label({style_class: 'tracker-cluster-cpu', y_align: Clutter.ActorAlign.CENTER});
         for (const actor of [dot, name, cpu]) line.add_child(actor);
         card.add_child(line);
-        const view = {dots: [dot], name, cpu, perCore: [], memoryParts: [0, 0]};
+        const view = {dots: [dot], cpu, perCore: [], memoryParts: [0, 0]};
         // One drawn strip per host instead of an actor per core.
         view.cores = this._drawing((cr, width, height) => paintCores(cr, width, height, view.perCore),
             {style_class: 'tracker-cluster-cores', x_expand: true});
@@ -2382,8 +2457,10 @@ class Tracker {
                 view[{CPU: 'cores', Memory: 'memory', Disk: 'disk'}[title]] = area;
                 view[value] = new St.Label({style_class: 'tracker-cluster-value', y_align: Clutter.ActorAlign.CENTER});
                 view[note] = new St.Label({style_class: 'tracker-detail', y_align: Clutter.ActorAlign.CENTER});
-                const cells = [dot, new St.Label({text: name, style_class: 'tracker-cluster-host tracker-cluster-measure-host',
-                    y_align: Clutter.ActorAlign.CENTER}), area, view[value], view[note]];
+                const hostName = view === sharedDisk ? new St.Label({text: name, style_class: 'tracker-cluster-host'})
+                    : this._hostButton(name);
+                hostName.add_style_class_name('tracker-cluster-measure-host');
+                const cells = [dot, hostName, area, view[value], view[note]];
                 cells.forEach((cell, column) => grid.attach(cell, column, index, 1, 1));
             });
             columns.add_child(card);
@@ -2435,7 +2512,6 @@ class Tracker {
             const load = host.load ? `load ${host.load[0].toFixed(1)}` : '';
             const diskText = disk ? `${bytes(disk.root_free_bytes)} free of ${bytes(disk.root_total_bytes)}` : '';
             if (card.status) {
-                card.name.text = host.id;
                 card.cpu.text = off ? '—' : pct(host.cpu?.busy_pct);
                 setTone(card.cpu, busy === null ? 'muted' : loadStyle(busy));
                 // The status line names any memory pressure that is a warning.
@@ -2514,8 +2590,10 @@ class Tracker {
             const tone = issue.snoozed ? 'muted' : issue.critical ? 'failed' : 'attention';
             const line = new St.BoxLayout({style_class: 'tracker-cluster-measure-row'});
             line.add_child(this._glyph(issue.kind, issue.used, tone));
-            line.add_child(new St.Label({text: issue.host, style_class: 'tracker-cluster-host tracker-cluster-measure-host',
-                y_align: Clutter.ActorAlign.CENTER}));
+            const hostName = view.cards.has(issue.host) ? this._hostButton(issue.host)
+                : new St.Label({text: issue.host, style_class: 'tracker-cluster-host'});
+            hostName.add_style_class_name('tracker-cluster-measure-host');
+            line.add_child(hostName);
             const text = new St.Label({text: issue.text, x_expand: true, y_align: Clutter.ActorAlign.CENTER,
                 style_class: `tracker-cluster-stat tracker-${tone}`});
             text.clutter_text.ellipsize = Pango.EllipsizeMode.END;
@@ -2857,7 +2935,7 @@ class Tracker {
         // removeAll() only drops menu items; the list body and the side dropdown are plain actors.
         this._body?.destroy();
         this._sideHolder?.destroy();
-        this._sideHolder = this._side = this._sideScroll = null;
+        this._sideHolder = this._side = this._sidePanel = null;
         this._pickerList = null;
         this._pickerButtons = {};
         this._button.menu.removeAll();
@@ -2953,7 +3031,7 @@ class Tracker {
             button.connect('clicked', () => {
                 // The side dropdown belongs to the tab it was opened from.
                 this._view = value;
-                this._picker = this._schedule = this._checklistView = null;
+                this._picker = this._schedule = this._checklistView = this._hostView = null;
                 this._later(() => this._buildMenu());
             });
             tabs.add_child(button);
@@ -3020,16 +3098,19 @@ class Tracker {
         this._scroll.add_actor(this._section.actor);
         this._body.add_child(this._scroll);
         this._button.menu.box.add_child(this._body);
-        // A second dropdown beside this one, for scheduling a message to a chat or its project's checklists. It is a
-        // child of the menu, drawn outside the menu's edge from a holder of no size, so it gets input during the menu's
-        // grab and a press on it does not count as one outside the menu.
+        // The side dropdown shares the menu's input grab. Keep its heading outside the scrolled body
+        // so the close button stays reachable even when the side panel extends past the menu's edge.
         this._sideHolder = new St.Widget({layout_manager: new Clutter.FixedLayout(), width: 0, height: 0});
         this._side = new St.BoxLayout({vertical: true, style_class: 'tracker-side'});
-        this._sideScroll = new St.ScrollView({style_class: 'tracker-side-scroll', overlay_scrollbars: true, visible: false,
-            hscrollbar_policy: St.PolicyType.NEVER, vscrollbar_policy: St.PolicyType.AUTOMATIC});
-        this._sideScroll.set_style(`max-height: ${Main.layoutManager.primaryMonitor.height - 120}px;`);
-        this._sideScroll.add_actor(this._side);
-        this._sideHolder.add_child(this._sideScroll);
+        this._sidePanel = new St.BoxLayout({vertical: true, style_class: 'tracker-side-scroll', visible: false});
+        this._sideHeading = new St.BoxLayout({style_class: 'tracker-side-heading tracker-side-title'});
+        this._sidePanel.add_child(this._sideHeading);
+        const scroll = new St.ScrollView({overlay_scrollbars: true, hscrollbar_policy: St.PolicyType.NEVER,
+            vscrollbar_policy: St.PolicyType.AUTOMATIC});
+        scroll.set_style(`max-height: ${Main.layoutManager.primaryMonitor.height - 160}px;`);
+        scroll.add_actor(this._side);
+        this._sidePanel.add_child(scroll);
+        this._sideHolder.add_child(this._sidePanel);
         this._button.menu.box.insert_child_at_index(this._sideHolder, 0);
         this._renderSide();
         this._search.clutter_text.connect('text-changed', () => { this._togglePicker(null); this._renderRows(); });
@@ -4277,23 +4358,35 @@ class Tracker {
 
     _renderSide() {
         if (!this._side) return;
+        this._releaseFocus(this._button.menu, this._sidePanel);
+        this._sideHeading.destroy_all_children();
         this._side.destroy_all_children();
         const draft = this._schedule;
-        const shown = (!!draft || !!this._checklistView) && !this._page;
-        this._sideScroll.visible = shown;
+        const host = this._hostView && this._view === 'cluster' ? this._hostView : null;
+        const shown = (!!draft || !!this._checklistView || !!host) && !this._page;
+        this._sidePanel.visible = shown;
         if (!shown) return;
         this._later(() => this._placeSide());
+        const title = host ? `Jobs on ${host.id}` : this._checklistView ? 'Checklists' : 'Schedule a message';
+        this._sideHeading.add_child(new St.Label({text: title, x_expand: true, style_class: 'tracker-ticket-heading'}));
+        const close = new St.Button({label: '×', can_focus: true, accessible_name: 'Close', style_class: 'tracker-side-close'});
+        close.connect('clicked', () => {
+            if (host) this._toggleHost(host.id);
+            else if (this._checklistView) this._openChecklists({key: this._checklistView.key});
+            else this._openSchedule({key: draft.key});
+        });
+        this._sideHeading.add_child(close);
+        if (host) {
+            host.body = new St.BoxLayout({vertical: true, style_class: 'tracker-host-projects'});
+            this._side.add_child(host.body);
+            this._renderHostProjects(host);
+            this._loadHostProjects();
+            return;
+        }
         if (this._checklistView) {
             this._renderChecklists();
             return;
         }
-        const heading = new St.BoxLayout({style_class: 'tracker-side-heading'});
-        heading.add_child(new St.Label({text: 'Schedule a message', x_expand: true, style_class: 'tracker-ticket-heading',
-            y_align: Clutter.ActorAlign.CENTER}));
-        const close = new St.Button({label: '×', can_focus: true, accessible_name: 'Close', style_class: 'tracker-side-close'});
-        close.connect('clicked', () => this._openSchedule({key: draft.key}));
-        heading.add_child(close);
-        this._side.add_child(heading);
         const to = new St.Label({text: `to ${PROVIDERS[draft.provider]?.[0] || '•'} ${draft.title}`, style_class: 'tracker-detail'});
         to.clutter_text.line_wrap = true;
         this._side.add_child(to);
@@ -4377,7 +4470,7 @@ class Tracker {
 
     // Puts the side dropdown just right of the menu, level with its top.
     _placeSide() {
-        if (!this._sideScroll?.visible) return;
+        if (!this._sidePanel?.visible) return;
         const frame = this._button.menu.actor.bin || this._button.menu.actor;
         const [x, y] = frame.get_transformed_position();
         const [width] = frame.get_transformed_size();
@@ -4385,9 +4478,9 @@ class Tracker {
         const gap = 8;
         // Never past the screen's right edge: then it overlaps the menu's right side instead.
         const monitor = Main.layoutManager.primaryMonitor;
-        const sideWidth = this._sideScroll.get_preferred_width(-1)[1];
+        const sideWidth = this._sidePanel.get_preferred_width(-1)[1];
         const left = Math.min(x + width + gap, monitor.x + monitor.width - sideWidth - gap);
-        this._sideScroll.set_position(Math.round(left - holderX), Math.round(y - holderY));
+        this._sidePanel.set_position(Math.round(left - holderX), Math.round(y - holderY));
     }
 
     // The checklists column for one open chat's project, from the list button on its row; again on the same chat closes it.
@@ -4421,12 +4514,6 @@ class Tracker {
             parent.add_child(label);
             return label;
         };
-        const heading = new St.BoxLayout({style_class: 'tracker-side-heading'});
-        heading.add_child(new St.Label({text: 'Checklists', x_expand: true, style_class: 'tracker-ticket-heading', y_align: Clutter.ActorAlign.CENTER}));
-        const close = new St.Button({label: '×', can_focus: true, accessible_name: 'Close', style_class: 'tracker-side-close'});
-        close.connect('clicked', () => this._openChecklists({key: view.key}));
-        heading.add_child(close);
-        this._side.add_child(heading);
         add(`${view.folders.map(folder => folder.split('/').at(-1)).join(', ')} · for ${PROVIDERS[view.provider]?.[0] || '•'} ${view.title}`, 'tracker-detail');
         if (this._checklistError) add(this._checklistError, 'tracker-warning');
         if (!this._checklistData) {

@@ -15,6 +15,8 @@ def main():
     subs = parser.add_subparsers(dest='command', required=True)
     for name in ['serve', 'status', 'queues', 'git']:
         subs.add_parser(name)
+    hosts = subs.add_parser('host-projects', help='jobs, reserved CPU slots and sampled memory by project on a node')
+    hosts.add_argument('host')
     nav = subs.add_parser('navigate')
     nav.add_argument('key'); nav.add_argument('window')
     nav.add_argument('--input', action='store_true', help="also put the cursor in a Claude chat's input box")
@@ -72,6 +74,12 @@ def main():
         one.add_argument('--as', dest='sender')
     args = vars(parser.parse_args())
     name = args.pop('command')
+    if name == 'host-projects':
+        from .cluster import host_projects
+        try: result = host_projects(args['host'])
+        except (OSError, ValueError, KeyError, TypeError) as error: result = {'ok': False, 'error': str(error)}
+        print(json.dumps(result, ensure_ascii=False))
+        sys.exit(0 if result['ok'] else 1)
     if name in ['agents', 'send', 'inbox', 'reset-limit']:
         from . import messages
         try:
