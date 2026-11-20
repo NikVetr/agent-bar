@@ -161,6 +161,35 @@ class TrackerTests(unittest.TestCase):
         self.assertEqual(self.ledger.conversation('claude:a')['state'], 'finished')
         self.assertEqual(self.ledger.unread('claude:a'), ['Reply finished'])
 
+    def test_codex_review_follows_the_current_turn(self):
+        key = 'codex:a'
+        self.ledger.event(key, 'complete', 110, 'one')
+        self.ledger.event(key, 'start', 130, 'two')
+        self.ledger.event(key, 'complete', 131, 'one')  # A late hook for the old reply.
+        self.ledger.event(key, 'approval', 122, 'one')
+        self.assertEqual(self.ledger.conversation(key)['state'], 'working')
+        self.assertEqual(self.ledger.pending(key, 128), {'Queues finished': 128})
+        self.ledger.event(key, 'complete', 140, 'two')
+        self.assertEqual(self.ledger.pending(key), {'Reply finished': 140})
+
+    def test_codex_approval_must_still_be_pending_to_raise_the_button(self):
+        from agent_bar import service
+        with tempfile.TemporaryDirectory() as root:
+            tracker = service.Tracker(root)
+            tracker.rows = [{'key': 'codex:a', 'id': 'a', 'provider': 'codex', 'project': 'p', 'roots': []}]
+            tracker.ledger = self.ledger
+            def unread(at):
+                with unittest.mock.patch('time.time', return_value=at):
+                    return tracker.snapshot()['rows'][0]['unread']
+            self.ledger.event('codex:a', 'approval', 115)
+            self.assertEqual(unread(118), [])
+            self.ledger.event('codex:a', 'resume', 119)
+            self.assertEqual(unread(130), [])
+            self.ledger.event('codex:a', 'approval', 140)
+            self.assertEqual(unread(140 + service.CODEX_APPROVAL_GRACE), ['Approval needed'])
+            self.ledger.event('codex:a', 'complete', 158)
+            self.assertEqual(unread(158), ['Reply finished'])
+
     def test_latest_completion_survives_a_new_working_turn(self):
         self.ledger.event('claude:a', 'complete', 110)
         self.ledger.event('claude:a', 'message', 120)
@@ -1005,6 +1034,36 @@ class TrackerTests(unittest.TestCase):
             (logs / 'Codex.log').write_text('other line\n')
             from agent_bar.providers import Providers
             self.assertEqual(Providers(root).codex_open({'id': 'w', 'log': str(Path(root) / 'bridge')}), {'abc-1'})
+
+    def test_codex_window_recovers_a_submitted_turn_and_observes_its_close(self):
+        from agent_bar.providers import Providers, CODEX_SUBMIT
+        with tempfile.TemporaryDirectory() as root:
+            logs = Path(root) / 'openai.chatgpt'; logs.mkdir()
+            path = logs / 'Codex.log'
+            sid, other = [f'00000000-0000-4000-8000-{n:012d}' for n in range(2)]
+            window = {'id': 'w', 'log': str(Path(root) / 'bridge'), 'workspace': 'p',
+                      'tabs': [], 'roots': [], 'storage': None}
+            (logs / 'Codex.1.log').write_text(f'{CODEX_SUBMIT}{sid} summary=none\n')
+            path.write_text(f'[info] maybe_resume_started conversationId={other}\n')
+            provider = Providers(root)
+            with unittest.mock.patch.object(provider, 'codex_metadata', return_value={}):
+                rows, warnings = provider.discover(window)
+                self.assertEqual(warnings, [])
+                self.assertEqual([r['target'] for r in rows], [{'kind': 'codex-editor', 'conversation': sid}])
+            # Restart after all evidence of submission rotated away.
+            (logs / 'Codex.1.log').unlink()
+            restored = Providers(root)
+            restored.views = json.loads(json.dumps(provider.views))
+            self.assertEqual(restored.codex_open(window), {sid})
+            # A close written after the last poll but before rotation must still be read.
+            with path.open('a') as stream:
+                stream.write(f'thread_stream_view_activity_changed active=false conversationId={sid}\n')
+            path.rename(logs / 'Codex.1.log')
+            path.write_text('other line\n')
+            self.assertEqual(restored.codex_open(window), set())
+            with path.open('a') as stream:
+                stream.write(f'{CODEX_SUBMIT}{sid} summary=none\nActivating Codex extension\n')
+            self.assertEqual(restored.codex_open(window), set())
 
     def test_codex_view_opened_several_rotations_ago_is_still_open(self):
         with tempfile.TemporaryDirectory() as root:

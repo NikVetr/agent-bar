@@ -22,6 +22,7 @@ GIT_EVERY = 20  # Seconds between git status reads of the open projects' reposit
 GIT_IDLE = 300  # Seconds between them otherwise.
 GIT_WATCHED = 30  # The panel touches git-watched every 10 s while its Git tab is open; this old, it has closed.
 HEARTBEAT = 10  # Seconds an unchanged snapshot stands before it is written again, so the panel can tell the service runs.
+CODEX_APPROVAL_GRACE = 10  # Brief permission checks often resolve automatically while Codex is still working.
 USAGE_EVERY = 60  # Seconds between reads of the usage limits Claude Code and Codex record.
 CHECKLIST_EVERY = 30  # Seconds between scans of the open projects' task checklists.
 TICKET_EVERY = 30  # Seconds a ticket listing stands while nothing it reads changes; its waits on times pass meanwhile.
@@ -43,6 +44,7 @@ class Tracker:
         self.state_file = self.root / 'ledger.json'
         self.ledger = Ledger(json.loads(self.state_file.read_text()) if self.state_file.exists() else None)
         self.providers = Providers()
+        self.providers.views = self.ledger.data.setdefault('codex_views', {})
         self.rows, self.windows, self.warnings = [], {}, []
         self.quiet, self.scheduler, self.settings_stamp = QUIET, True, None
         self.git_enabled, self.repositories, self.git = True, Repositories(), None
@@ -212,6 +214,10 @@ class Tracker:
         for path in [*(self.root / 'windows').glob('*.json'), *(self.root / 'windows').glob('*.next')]:
             with contextlib.suppress(OSError):
                 if now - path.stat().st_mtime > STALE_WINDOW: path.unlink()
+        for key in list(self.providers.views):
+            if key not in self.windows and not (self.root / 'windows' / f'{key}.json').exists():
+                self.providers.views.pop(key)
+                self.providers.logs.pop(key, None)
         # A return record outlives its window only while that window could come back.
         returns = self.ledger.data.get('returns', {})
         for id in list(returns):
@@ -250,6 +256,10 @@ class Tracker:
             names = project_names(row['roots']) | {row['project']}
             matched = [projects[name] for name in names if name in projects]
             pending = self.ledger.pending(row['key'], queues_at.get(row['key']))
+            if (row['provider'] == 'codex' and 'Approval needed' in pending
+                    and now - pending['Approval needed'] < CODEX_APPROVAL_GRACE):
+                del pending['Approval needed']
+                if shown == 'approval needed': shown = 'working'
             rows.append({**{k: v for k, v in row.items() if k != 'path'},
                          'state': shown,
                          'state_at': state['state_at'], 'turn': state['turn'],
@@ -323,8 +333,8 @@ class Tracker:
         result = await self.bridge(window_id, {'type': 'navigate', 'target': row['target'], 'input': input})
         # Recheck the live source before acknowledging a sidebar.
         if row['target']['kind'] == 'codex-sidebar':
-            current = self.providers.codex_open(window)
-            if row['id'] not in current:
+            current, _ = self.providers.discover(self.windows[window_id])
+            if not any(r['key'] == key and r['target'] == row['target'] for r in current):
                 raise ValueError('The sidebar conversation changed during navigation')
         return {'ok': True, 'input': bool(result.get('input'))}
 

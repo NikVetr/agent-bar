@@ -31,7 +31,9 @@ state and unread reasons stay separate in the data.
 
 - **VS Code:** each window's bridge publishes its folders, open tabs, provider versions and a heartbeat. Codex's
   per-window view-activity log establishes open sidebar conversations, and its custom-editor URIs identify editor
-  ones. When several Codex IDs have no matching tab in one window, its bridge opens the requested ID in a Codex
+  ones. The collector saves those IDs per live bridge and reads the final events from a rotated log.
+  If the original view event has rotated away, a turn submitted from that window can recover its conversation ID.
+  For a recovered ID, or when several Codex IDs have no matching tab in one window, the bridge opens the requested ID in a Codex
   editor and verifies the active tab's URI. Claude's saved panel-session IDs are matched against live tab labels,
   with ambiguous matches rejected.
 - **Terminals and apps** (`providers.py`): Claude Code CLI sessions from `~/.claude/sessions/<pid>.json`, checked

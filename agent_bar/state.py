@@ -92,12 +92,12 @@ class Ledger:
         seen = row.setdefault('seen', {})
         identity = turn or (row.get('turn') if kind != 'message' else None)
         # 'hold': the turn ended, but the agent will be woken for pending work, so it is no reply to review.
-        # A completion is a duplicate only if the chat did nothing since the last one; otherwise its turn's start
-        # was missed and it carries the previous turn's identity.
+        # An explicit turn ID identifies a duplicate even if the next turn already started. For an inferred
+        # ID, intervening activity can belong to a turn whose start was missed.
         if (kind in ['complete', 'failure', 'hold'] and identity and seen.get(kind) == identity
-                and (kind == 'failure' or row.get('completed_at', 0) >= row['state_at'])):
+                and (turn or kind == 'failure' or row.get('completed_at', 0) >= row['state_at'])):
             return
-        if kind in ['complete', 'failure', 'hold'] and identity:
+        if kind in ['complete', 'failure', 'hold'] and identity and at >= row.get('began', 0):
             seen[kind] = identity
         if kind in ['complete', 'hold']:
             row['completed_at'] = max(at, row.get('completed_at', 0))
@@ -120,7 +120,8 @@ class Ledger:
                 if row['reasons'].get(name, at) < at: del row['reasons'][name]
         reasons = {'complete': 'Reply finished', 'failure': 'Turn failed',
                    'question': 'Input needed', 'approval': 'Approval needed'}
-        if kind in reasons and at >= self.data['since']:
+        if (kind in reasons and at >= self.data['since']
+                and (kind not in ['question', 'approval'] or at >= row['state_at'])):
             row['reasons'][reasons[kind]] = max(at, row['reasons'].get(reasons[kind], 0))
 
     def acknowledge(self, key, cutoff):
@@ -132,6 +133,9 @@ class Ledger:
         queues finish."""
         row = self.conversation(key)
         reasons = {name: at for name, at in row['reasons'].items() if at > row['ack']}
+        if key.startswith('codex:'):
+            for name in ('Reply finished', 'Turn failed'):
+                if name in reasons and reasons[name] < row.get('began', 0): del reasons[name]
         if queues_at and queues_at > row['ack']: reasons['Queues finished'] = queues_at
         return reasons
 

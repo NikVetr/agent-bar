@@ -50,10 +50,13 @@ class Tail:
         self.inode, self.offset, self.partial = None, 0, b''
         self.truncated = False
 
-    def read(self):
-        stat = self.path.stat()
+    def read(self, on_reset=None):
+        prefix = []
         with self.path.open('rb') as stream:
-            if self.inode != stat.st_ino or stat.st_size < self.offset:
+            stat = os.fstat(stream.fileno())
+            reset = self.inode != stat.st_ino or stat.st_size < self.offset
+            if reset:
+                if on_reset: prefix = on_reset(self.path, self)
                 self.inode, self.partial = stat.st_ino, b''
                 self.offset = max(0, stat.st_size - self.initial)
                 self.truncated = bool(self.offset)
@@ -62,11 +65,11 @@ class Tail:
                     stream.readline()
                     self.offset = stream.tell()
             stream.seek(self.offset)
-            chunk = stream.read(2 * 1024 * 1024)
+            chunk = stream.read(self.initial if reset and on_reset else 2 * 1024 * 1024)
             self.offset = stream.tell()
         parts = (self.partial + chunk).split(b'\n')
         self.partial = parts.pop()
-        return [line.decode('utf8', errors='replace') for line in parts]
+        return prefix + [line.decode('utf8', errors='replace') for line in parts]
 
 
 class Background:
@@ -197,10 +200,11 @@ def workspace_panels(storage):
     return data
 
 
-CODEX_VIEW = ('thread_stream_view_activity_changed', 'Activating Codex extension')
+CODEX_SUBMIT = '[info] Reasoning summary turn-start config resolved conversationId='
+CODEX_VIEW = ('thread_stream_view_activity_changed', 'Activating Codex extension', CODEX_SUBMIT)
 
 
-def codex_view_history(path, limit=32 * 1024 * 1024):
+def codex_view_history(path, previous=None, limit=32 * 1024 * 1024):
     """The view-activity and activation lines of a window's rotated Codex logs (Codex.1.log newest), oldest first, back
     to the last activation: the views open now are the ones these lines leave active. Found by byte search, since a
     window can keep several 5 MB rotations."""
@@ -209,27 +213,32 @@ def codex_view_history(path, limit=32 * 1024 * 1024):
     for number in range(1, 100):
         rotated = path.with_name(f'Codex.{number}.log')
         try:
-            if rotated.stat().st_size > limit: break
-            data = rotated.read_bytes()
+            with rotated.open('rb') as stream:
+                stat = os.fstat(stream.fileno())
+                if stat.st_size > limit: break
+                last = previous is not None and previous.inode == stat.st_ino
+                if previous is not None and last: stream.seek(previous.offset - len(previous.partial))
+                data = stream.read()
         except FileNotFoundError: break
-        picked, start = [], 0
-        while True:
-            hits = [index for index in (data.find(marker, start) for marker in markers) if index >= 0]
-            if not hits: break
-            begin = data.rfind(b'\n', 0, min(hits)) + 1
-            end = data.find(b'\n', min(hits))
-            end = len(data) if end < 0 else end
-            picked.append(data[begin:end].decode(errors='replace'))
-            start = end + 1
+        starts = set()
+        for marker in markers:
+            index = data.find(marker)
+            while index >= 0:
+                starts.add(data.rfind(b'\n', 0, index) + 1)
+                index = data.find(marker, index + len(marker))
+        picked = []
+        for begin in sorted(starts):
+            end = data.find(b'\n', begin)
+            if end >= 0: picked.append(data[begin:end].decode(errors='replace'))
         found = picked + found
-        if any(CODEX_VIEW[1] in line for line in picked): break
+        if last or any(CODEX_VIEW[1] in line for line in picked): break
     return found
 
 
 class Providers:
     def __init__(self, home=None, proc='/proc'):
         self.home, self.proc = Path(home or Path.home()), proc
-        self.logs, self.active, self.tails = {}, {}, {}
+        self.logs, self.views, self.tails = {}, {}, {}
         self.metadata, self.backgrounds, self.titles = {}, {}, {}
         self.names, self.names_stamp = {}, None
         self.copilot_logs, self.copilot_final = {}, {}
@@ -256,25 +265,40 @@ class Providers:
             self.backgrounds[sid] = Background(found[0])
         return self.backgrounds[sid]
 
-    def codex_open(self, window):
+    def codex_open(self, window, editors=()):
         path = Path(window['log']).parent / 'openai.chatgpt/Codex.log'
         key = window['id']
         # Codex rotates its log at 5 MB, and a view opened days ago may be logged several rotations back.
-        lines = codex_view_history(path) if key not in self.logs else []
         tail = self.logs.setdefault(key, Tail(path, initial=32 * 1024 * 1024))
-        active = self.active.setdefault(key, set())
-        for line in lines + tail.read():
+        saved = self.views.get(key, {})
+        active = set(saved.get('active', []))
+        submitted = saved.get('submitted')
+        try:
+            lines = tail.read(on_reset=codex_view_history)
+        except FileNotFoundError:
+            # The current name can be absent between rotating the log and opening its replacement.
+            if key not in self.views: raise
+            lines = []
+        for line in lines:
             if 'Activating Codex extension' in line:
                 active.clear()
+                submitted = None
+            if CODEX_SUBMIT in line:
+                sid = line.partition(CODEX_SUBMIT)[2].partition(' ')[0]
+                if UUID.fullmatch(sid) and sid not in active and sid not in editors:
+                    submitted = sid
             if 'thread_stream_view_activity_changed' not in line:
                 continue
             match = re.search(r'active=(true|false) conversationId=([0-9a-f-]+)', line)
             if match:
+                if match[2] == submitted: submitted = None
                 if match[1] == 'true': active.add(match[2])
                 else: active.discard(match[2])
         if tail.truncated:
             raise ValueError('Codex view log exceeds bootstrap limit; reopen its views to establish a baseline')
-        return active
+        if submitted in editors: submitted = None
+        self.views[key] = {'active': sorted(active), 'submitted': submitted}
+        return active | ({submitted} if submitted else set())
 
     def codex_metadata(self, ids):
         if not ids: return {}
@@ -511,11 +535,6 @@ class Providers:
             # The tab's label is the title shortened; the transcript has it whole.
             rows.append({'provider': 'claude', 'id': sid, 'title': self.claude_title(sid) or tab['label'],
                          'target': {'kind': 'tab', **tab}})
-        try:
-            active = set(self.codex_open(window))
-        except (OSError, ValueError) as error:
-            active = set()
-            warnings.append(f'Codex view source unavailable: {error}')
         custom = {}
         for tab in window['tabs']:
             if tab['viewType'] != 'chatgpt.conversationEditor' or not tab['uri']:
@@ -524,9 +543,13 @@ class Providers:
             parts = uri.path.split('/')
             if uri.scheme == 'openai-codex' and len(parts) >= 3 and parts[1] == 'local' and UUID.fullmatch(parts[2]):
                 custom[parts[2]] = tab
-                active.add(parts[2])
             else:
                 warnings.append('Codex panel has no local conversation ID yet')
+        active = set(custom)
+        try:
+            active.update(self.codex_open(window, custom))
+        except (OSError, ValueError) as error:
+            warnings.append(f'Codex view source unavailable: {error}')
         try:
             metadata = self.codex_metadata(active)
         except (OSError, sqlite3.Error) as error:
@@ -537,7 +560,7 @@ class Providers:
             meta = metadata.get(sid, {})
             if sid in custom:
                 target = {'kind': 'tab', **custom[sid]}
-            elif len(sidebars) == 1:
+            elif len(sidebars) == 1 and sid != self.views.get(window['id'], {}).get('submitted'):
                 target = {'kind': 'codex-sidebar'}
             else:
                 # The log identifies the thread, but focusing the sidebar could show another one.

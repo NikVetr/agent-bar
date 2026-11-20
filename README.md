@@ -108,6 +108,8 @@ again, leaving your history and settings (`--purge` deletes those too).
   renumber from 1. **Settings › Top bar** sets the most buttons and,
   with checkboxes, which reasons give one: a finished reply, a failed turn, a question, an approval, finished queues
   (all on by default), and a stop at a 5-hour or weekly usage limit (off by default; the Chats tab shows those chats).
+  Codex permission requests must stay pending for 10 seconds to raise a review button. Finished replies and questions
+  appear on the next refresh.
 
 Clicking the counts opens the dropdown, with these tabs:
 
