@@ -77,6 +77,8 @@ const SETTINGS = [
         [[true, 'On'], [false, 'Off']]],
     ['Integrations', 'wake', 'Wake idle chats', 'A message starts a turn in an idle Claude Code chat (up to a week after its last turn), or in a Codex chat open in VS Code once any turn in progress ends', false,
         [[true, 'On'], [false, 'Off']]],
+    ['Integrations', 'resumeCodex', 'Resume Codex after reset', 'Continue open VS Code threads after their five-hour usage limit resets', false,
+        [[true, 'On'], [false, 'Off']]],
     ['Integrations', 'claudeUsage', 'Read Claude limits', 'Every 10 minutes, ask Claude for your usage limits with Claude Code\'s sign-in, '
         + 'as /usage does (an undocumented endpoint); otherwise they update only when Claude Code fetches them', false,
         [[true, 'On'], [false, 'Off']]],
@@ -207,7 +209,7 @@ function shareWidth(widths, limits, extra) {
 function limitedConversations(rows) {
     const unique = new Map();
     for (const row of rows)
-        if (row.limited && ['tab', 'codex-sidebar'].includes(row.target?.kind) && !unique.has(row.key)) unique.set(row.key, row);
+        if (row.limited && ['tab', 'codex-sidebar', 'codex-editor'].includes(row.target?.kind) && !unique.has(row.key)) unique.set(row.key, row);
     return [...unique.values()].sort((a, b) => (a.provider !== 'codex') - (b.provider !== 'codex'));
 }
 

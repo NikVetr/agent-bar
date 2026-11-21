@@ -142,10 +142,11 @@ test('continue lists open VS Code chats a usage limit stopped, Codex first, and 
     const limited = {at: 1, resets: null};
     const rows = [{key: 'claude:a', provider: 'claude', target: {kind: 'tab'}, limited},
         {key: 'codex:b', provider: 'codex', target: {kind: 'codex-sidebar'}, limited},
+        {key: 'codex:e', provider: 'codex', target: {kind: 'codex-editor'}, limited},
         {key: 'claude:a', provider: 'claude', target: {kind: 'tab'}, limited},
         {key: 'claude:c', provider: 'claude', target: {kind: 'window'}, limited},
         {key: 'codex:d', provider: 'codex', target: {kind: 'tab'}, limited: null}];
-    assert.equal(f.context.limitedConversations(rows).map(r => r.key).join(','), 'codex:b,claude:a');
+    assert.equal(f.context.limitedConversations(rows).map(r => r.key).join(','), 'codex:b,codex:e,claude:a');
     f.tracker._run = async args => { f.calls.push(Array.from(args)); return {ok: true, input: args.includes('--input')}; };
     const result = await f.tracker._activate(f.row, f.snapshot, 'focus', true);
     assert.deepEqual(f.calls.find(c => c[0] === 'navigate'), ['navigate', 'codex:one', 'window-a', '--input']);

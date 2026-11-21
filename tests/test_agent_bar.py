@@ -128,7 +128,9 @@ class TrackerTests(unittest.TestCase):
         self.ledger.event('claude:a', 'limit', 115)
         self.assertNotIn('limited', self.ledger.conversation('claude:a'))
         # Continuing: Codex gets the note queued, a Claude chat gets the text back to paste, and nothing else qualifies.
-        tracker = service.Tracker.__new__(service.Tracker)
+        state = tempfile.TemporaryDirectory()
+        self.addCleanup(state.cleanup)
+        tracker = service.Tracker(state.name)
         tracker.ledger = self.ledger
         tab = {'kind': 'tab'}
         tracker.rows = [{'key': 'claude:a', 'provider': 'claude', 'id': 'a', 'target': tab},
@@ -143,6 +145,101 @@ class TrackerTests(unittest.TestCase):
             self.ledger.event('codex:b', 'start', 150)
             with self.assertRaisesRegex(ValueError, 'No usage limit'): asyncio.run(tracker.go_on('codex:b'))
         self.assertEqual(queued, [('b', service.CONTINUE)])
+
+    def test_codex_five_hour_reset_queues_once_for_the_same_open_thread(self):
+        import asyncio
+        from agent_bar import messages, service
+        with tempfile.TemporaryDirectory() as root:
+            tracker = service.Tracker(root)
+            rollout = Path(root) / 'thread.jsonl'
+            row = {'provider': 'codex', 'key': 'codex:a', 'id': 'a', 'path': str(rollout),
+                   'target': {'kind': 'codex-editor'}}
+            now = int(time.time())
+            reset = now + 40
+            def append(kind, at, **data):
+                with rollout.open('a') as out:
+                    out.write(json.dumps({'timestamp': at, 'type': 'event_msg', 'payload': {'type': kind, **data}}) + '\n')
+            def read():
+                for event in tracker.providers.events(row): tracker.ledger.event(row['key'], *event)
+            def deliver(at):
+                with unittest.mock.patch('time.time', return_value=at): asyncio.run(tracker.resume_due_codex())
+            append('task_started', now, turn_id='one')
+            append('token_count', now + 1, rate_limits={'primary': {'used_percent': 100, 'window_minutes': 300,
+                                                                   'resets_at': reset}})
+            read()
+            append('token_count', now + 2, rate_limits={'limit_id': 'premium', 'primary': None})
+            append('task_complete', now + 3, turn_id='one', error={'codex_error_info': 'usage_limit_exceeded'})
+            read()
+            self.assertEqual(tracker.ledger.conversation('codex:a')['limited']['resets'], reset)
+            tracker.rows = [row]
+            with unittest.mock.patch.object(messages, 'codex_queue') as queue:
+                deliver(reset)  # Off.
+                tracker.resume_codex = True
+                deliver(reset - 1)
+                tracker.rows = []
+                deliver(reset)
+                queue.assert_not_called()
+                tracker.rows = [row, row]
+                deliver(reset)
+                queue.assert_called_once_with('a', 'Continue from where you left off.')
+                tracker = service.Tracker(root)
+                tracker.rows, tracker.resume_codex = [row], True
+                read()  # Replaying the same stop after restarting preserves its delivery.
+                deliver(reset + 1)
+                asyncio.run(tracker.go_on('codex:a'))
+                self.assertEqual(queue.call_count, 1)
+                append('task_started', reset + 2, turn_id='two')
+                read()
+                self.assertNotIn('limited', tracker.ledger.conversation('codex:a'))
+
+    def test_codex_reset_excludes_weekly_credit_and_unconfirmed_stops(self):
+        from agent_bar.providers import Providers
+        window = {'used_percent': 100, 'window_minutes': 300, 'resets_at': 190}
+        weekly = {**window, 'window_minutes': 10080, 'resets_at': 600}
+        for rates, message in [
+            ({'primary': weekly}, ''), ({'primary': window, 'secondary': weekly}, ''),
+            ({'primary': window, 'rate_limit_reached_type': 'workspace_member_credits_depleted'}, ''),
+            ({'primary': window}, 'Your workspace is out of credits.'), ({}, ''),
+            ({'primary': {**window, 'used_percent': 99}}, ''), ({'primary': {**window, 'resets_at': 50}}, ''),
+        ]:
+            with self.subTest(rates=rates, message=message), tempfile.TemporaryDirectory() as root:
+                rollout = Path(root) / 'thread.jsonl'
+                events = [{'type': 'token_count', 'rate_limits': rates},
+                          {'type': 'task_complete', 'error': {'codex_error_info': 'usage_limit_exceeded', 'message': message}}]
+                rollout.write_text(''.join(json.dumps({'timestamp': 100, 'type': 'event_msg', 'payload': p}) + '\n' for p in events))
+                self.assertEqual(Providers(root).events({'provider': 'codex', 'key': 'codex:a', 'path': str(rollout)}),
+                                 [('limit', 100, None)])
+
+    def test_codex_continuation_retry_and_cancellation(self):
+        import asyncio
+        from agent_bar import messages, service
+        with tempfile.TemporaryDirectory() as root:
+            tracker = service.Tracker(root)
+            tracker.resume_codex = True
+            key = 'codex:a'
+            tracker.rows = [{'provider': 'codex', 'id': 'a', 'key': key, 'target': {'kind': 'tab'}}]
+            tracker.ledger.event(key, 'limit', 100, 'one', 115)
+            def run(at):
+                with unittest.mock.patch('time.time', return_value=at):
+                    asyncio.run(tracker.resume_due_codex())
+            with unittest.mock.patch.object(messages, 'codex_queue', side_effect=ValueError('unavailable')) as queue:
+                run(115)
+                run(116)
+                self.assertEqual(queue.call_count, 1)
+                tracker.ledger.event(key, 'start', 125, 'two')
+                run(180)
+                self.assertEqual(queue.call_count, 1)
+                tracker.ledger.event(key, 'limit', 190, 'two', 200)
+                uncertain = ValueError('queue timed out')
+                uncertain.__cause__ = subprocess.TimeoutExpired('codex queue', 30)
+                queue.side_effect = uncertain
+                run(200)
+                run(300)
+                self.assertEqual(queue.call_count, 2)
+                queue.side_effect = None
+                asyncio.run(tracker.go_on(key))
+                run(310)
+                self.assertEqual(queue.call_count, 3)
 
     def test_duplicate_hook_and_transcript_completion_stays_reviewed(self):
         self.ledger.event('codex:a', 'complete', 110, 'turn-1')

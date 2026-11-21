@@ -5,6 +5,7 @@ import fcntl
 import json
 import os
 import sqlite3
+import subprocess
 import time
 import uuid
 from pathlib import Path
@@ -55,6 +56,8 @@ class Tracker:
         self.usage, self.usage_error = None, None
         # Whether the user turned on Agent Bar's own reads of Claude's limits (off unless chosen).
         self.claude_reads = False
+        self.resume_codex = False
+        self.continuing = set()
         # 'on', 'off' (turned off in settings) or 'missing' (parallel-workers is not set up here).
         self.scheduler_status = 'on'
         self.queue_mtime = max((q.get('observed', 0) for q in self.ledger.data['queues'].values()), default=0)
@@ -80,11 +83,12 @@ class Tracker:
                 self.git_enabled = saved.get('git', True) is not False
                 self.messages_enabled = saved.get('messages', True) is not False
                 self.claude_reads = saved.get('claudeUsage', False) is True
+                self.resume_codex = saved.get('resumeCodex', False) is True
                 self.settings_stamp = stamp
         except FileNotFoundError:
             self.quiet, self.settings_stamp = QUIET, None
             self.scheduler = self.git_enabled = self.messages_enabled = True
-            self.claude_reads = False
+            self.claude_reads = self.resume_codex = False
         except (OSError, ValueError, TypeError) as error:
             warnings.append(f'Panel settings unreadable: {error}')
         for path in (self.root / 'windows').glob('*.json'):
@@ -107,9 +111,10 @@ class Tracker:
         windows.update((window['id'], window) for window in extra)
         for row in rows:
             try:
-                for kind, at, turn in self.providers.events(row):
+                for event in self.providers.events(row):
+                    kind, at = event[:2]
                     if not at: continue
-                    self.ledger.event(row['key'], kind, at, turn)
+                    self.ledger.event(row['key'], *event)
                     if kind in TURNS: self.ledger.turn(row['roots'] or [row['project']], at)
             except (OSError, ValueError) as error:
                 warnings.append(f'{row["title"]}: event source unavailable ({error})')
@@ -174,12 +179,15 @@ class Tracker:
         if content != self.snapshot_written or now - self.snapshot_at >= HEARTBEAT:
             atomic_json(self.root / 'snapshot.json', snapshot)
             self.snapshot_written, self.snapshot_at = content, now
+        self.save_ledger()
+        for path in consumed:
+            path.unlink(missing_ok=True)
+
+    def save_ledger(self):
         serialized = json.dumps(self.ledger.data, sort_keys=True)
         if serialized != self.last_saved:
             atomic_json(self.state_file, self.ledger.data)
             self.last_saved = serialized
-        for path in consumed:
-            path.unlink(missing_ok=True)
 
     def read_checklists(self, now):
         """The open projects' task checklists into checklists.json, which the panel reads when it shows them, with the
@@ -230,6 +238,7 @@ class Tracker:
 
     def snapshot(self):
         rows, now = [], time.time()
+        continuation_warnings = []
         scheduler = self.scheduler_status == 'on'
         projects = self.ledger.queue_counts() if scheduler else {}
         # A project's finished queues need review in its most recently active open conversation,
@@ -244,6 +253,11 @@ class Tracker:
             queues_at[key] = max(finished[name], queues_at.get(key, 0))
         for row in self.rows:
             state = self.ledger.conversation(row['key'])
+            limit = state.get('limited') or {}
+            if limit.get('delivery') == 'dispatching' and row['key'] not in self.continuing:
+                continuation_warnings.append(f'{row["title"]}: could not confirm Codex continuation. Check the chat before using Continue.')
+            elif limit.get('delivery') == 'failed':
+                continuation_warnings.append(f'{row["title"]}: {limit.get("delivery_error")}')
             shown = 'unknown' if row.get('source_stale') else state['state']
             background = self.providers.backgrounds.get(row['id']) if row['provider'] == 'claude' else None
             pending = bool(background and background.waiting(now))
@@ -275,7 +289,7 @@ class Tracker:
         queues = [{**queue, 'counted': self.ledger.counted(queue)}
                   for queue in self.ledger.data['queues'].values()] if scheduler else []
         return {'schema': 1, 'updated': time.time(), 'cutoff': time.time(),
-                'rows': rows, 'windows': list(self.windows.values()), 'warnings': self.warnings,
+                'rows': rows, 'windows': list(self.windows.values()),
                 'counts': {**{provider: sum(r['provider'] == provider for r in unique.values())
                               for provider in PROVIDERS},
                            'working': sum(r['state'] == 'working' for r in unique.values()),
@@ -290,7 +304,8 @@ class Tracker:
                 'usage': self.usage, 'usage_error': self.usage_error,
                 'tickets': self.ticket_summary(now),
                 'checklists': self.checklist_counts,
-                'returns': self.ledger.data.get('returns', {})}
+                'returns': self.ledger.data.get('returns', {}),
+                'warnings': list(dict.fromkeys(self.warnings + continuation_warnings))}
 
     def ticket_summary(self, now):
         """Tickets for the panel, reread when the database or the queues change, or every TICKET_EVERY."""
@@ -338,16 +353,51 @@ class Tracker:
                 raise ValueError('The sidebar conversation changed during navigation')
         return {'ok': True, 'input': bool(result.get('input'))}
 
-    async def go_on(self, key):
+    async def go_on(self, key, automatic=False):
         """Have an open VS Code chat a usage limit stopped go on: a Codex chat gets CONTINUE queued, which its
         VS Code starts as a turn; for a Claude chat, the text comes back for the panel to put in its input box."""
         rows = [row for row in self.rows if row['key'] == key and (row.get('target') or {}).get('kind') in messages.VSCODE]
         if not rows: raise ValueError('This chat is not open in VS Code')
-        if not self.ledger.conversation(key).get('limited'): raise ValueError('No usage limit stopped this chat')
+        limit = self.ledger.conversation(key).get('limited')
+        if not limit: raise ValueError('No usage limit stopped this chat')
         if rows[0]['provider'] == 'claude': return {'ok': True, 'paste': CONTINUE}
         if rows[0]['provider'] != 'codex': raise ValueError('Only Claude and Codex chats can be continued')
-        await asyncio.to_thread(messages.codex_queue, rows[0]['id'], CONTINUE)
+        if key in self.continuing: raise ValueError('A continuation is already being queued')
+        if limit.get('delivery') == 'queued': return {'ok': True, 'queued': True}
+        # Claim the stop durably before touching Codex. A crash or timeout can leave delivery uncertain;
+        # in that case only an explicit Continue can retry it.
+        self.continuing.add(key)
+        try:
+            limit['delivery'] = 'dispatching'
+            self.save_ledger()
+            await asyncio.to_thread(messages.codex_queue, rows[0]['id'],
+                                    'Continue from where you left off.' if automatic else CONTINUE)
+            limit['delivery'] = 'queued'
+            limit.pop('delivery_error', None)
+        except ValueError as error:
+            limit['delivery_error'] = str(error)
+            if not isinstance(error.__cause__, subprocess.TimeoutExpired):
+                limit['attempts'] = limit.get('attempts', 0) + 1
+                limit['retry_at'] = time.time() + 60
+                limit['delivery'] = 'failed'
+            raise
+        finally:
+            self.continuing.discard(key)
+            self.save_ledger()
         return {'ok': True, 'queued': True}
+
+    async def resume_due_codex(self):
+        for row in self.rows:
+            if not self.resume_codex: return
+            if row['provider'] != 'codex' or (row.get('target') or {}).get('kind') not in messages.VSCODE: continue
+            state = self.ledger.conversation(row['key'])
+            limit = state.get('limited') or {}
+            now = time.time()
+            if (not limit.get('resets') or limit['resets'] > now or row.get('source_stale')
+                    or state['state'] not in ('failed', 'finished') or limit.get('delivery') in ('dispatching', 'queued')
+                    or limit.get('attempts', 0) >= 3 or limit.get('retry_at', 0) > now): continue
+            try: await self.go_on(row['key'], automatic=True)
+            except ValueError as error: print(f'Codex continuation failed for {row["key"]}: {error}', flush=True)
 
     async def show_scm(self, window_id):
         window = self.windows.get(window_id)
@@ -469,11 +519,14 @@ class Tracker:
         server = await asyncio.start_unix_server(self.client, path=str(socket))
         os.chmod(socket, 0o600)
         refresh = asyncio.create_task(self.read_git())
-        delivery = sending = None
+        delivery = sending = continuing = None
         limits = asyncio.create_task(self.read_usage())
         async with server:
             while True:
-                try: self.collect()
+                try:
+                    self.collect()
+                    if self.resume_codex and (continuing is None or continuing.done()):
+                        continuing = asyncio.create_task(self.resume_due_codex())
                 except Exception as error:
                     print(f'Collection failed: {type(error).__name__}: {error}', flush=True)
                 # Wake-up notes held back while their Codex chats were in a turn go once the turn has ended.

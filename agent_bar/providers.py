@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
-from . import checklists
+from . import checklists, usage
 from .hook import automatic
 
 UUID = re.compile(r'^[0-9a-f]{8}-[0-9a-f-]{27}$', re.I)
@@ -245,6 +245,7 @@ class Providers:
         self.antigravity = {}  # Conversation id -> its summary database, for events.
         # Codex chat key -> checklist path -> when it last edited it, and the folder its turns run in.
         self.codex_checklists, self.codex_cwd = {}, {}
+        self.codex_session_reset = {}  # Latest exhausted five-hour window reported in each thread's current turn.
         self.external_at, self.external_found = 0, ([], [], [])
         # Process ids found not to be Codex CLI or app clients, skipped until PROC_RECHECK passes, which covers a
         # process that starts Codex after it was looked at.
@@ -606,6 +607,19 @@ class Providers:
                 result.append((kind, epoch(data.get('timestamp')), None))
                 continue
             if data.get('type') != 'event_msg': continue
+            key = row['key']
+            if payload.get('type') == 'task_started':
+                self.codex_session_reset.pop(key, None)
+            rates = payload.get('rate_limits')
+            if isinstance(rates, dict):
+                windows = usage.codex_windows(rates)
+                if (rates.get('rate_limit_reached_type') not in (None, 'rate_limit_reached')
+                        or rates.get('spend_control_reached')):
+                    self.codex_session_reset.pop(key, None)
+                elif windows:
+                    exhausted = [w for w in windows if w['percent'] >= 100]
+                    self.codex_session_reset[key] = (exhausted[0]['resets_at'] if len(exhausted) == 1
+                                                     and exhausted[0]['key'] == 'session' else None)
             kind = {'task_started': 'start', 'task_complete': 'complete',
                     'turn_aborted': 'interrupted', 'task_failed': 'failure',
                     'user_message': 'message', 'patch_apply_end': 'resume',
@@ -614,7 +628,13 @@ class Providers:
                 kind = 'resume'
             # A queued Agent Bar note starts a turn, but no person wrote it.
             if kind == 'message' and automatic(payload.get('message')): kind = 'start'
-            if kind == 'complete' and (payload.get('error') or {}).get('codex_error_info') == 'usage_limit_exceeded':
+            error = payload.get('error')
+            if kind in ('complete', 'failure') and isinstance(error, dict) and error.get('codex_error_info') == 'usage_limit_exceeded':
+                at = epoch(data.get('timestamp'))
+                reset = self.codex_session_reset.get(key)
+                if reset and at < reset <= at + usage.FIVE_HOURS and 'out of credits' not in (error.get('message') or '').lower():
+                    result.append(('limit', at, payload.get('turn_id'), reset))
+                    continue
                 kind = 'limit'
             if kind:
                 result.append((kind, epoch(data.get('timestamp')), payload.get('turn_id')))

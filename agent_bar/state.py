@@ -85,7 +85,10 @@ class Ledger:
             row['began'] = max(at, row.get('began', 0))
             if row.get('limited', {}).get('at', at) < at: del row['limited']
         if kind == 'limit':
-            if at >= row.get('began', 0): row['limited'] = {'at': at, 'resets': resets}
+            previous = row.get('limited', {})
+            if at >= row.get('began', 0):
+                if at > previous.get('at', 0): row['limited'] = {'at': at, 'resets': resets}
+                elif at == previous.get('at') and resets: previous['resets'] = resets
             kind = 'failure'
         # A provider hook and its transcript can report the same completion.
         # Preserve the original notification timestamp after it was reviewed.

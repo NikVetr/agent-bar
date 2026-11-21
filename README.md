@@ -121,6 +121,9 @@ Clicking the counts opens the dropdown, with these tabs:
   Codex ones, which start it on their own, and brings each Claude one forward with that text at the end of its input
   box, after any draft, for you to send. If Agent Bar cannot be sure the cursor is in that box (several Claude chats on
   show in the window, or a bridge from before this feature), it leaves the text on the clipboard instead.
+  Enable **Settings › Integrations › Resume Codex after reset** to continue an open VS Code thread automatically
+  when its recorded five-hour limit resets. Starting another turn clears the pending continuation.
+  Weekly limits, depleted workspace credits, and stops with an unknown reset still have the manual **Continue** action.
 - **Queues**: job queues from parallel-workers, by project, with progress, ETA and failed jobs. A project's finished
   queues count until a chat there starts a turn, or until you press Clear beside the project. **Adjust** on a queue,
   and under **Pool and hosts**, changes what the scheduler offers there (see below).

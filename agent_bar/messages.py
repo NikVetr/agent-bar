@@ -20,7 +20,7 @@ BUSY = {'working', 'input needed', 'approval needed'}  # Tracker states during a
 KEEP = 30 * 86400  # Read messages are kept this long.
 RECENT = 40  # Messages the panel lists.
 RECEIVERS = {'claude', 'codex'}  # Providers whose hooks show a recipient its unread messages.
-VSCODE = {'tab', 'codex-sidebar'}  # Targets of chats in VS Code, whose own Codex server runs queued messages.
+VSCODE = {'tab', 'codex-sidebar', 'codex-editor'}  # Its own Codex server runs queued messages.
 QUEUED_HOLD = 2 * 3600  # A queued Codex note whose turn has not started in this long no longer counts as pending.
 
 

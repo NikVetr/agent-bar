@@ -54,7 +54,11 @@ state and unread reasons stay separate in the data.
   a week after they finished once no count includes them and the monitor no longer lists them, closed chats idle for
   30 days, and files left by closed windows. A turn a usage limit stopped (Claude's StopFailure with `rate_limit`, with the reset time
   from the transcript's closing API error; Codex's `task_complete` with `usage_limit_exceeded`) marks the chat
-  `limited` until its next turn starts.
+  `limited` until its next turn starts. For Codex, the collector pairs the stop with that thread's quota readings
+  from the same turn. When only its five-hour window is exhausted, it saves the reset time. With automatic
+  continuation enabled, the service queues a continuation by thread ID once the reset passes and the thread is
+  open in VS Code. Manual and scheduled continuations share a durable delivery record. If delivery was interrupted
+  with an unknown outcome, the manual Continue action can retry it.
 - **Inventory** (`inventory.py`): every saved Claude and Codex chat, rescanned daily at idle priority, reading only
   appended transcript data.
 - **Git** (`git.py`): every 20 s, off the collection loop, the `git status` of each repository holding an open folder,
