@@ -1130,6 +1130,7 @@ class Tracker {
         this._returnsLoaded = false;
         this._filter = 'all';
         this._historyFilter = 'all';
+        this._historyQuery = '';
         this._queueFilter = 'counted';
         this._gitFilter = 'all';
         this._messageFilter = 'all';
@@ -2911,6 +2912,7 @@ class Tracker {
         }
     }
 
+    /** @param {string | null} style */
     _item(text, style = null) {
         const item = new PopupMenu.PopupMenuItem(text, {reactive: false});
         if (style) item.label.add_style_class_name(style);
@@ -3019,8 +3021,9 @@ class Tracker {
             this._button.menu.addMenuItem(item);
             return item;
         };
-        this._search = new St.Entry({hint_text: 'Search conversations, projects, or queues…',
+        this._search = new St.Entry({hint_text: this._view === 'history' ? 'Search messages and titles · repo:name to narrow' : 'Search conversations, projects, or queues…',
             can_focus: true, x_expand: true, style_class: 'tracker-search'});
+        if (this._view === 'history') this._search.set_text(this._historyQuery);
         const tabs = new St.BoxLayout({style_class: 'tracker-filters tracker-tabs'});
         // Integrations turned off in settings take their tabs with them.
         const shown = {queues: this._setting('scheduler'), cluster: this._setting('scheduler') && !!this._cluster,
@@ -3115,7 +3118,11 @@ class Tracker {
         this._sideHolder.add_child(this._sidePanel);
         this._button.menu.box.insert_child_at_index(this._sideHolder, 0);
         this._renderSide();
-        this._search.clutter_text.connect('text-changed', () => { this._togglePicker(null); this._renderRows(); });
+        this._search.clutter_text.connect('text-changed', () => {
+            if (this._view === 'history') this._historyQuery = String(this._search.text);
+            this._togglePicker(null);
+            this._renderRows();
+        });
         this._button.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
         this._footer = this._item('', 'tracker-footer');
         this._button.menu.addMenuItem(this._footer);
@@ -5045,15 +5052,42 @@ class Tracker {
         }
     }
 
+    /** @param {string} query @param {string} repo */
+    _historyMessageMatches(query, repo) {
+        const previous = this._historyLookup;
+        if (previous && previous.query === query && previous.repo === repo && previous.updated === this._inventory.updated) return previous;
+        if (previous?.timer) GLib.source_remove(previous.timer);
+        const lookup = {query, repo, updated: this._inventory.updated, hits: new Map(), loading: !!query, timer: 0, error: ''};
+        this._historyLookup = lookup;
+        if (query) lookup.timer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 250, () => {
+            lookup.timer = 0;
+            this._run(['search-history', ...(repo ? ['--repo', repo] : []), '--', query]).then(data => {
+                for (const hit of data.results) lookup.hits.set(hit.key, hit);
+            }).catch(error => { lookup.error = error.message; }).finally(() => {
+                lookup.loading = false;
+                if (this._enabled && this._historyLookup === lookup && this._button.menu.isOpen &&
+                    this._view === 'history' && !this._page) this._renderRows();
+            });
+            return GLib.SOURCE_REMOVE;
+        });
+        return lookup;
+    }
+
     _renderHistory(snapshot, query) {
         if (!this._inventory) {
             this._section.addMenuItem(this._item(this._inventoryError || 'Loading saved conversations…',
                 this._inventoryError ? 'tracker-warning' : 'tracker-empty'));
             return;
         }
+        const scope = /^repo:(?:"([^"]+)"|(\S+))(?:\s+|$)/.exec(query.trim());
+        const repo = scope ? (scope[1] || scope[2]).replace(/\/+$/, '') || '/' : '';
+        const words = query.trim().slice(scope?.[0].length || 0).trim();
+        const lookup = this._historyMessageMatches(words, repo);
         const open = new Map(snapshot.rows.filter(row => row.target).map(row => [row.key, row]));
         const matches = this._inventory.conversations.filter(row => (this._historyFilter === 'all' || row.provider === this._historyFilter)
-            && `${row.title} ${row.folder} ${row.provider}`.toLowerCase().includes(query));
+            && (!repo || row.folder.toLowerCase().split('/').includes(repo) || row.folder.toLowerCase() === repo
+                || row.folder.toLowerCase().startsWith(repo === '/' ? '/' : repo + '/'))
+            && (lookup.hits.has(row.key) || `${row.title} ${row.folder} ${row.provider}`.toLowerCase().includes(words)));
         // A search expands every folder, so it shows only the most recent matches.
         const rows = query ? matches.slice(0, HISTORY_SEARCH_LIMIT) : matches;
         const order = this._setting('historyOrder');
@@ -5070,14 +5104,17 @@ class Tracker {
             this._projectSection(key, items[0].project, parent,
                 `${items.length} chat${items.length === 1 ? '' : 's'}${live ? ` · ${live} open` : ''}${total} · ${age(items[0].last)}`,
                 false, window ? this._windowControls(window.id, snapshot) : null,
-                body => { for (const row of items) this._historyItem(row, open.get(row.key), snapshot, body); });
+                body => { for (const row of items) this._historyItem(row, open.get(row.key), snapshot, body, lookup.hits.get(row.key)); });
         }
         if (matches.length > rows.length)
             this._section.addMenuItem(this._item(`${matches.length - rows.length} more matches · refine the search`, 'tracker-empty'));
-        if (!rows.length) this._section.addMenuItem(this._item('No matching saved conversations', 'tracker-empty'));
+        if (lookup.error) this._section.addMenuItem(this._item(lookup.error, 'tracker-warning'));
+        else if (lookup.loading) this._section.addMenuItem(this._item('Searching messages…', 'tracker-empty'));
+        else if (!rows.length) this._section.addMenuItem(this._item('No matching saved conversations', 'tracker-empty'));
     }
 
-    _historyItem(row, live, snapshot, section) {
+    /** @param {{role: string, excerpt: string} | undefined} hit */
+    _historyItem(row, live, snapshot, section, hit) {
         const item = new PopupMenu.PopupBaseMenuItem({reactive: row.available, can_focus: row.available});
         item._ornamentLabel?.hide();
         item.add_style_class_name('tracker-conversation');
@@ -5087,6 +5124,11 @@ class Tracker {
         const detail = new St.Label({text: historyDetail(row), style_class: 'tracker-detail'});
         detail.clutter_text.ellipsize = Pango.EllipsizeMode.END;
         box.add_child(detail);
+        if (hit) {
+            const excerpt = new St.Label({text: `${hit.role === 'user' ? 'You' : 'Agent'} · ${hit.excerpt}`, style_class: 'tracker-detail'});
+            excerpt.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+            box.add_child(excerpt);
+        }
         item.add_child(box);
         const [chip, style] = live ? ['Open', 'open'] : row.available ? ['Resume', 'muted'] : ['Folder missing', 'failed'];
         item.add_child(new St.Label({text: chip, style_class: `tracker-chip tracker-chip-${style}`, y_align: Clutter.ActorAlign.CENTER}));
@@ -5450,6 +5492,8 @@ class Tracker {
 
     disable() {
         this._enabled = false;
+        if (this._historyLookup?.timer) GLib.source_remove(this._historyLookup.timer);
+        this._historyLookup = null;
         const focus = global.stage.get_key_focus();
         if (focus && [Main.panel, this._button.menu.actor, this._nav.menu.actor]
             .some(actor => actor.contains(focus))) global.stage.set_key_focus(null);

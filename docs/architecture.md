@@ -60,7 +60,10 @@ state and unread reasons stay separate in the data.
   open in VS Code. Manual and scheduled continuations share a durable delivery record. If delivery was interrupted
   with an unknown outcome, the manual Continue action can retry it.
 - **Inventory** (`inventory.py`): every saved Claude and Codex chat, rescanned daily at idle priority, reading only
-  appended transcript data.
+  appended transcript data. The same pass indexes direct message text in `history-search.sqlite` using SQLite FTS5.
+  The search index and inventory track the file identity and byte offset. Replacing or truncating a transcript rebuilds
+  its entries. History queries run through the CLI after a short typing delay and return one excerpt per matching
+  conversation. The GNOME panel reads the excerpts on demand.
 - **Git** (`git.py`): every 20 s, off the collection loop, the `git status` of each repository holding an open folder,
   with `GIT_OPTIONAL_LOCKS=0` so it never takes the index lock an agent's own git command needs. It never fetches.
 - **Usage** (`usage.py`): once a minute, off the collection loop, the usage limits Claude Code caches in

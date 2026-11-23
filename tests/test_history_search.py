@@ -1,0 +1,98 @@
+import json
+import sqlite3
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from agent_bar import history_search, inventory
+
+
+class HistorySearchTests(unittest.TestCase):
+    def test_only_direct_dialogue_is_searchable(self):
+        def extract(provider, entry):
+            return history_search.dialogue(json.dumps(entry).encode(), provider)
+        def codex(role, parts, **fields):
+            return extract('codex', {'type': 'response_item', 'payload': {
+                'type': 'message', 'role': role, 'content': parts, **fields}})
+        def text(value):
+            return {'type': 'input_text', 'text': value}
+        self.assertEqual(codex('user', [text('<environment_context>hidden'), text('search this')]), ('user', 'search this'))
+        self.assertEqual(codex('user', [text('<div>valid code example')]), ('user', '<div>valid code example'))
+        self.assertIsNone(codex('developer', [text('hidden instructions')]))
+        self.assertIsNone(codex('assistant', [text('hidden reasoning')], channel='analysis'))
+        self.assertIsNone(codex('assistant', [text('hidden command')], recipient='functions.exec'))
+        self.assertIsNone(codex('user', [text('# AGENTS.md instructions for /test')]))
+        self.assertEqual(codex('user', [text('# Context from my IDE setup:\nsecret IDE text\n## My request for Codex:\nfind me')]),
+                         ('user', 'find me'))
+        self.assertEqual(codex('user', [text('<ide_selection>editor text</ide_selection>\nactual request')]),
+                         ('user', 'actual request'))
+        for top in ('user', 'assistant'):
+            blocks = [{'type': 'text', 'text': 'visible'}, {'type': 'thinking', 'thinking': 'hidden'}]
+            entry = {'type': top, 'message': {'role': top, 'content': blocks}}
+            self.assertEqual(extract('claude', entry), (top, 'visible'))
+            for extra in [{'isSidechain': True}, {'isMeta': True}, {'isCompactSummary': True}, {'type': 'api-request-blob'}]:
+                self.assertIsNone(extract('claude', {**entry, **extra}))
+        self.assertIsNone(extract('claude', {'type': 'user', 'message': {'role': 'user', 'content': [
+            {'type': 'tool_result', 'content': 'result'}, {'type': 'text', 'text': 'injected'}]}}))
+
+    def test_incremental_index_scope_excerpt_and_deletions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            index, output = home/'index.sqlite', home/'inventory.json'
+            sid = '11111111-2222-3333-4444-555555555555'
+            path = home/'.claude/projects/p'/f'{sid}.jsonl'
+            path.parent.mkdir(parents=True)
+            other = path.with_name('22222222-2222-3333-4444-555555555555.jsonl')
+            def msg(role, body, repo='my repo'):
+                return json.dumps({'type': role, 'message': {'role': role, 'content': body}, 'cwd': f'/repos/{repo}',
+                                   'timestamp': '2026-11-01T12:01:00Z'}, separators=(',', ':')) + '\n'
+            path.write_text(msg('user', 'A keyword about maple trees') + msg('assistant', 'Maple foliage'))
+            other.write_text(msg('user', 'maple elsewhere', 'other'))
+            def hits(q, scope=None): return history_search.search(q, scope, index)['results']
+            with patch.object(inventory, 'OUTPUT', output), patch.object(history_search, 'INDEX', index), patch('pathlib.Path.home', return_value=home):
+                inventory.refresh()
+                self.assertEqual(len(hits('maple')), 2)
+                match, = hits('mapl', 'MY REPO')
+                self.assertEqual((match['role'], match['excerpt']), ('assistant', 'Maple foliage'))
+                self.assertEqual(hits('absent maple'), [])
+                self.assertEqual(hits('" OR *'), [])
+                self.assertEqual(hits('maple', '/repos/my repo'), [match])
+                self.assertEqual(len(hits('maple', '/repos')), 2)
+                self.assertEqual(hits('maple', '/rep'), [])
+                appended = msg('user', 'walnut trees')
+                with path.open('a') as out: out.write(appended[:-2])
+                inventory.refresh()
+                self.assertEqual(hits('walnut'), [])
+                with path.open('a') as out: out.write(appended[-2:])
+                inventory.refresh()
+                self.assertEqual(hits('walnut')[0]['role'], 'user')
+                inventory.refresh()
+                with sqlite3.connect(index) as db: self.assertEqual(db.execute('select count(*) from messages').fetchone()[0], 4)
+                path.write_text(msg('user', 'new content'))
+                other.unlink()
+                inventory.refresh()
+                self.assertEqual(hits('maple'), [])
+                self.assertEqual(len(hits('content')), 1)
+
+    def test_existing_codex_inventory_is_backfilled_and_archived_threads_leave_search(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            index, output, rollout = home/'index.sqlite', home/'inventory.json', home/'rollout.jsonl'
+            def message(role, text):
+                return json.dumps({'type': 'response_item', 'payload': {'type': 'message', 'role': role,
+                    'content': [{'type': 'output_text' if role == 'assistant' else 'input_text', 'text': text}]}},
+                    separators=(',', ':')) + '\n'
+            rollout.write_text(message('user', 'A question') + message('assistant', 'An apricot answer'))
+            database = home/'.codex/state_5.sqlite'
+            database.parent.mkdir()
+            with sqlite3.connect(database) as db:
+                db.execute('CREATE TABLE threads (id, title, name, cwd, created_at, updated_at, rollout_path, archived, source)')
+                db.execute("INSERT INTO threads VALUES ('a','Fruit',null,?,1,2,?,0,'vscode')", (str(home), str(rollout)))
+            output.write_text(json.dumps(inventory.build(home)))
+            with patch.object(inventory, 'OUTPUT', output), patch.object(history_search, 'INDEX', index), patch('pathlib.Path.home', return_value=home):
+                inventory.refresh()
+                self.assertEqual(history_search.search('apricot', path=index)['results'][0]['key'], 'codex:a')
+                with sqlite3.connect(database) as db: db.execute('UPDATE threads SET archived=1')
+                inventory.refresh()
+                self.assertEqual(history_search.search('apricot', path=index)['results'], [])

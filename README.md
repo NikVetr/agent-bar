@@ -137,8 +137,10 @@ Clicking the counts opens the dropdown, with these tabs:
   **Start** opens a new Claude Code chat in the ticket's folder, in VS Code (opening a window there if none is), with
   the ticket as its prompt in the input box, unsent, for you to read and send. A copy button copies the same prompt,
   for a Codex chat or any other; **Done**, **Drop** and **Reopen** close or reopen a ticket.
-- **History**: every saved Claude and Codex chat, including closed ones, with the same copy button; Resume reopens one
-  in its folder.
+- **History**: search saved Claude and Codex chats by title, folder, or words in your messages and the agents’ replies.
+  Type `memory share` to search all projects or `repo:agent-bar memory share` to narrow the search. Use quotes around
+  folder names with spaces. A message match shows an excerpt and who wrote it. Each word can match the start of a word
+  in the same message. Click a result to open or resume the conversation. The index updates nightly and with **⟳**.
 - **Quota**: each provider's usage limits as Claude Code and Codex record them on this computer: the weekly limit, the
   5-hour one, and a weekly limit for one model such as Fable, with that model's share. Each shows what is left, when it
   resets, its pace over the last day (or this window's average), when that pace would use the rest and how that compares
@@ -285,13 +287,15 @@ agent-bar info          # skills, hook health, instruction files
 agent-bar usage         # usage limits, with pace, run-out time and use by day
 agent-bar ticket list   # tickets and what each waits for
 agent-bar inventory     # rescan saved chats
+agent-bar search-history --repo agent-bar "memory share"  # matching messages as JSON; omit --repo for all folders
 agent-bar resume <key>  # reopen a saved chat in VS Code
 ```
 
 ## Privacy
 
 On Linux, Agent Bar keeps its state in `~/.local/state/agent-bar` and its settings in `~/.config/agent-bar`, readable
-only by you. Its hooks record when turns start and end, never prompt or reply text. It contacts no server, unless you
+only by you. The History scan stores searchable message text in a local SQLite index. It skips tool calls, tool
+results, reasoning, and client-supplied context. Its hooks record when turns start and end, never prompt or reply text. It contacts no server, unless you
 turn on **Read Claude limits**: then every 10 minutes it asks Anthropic's usage endpoint (`api.anthropic.com`, the one
 Claude Code's `/usage` reads, which is undocumented) for your limits, sending Claude Code's sign-in token from
 `~/.claude/.credentials.json`. It never renews or changes that sign-in; when it has expired, Agent Bar waits for Claude

@@ -37,6 +37,9 @@ def main():
     remove.add_argument('--purge', action='store_true', help='also delete history, messages and settings')
     subs.add_parser('doctor', help='check each part and say how to fix what is missing (JSON)')
     subs.add_parser('inventory', help='rescan saved conversations into inventory.json')
+    search = subs.add_parser('search-history', help='search saved user and assistant messages for keywords (JSON)')
+    search.add_argument('query')
+    search.add_argument('--repo', help='project name or full folder path')
     subs.add_parser('info', help='skills, Agent Bar health and instruction files (JSON)')
     subs.add_parser('usage', help='usage limits Claude Code and Codex recorded, with pace, run-out time and use by day (JSON)')
     resume = subs.add_parser('resume', help='reopen an inventoried conversation in VS Code')
@@ -135,6 +138,12 @@ def main():
     if name in ['inventory', 'resume']:
         from . import inventory
         try: result = inventory.refresh() if name == 'inventory' else inventory.resume(args['key'])
+        except (OSError, ValueError, sqlite3.Error) as error: result = {'ok': False, 'error': str(error)}
+        print(json.dumps(result, ensure_ascii=False))
+        sys.exit(0 if result['ok'] else 1)
+    if name == 'search-history':
+        from .history_search import search
+        try: result = search(args['query'], args['repo'])
         except (OSError, ValueError, sqlite3.Error) as error: result = {'ok': False, 'error': str(error)}
         print(json.dumps(result, ensure_ascii=False))
         sys.exit(0 if result['ok'] else 1)

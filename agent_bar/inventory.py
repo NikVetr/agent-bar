@@ -6,9 +6,10 @@ import json
 import re
 import sqlite3
 import time
+from contextlib import closing
 from pathlib import Path
 
-from . import bridge
+from . import bridge, history_search
 from .providers import UUID, epoch
 from .state import ROOT, atomic_json
 
@@ -37,7 +38,11 @@ def scan(path, state, inspect):
                 if 0 < at - state['last'] <= IDLE: state['active'] += at - state['last']
                 state['first'] = state['first'] or at
                 state['last'] = max(state['last'], at)
-            inspect(line, state)
+            try: inspect(line, state)
+            except json.JSONDecodeError:
+                # A few historical transcripts contain damaged complete lines. Skip just that record,
+                # keeping the count alongside its file offset so refresh reports incomplete coverage.
+                state['invalid_lines'] = state.get('invalid_lines', 0) + 1
     return state
 
 
@@ -63,13 +68,38 @@ def codex_line(line, state):
             if not text.startswith(('<', '# AGENTS.md')): state['prompts'] += 1
 
 
-def build(home=None, previous=None):
+def build(home=None, previous=None, index=None):
     home = Path(home or Path.home())
     files = (previous or {}).get('files', {})
-    result, seen = [], {}
+    result, seen, keys = [], {}, set()
+
+    def read(path, key, inspect):
+        state = files.get(str(path), {})
+        if index is None: return scan(path, state, inspect)
+        keys.add(key)
+        saved = index.execute('SELECT path,inode,offset FROM sources WHERE key=?', (key,)).fetchone()
+        stat = path.stat()
+        if (saved != (str(path), state.get('inode'), state.get('offset')) or state.get('inode') != stat.st_ino
+                or stat.st_size < state.get('offset', 0)):
+            if saved: index.execute('DELETE FROM messages WHERE key=?', (key,))
+            state = {}
+        provider = key.split(':', 1)[0]
+        insert = index.execute
+        def index_line(line, totals):
+            prompts = totals['prompts']
+            inspect(line, totals)
+            message = history_search.dialogue(line, provider)
+            if message:
+                if message[0] == 'user' and totals['prompts'] == prompts: totals['prompts'] += 1
+                insert('INSERT INTO messages(key,role,body) VALUES(?,?,?)', (key, *message))
+        state = scan(path, state, index_line)
+        index.execute('INSERT OR REPLACE INTO sources(key,path,inode,offset) VALUES(?,?,?,?)',
+                      (key, str(path), state['inode'], state['offset']))
+        return state
+
     for path in sorted((home / '.claude/projects').glob('*/*.jsonl')):
         if not UUID.fullmatch(path.stem): continue
-        state = scan(path, files.get(str(path), {}), claude_line)
+        state = read(path, f'claude:{path.stem}', claude_line)
         seen[str(path)] = state
         if state['prompts'] and state.get('cwd'):
             result.append({'provider': 'claude', 'id': path.stem, 'folder': state['cwd'],
@@ -86,7 +116,7 @@ def build(home=None, previous=None):
         for sid, title, cwd, created, updated, rollout in threads:
             path = Path(rollout)
             if not path.exists(): continue
-            state = scan(path, files.get(str(path), {}), codex_line)
+            state = read(path, f'codex:{sid}', codex_line)
             seen[str(path)] = state
             if state['prompts']:
                 result.append({'provider': 'codex', 'id': sid, 'folder': cwd, 'title': title or sid[:8],
@@ -96,15 +126,31 @@ def build(home=None, previous=None):
         row.update(key=f'{row["provider"]}:{row["id"]}', project=Path(row['folder']).name or row['folder'],
                    available=Path(row['folder']).is_dir())
     result.sort(key=lambda row: -row['last'])
+    if index is not None:
+        index.executemany('UPDATE sources SET folder=?,title=? WHERE key=?',
+                          [(row['folder'], row['title'], row['key']) for row in result])
+        for (key,) in index.execute('SELECT key FROM sources').fetchall():
+            if key not in keys:
+                index.execute('DELETE FROM messages WHERE key=?', (key,))
+                index.execute('DELETE FROM sources WHERE key=?', (key,))
     return {'schema': 1, 'updated': time.time(), 'conversations': result, 'files': seen}
 
 
 def refresh():
-    previous = json.loads(OUTPUT.read_text()) if OUTPUT.exists() else None
     started = time.time()
-    inventory = build(previous=previous)
-    atomic_json(OUTPUT, inventory)
-    return {'ok': True, 'conversations': len(inventory['conversations']), 'seconds': round(time.time() - started, 1)}
+    OUTPUT.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path = history_search.INDEX
+    path.touch(mode=0o600, exist_ok=True)
+    with closing(sqlite3.connect(path)) as db, db:
+        db.execute('PRAGMA journal_mode=WAL')
+        db.execute('BEGIN IMMEDIATE')
+        history_search.initialize(db)
+        previous = json.loads(OUTPUT.read_text()) if OUTPUT.exists() else None
+        inventory = build(previous=previous, index=db)
+        db.execute('PRAGMA user_version=1')
+        atomic_json(OUTPUT, inventory)
+    return {'ok': True, 'conversations': len(inventory['conversations']), 'seconds': round(time.time() - started, 1),
+            'invalid_lines': sum(s.get('invalid_lines', 0) for s in inventory['files'].values())}
 
 
 def resume(key):
