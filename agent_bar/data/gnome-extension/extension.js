@@ -1197,6 +1197,10 @@ class Tracker {
         // does not show yet, by control.
         this._controls = null;
         this._controlsAt = 0;
+        this._dependenciesAt = 0;
+        /** @type {Set<number>} */
+        this._coveredNumbers = new Set();
+        this._dependencies = null;
         this._controlsError = null;
         this._openControls = new Set();
         this._controlInputs = new Map();
@@ -1384,8 +1388,10 @@ class Tracker {
             if (this._setting('scheduler')) this._readCluster();
             if (this._button.menu.isOpen && this._view === 'git' && !this._page) this._watchGit();
             // The scheduler's controls are described again every 10 s while the Queues tab shows them.
-            if (this._button.menu.isOpen && this._view === 'queues' && !this._page && Date.now() - this._controlsAt > 10000)
-                this._loadControls();
+            if (this._button.menu.isOpen && this._view === 'queues' && !this._page) {
+                if (Date.now() - this._controlsAt > 10000) this._loadControls();
+                this._loadQueueDependencies();
+            }
             return GLib.SOURCE_CONTINUE;
         });
         this._read();
@@ -3315,6 +3321,8 @@ class Tracker {
         if (kept > 0) this._scrollTo(kept);
         this._renderedPlace = place;
         this._releaseFocus(this._button.menu, this._section.actor);
+        this._gateRows = null;
+        this._gateWarning = null;
         this._section.removeAll();
         this._projectKeys = [];
         const snapshot = this._menuSnapshot;
@@ -3536,16 +3544,75 @@ class Tracker {
         this._section.addMenuItem(item);
     }
 
+    async _loadQueueDependencies() {
+        const numbers = this._dependencyNumbers;
+        if (this._dependenciesLoading || !numbers?.length || this._menuSnapshot?.scheduler !== 'on') return;
+        if (Date.now() - (this._dependenciesAt || 0) < 30000 && numbers.every(n => this._coveredNumbers?.has(n))) return;
+        this._dependenciesLoading = true;
+        try {
+            this._dependencies = await this._run(['queue-dependencies', ...numbers.map(String)]);
+        } catch (error) {
+            this._dependencies = {error: error instanceof Error ? error.message : String(error)};
+        } finally {
+            this._dependenciesLoading = false;
+            this._dependenciesAt = Date.now();
+            this._coveredNumbers = new Set(numbers);
+        }
+        if (!this._enabled || this._view !== 'queues' || this._page || !this._button.menu.isOpen) return;
+        this._updateQueueGates();
+        if (numbers !== this._dependencyNumbers) this._loadQueueDependencies();
+    }
+
+    _updateQueueGates() {
+        if (this._gateWarning) {
+            const loading = this._dependenciesLoading && this._dependencyNumbers?.some(n => !this._coveredNumbers?.has(n));
+            const error = this._dependencies?.error;
+            this._gateWarning.visible = !!(error || loading);
+            this._gateWarning.label.text = error ? `Queue dependencies unavailable · ${error}` : loading ? 'Reading queue dependencies…' : '';
+        }
+        for (const [id, box] of this._gateRows || []) {
+            const deps = this._dependencies?.links?.[id] || [];
+            const error = this._dependencies?.errors?.[id];
+            const tip = error ? `Prerequisites unavailable · ${error}` : !deps.length ? '' : 'Prerequisite queues\n' +
+                deps.map(/** @param {{number:number, name:string, detail:string, project?:string}} d */ d =>
+                    `#${d.number} · ${d.name}${d.project ? ' (' + d.project + ')' : ''} · ${d.detail}`).join('\n');
+            box.visible = !!tip;
+            if (box.accessible_name === tip) continue;
+            box.destroy_all_children();
+            box.accessible_name = tip;
+            if (!tip) continue;
+            const label = (/** @type {string} */ text, style = 'tracker-detail') =>
+                box.add_child(new St.Label({text, style_class: style, y_align: Clutter.ActorAlign.CENTER}));
+            label('←');
+            if (error) { label('?', 'tracker-attention'); continue; }
+            // Keep the row narrow and show failed prerequisites first. The tooltip includes the entire list.
+            const ordered = [...deps].sort((a, b) => Number(b.state === 'failed') - Number(a.state === 'failed'));
+            for (const dep of ordered.slice(0, 3)) {
+                const failed = dep.state === 'failed', uncertain = ['unknown', 'verify'].includes(dep.state);
+                const style = failed ? 'tracker-failed' : uncertain ? 'tracker-attention' : dep.state === 'complete' ? 'tracker-finished' : 'tracker-detail';
+                label(`#${dep.number}${failed ? '!' : uncertain ? '?' : ''}`, style);
+            }
+            if (ordered.length > 3) label(`+${ordered.length - 3}`);
+        }
+    }
+
     _renderQueues(snapshot, query) {
         if (snapshot.scheduler === 'missing') {
             this._renderSchedulerMissing();
             return;
         }
-        const queues = snapshot.queues.filter(q => `${q.project} ${q.label}`.toLowerCase().includes(query));
+        const queues = snapshot.queues.filter(q => /^#\d+$/.test(query) ? `#${q.number}` === query :
+            `${q.project} ${q.label}`.toLowerCase().includes(query));
         const groups = queueGroups(queues, snapshot.queue_counts, this._setting('queueOrder'), this._queueFilter);
         if (Date.now() / 1000 - snapshot.queue_updated > 120)
             this._section.addMenuItem(this._item('Snapshot stale · start the parallel-workers monitor to refresh queue progress', 'tracker-warning'));
         if (Date.now() - this._controlsAt > 10000) this._loadControls();
+        /** @type {number[]} */
+        this._dependencyNumbers = groups.flatMap(([, items]) => items.map(/** @param {{number:number}} q */ q => q.number)).filter(Number.isInteger);
+        this._loadQueueDependencies();
+        this._gateRows = new Map();
+        this._gateWarning = this._item('', 'tracker-warning');
+        this._section.addMenuItem(this._gateWarning);
         const described = this._controls;
         // Queues the scheduler can still change, by their id in the queue snapshot.
         const controlled = new Map((described?.queues || []).filter(queue => queue.controls?.length).map(queue => [queue.snapshot_id, queue]));
@@ -3576,6 +3643,9 @@ class Tracker {
                 if (!queue.counted) item.add_style_class_name('tracker-queue-earlier');
                 const box = new St.BoxLayout({vertical: true, x_expand: true, style_class: 'tracker-row'});
                 const line = new St.BoxLayout({style_class: 'tracker-row-title'});
+                if (queue.number) line.add_child(new St.Label({text: `#${queue.number}`,
+                    style_class: ['FAILED', 'FINISHED_INCOMPLETE', 'KILLED'].includes(queue.state) ? 'tracker-failed' : 'tracker-detail',
+                    y_align: Clutter.ActorAlign.CENTER}));
                 const title = new St.Label({text: queue.label, x_expand: true, style_class: 'tracker-title'});
                 title.clutter_text.ellipsize = Pango.EllipsizeMode.END;
                 line.add_child(title);
@@ -3585,6 +3655,10 @@ class Tracker {
                     line.add_child(this._controlsToggle(`queue:${entity.id}`, queue.label, entity, editor,
                         section => this._fillControls(section, {kind: 'queue', id: entity.id}, entity, true)));
                 }
+                const gates = new St.BoxLayout({style_class: 'tracker-queue-gates', can_focus: true,
+                    y_align: Clutter.ActorAlign.CENTER, visible: false});
+                this._gateRows.set(queue.id, gates);
+                line.add_child(this._tooltip(gates, () => gates.accessible_name));
                 const setting = entity?.controls.find(/** @param {{name: string}} control */ control => control.name === 'priority');
                 const priority = queuePriority(queue.workers, setting?.value);
                 if (priority) {
@@ -3611,6 +3685,7 @@ class Tracker {
                 if (entity) body.addMenuItem(editor);
             }
         }
+        this._updateQueueGates();
         if (!groups.length) this._section.addMenuItem(this._item('No matching watched queues', 'tracker-empty'));
         const pool = described?.pool;
         const hosts = (described?.hosts || []).filter(host => !query || `pool ${host.label}`.toLowerCase().includes(query));

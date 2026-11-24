@@ -10,7 +10,7 @@ import time
 import uuid
 from pathlib import Path
 
-from . import checklists, messages, tickets, usage
+from . import checklists, messages, queue_workflows, tickets, usage
 from .git import Repositories
 from .providers import Providers, queue_snapshot
 from .state import ROOT, Ledger, atomic_json, project_names
@@ -58,6 +58,8 @@ class Tracker:
         self.claude_reads = False
         self.resume_codex = False
         self.continuing = set()
+        self.workflow_lock = asyncio.Lock()
+        self.workflow_result, self.workflow_at, self.workflow_tags = None, 0, set()
         # 'on', 'off' (turned off in settings) or 'missing' (parallel-workers is not set up here).
         self.scheduler_status = 'on'
         self.queue_mtime = max((q.get('observed', 0) for q in self.ledger.data['queues'].values()), default=0)
@@ -286,7 +288,7 @@ class Tracker:
                          'queue_counts': {'done': sum(c['done'] for c in matched),
                                           'total': sum(c['total'] for c in matched)}})
         unique = {r['key']: r for r in rows}
-        queues = [{**queue, 'counted': self.ledger.counted(queue)}
+        queues = [{**queue, 'number': self.ledger.queue_number(queue['id']), 'counted': self.ledger.counted(queue)}
                   for queue in self.ledger.data['queues'].values()] if scheduler else []
         return {'schema': 1, 'updated': time.time(), 'cutoff': time.time(),
                 'rows': rows, 'windows': list(self.windows.values()),
@@ -430,8 +432,30 @@ class Tracker:
             self.navigation.discard(window_id)
             with contextlib.suppress(FileNotFoundError): request.unlink()
 
+    async def queue_dependencies(self, numbers):
+        async with self.workflow_lock:
+            if self.scheduler_status != 'on': raise ValueError('Scheduler integration unavailable')
+            tracked = {key: q.get('started') for key, q in self.ledger.data['queues'].items()}
+            requested = set(numbers)
+            tags = {tag for tag in tracked if not requested or self.ledger.queue_number(tag) in requested}
+            if self.workflow_result is not None and tags <= self.workflow_tags and time.monotonic() - self.workflow_at < 30:
+                return {field: {tag: data for tag, data in rows.items() if tag in tags}
+                        for field, rows in self.workflow_result.items()}
+            cached = self.ledger.data.get('queue_workflows', {})
+            path = QUEUES.with_name('cluster-status.json')
+            declarations, result = await asyncio.to_thread(queue_workflows.read, path, tracked, cached, tags)
+            self.ledger.data['queue_workflows'] = declarations
+            for deps in result['links'].values():
+                for dep in deps:
+                    ref = f"{dep['pool']}/{dep['id']}"
+                    dep['number'] = self.ledger.queue_number(dep.get('tag') or ref, ref)
+            self.save_ledger()
+            self.workflow_result, self.workflow_at, self.workflow_tags = result, time.monotonic(), tags
+            return result
+
     async def dispatch(self, command):
         op = command.get('op')
+        if op == 'queue-dependencies': return await self.queue_dependencies(command.get('numbers', []))
         if op == 'snapshot': return self.snapshot()
         if op == 'navigate': return await self.navigate(command['key'], command['window'], command.get('input', False))
         if op == 'continue': return await self.go_on(command['key'])

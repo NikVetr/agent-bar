@@ -72,6 +72,18 @@ class Ledger:
             for queue in self.data['queues'].values():
                 queue['finished_at'] = 0 if queue['state'] in TERMINAL else None
 
+        if 'queue_numbers' not in self.data:
+            self.data['queue_numbers'] = {}
+            for q in sorted(self.data['queues'].values(), key=lambda q: (q.get('started', 0), q['id'])):
+                self.queue_number(q['id'])
+
+    def queue_number(self, key, alias=None):
+        numbers = self.data['queue_numbers']
+        if key not in numbers:
+            numbers[key] = numbers[alias] if alias in numbers else max(numbers.values(), default=0) + 1
+        if alias: numbers[alias] = numbers[key]
+        return numbers[key]
+
     def conversation(self, key):
         return self.data['conversations'].setdefault(key, {
             'state': 'unknown', 'state_at': 0, 'ack': 0, 'reasons': {}, 'turn': None,

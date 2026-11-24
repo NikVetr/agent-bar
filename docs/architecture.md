@@ -90,6 +90,13 @@ state and unread reasons stay separate in the data.
   each handler’s declared action and its event, matcher, and condition together for each trigger. Reading Info never
   executes a registered handler.
 
+The Queues tab reads prerequisite outcomes through `agent-bar queue-dependencies`. The service uses the collector’s
+adaptive registrations and the scheduler’s retained registration index to find immutable batch declarations. For
+queues in the selected list, it reads each prerequisite’s status and verification markers on the mounted share.
+Reads run outside the collection loop, only on request, with a 30-second result cache.
+The ledger keeps queue numbers across sorting, filtering, and restarts and retains declarations for tracked queues
+after scheduler retirement.
+
 ## Hooks
 
 `python -m agent_bar.hook` is the metadata-only observer Claude Code and Codex run on lifecycle events. It records the

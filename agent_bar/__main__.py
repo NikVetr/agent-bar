@@ -15,6 +15,8 @@ def main():
     subs = parser.add_subparsers(dest='command', required=True)
     for name in ['serve', 'status', 'queues', 'git']:
         subs.add_parser(name)
+    workflows = subs.add_parser('queue-dependencies', help='numbered prerequisite queues and their reported outcomes')
+    workflows.add_argument('numbers', type=int, nargs='*', help='limit to these Agent Bar queue numbers')
     hosts = subs.add_parser('host-projects', help='jobs, reserved CPU slots and sampled memory by project on a node')
     hosts.add_argument('host')
     nav = subs.add_parser('navigate')
@@ -154,7 +156,7 @@ def main():
     command = {'op': 'snapshot' if name in ['status', 'queues', 'git'] else name, **args}
     try:
         with socket.socket(socket.AF_UNIX) as client:
-            client.settimeout(12)
+            client.settimeout(60 if name == 'queue-dependencies' else 12)
             client.connect(str(ROOT / 'service.sock'))
             client.sendall((json.dumps(command) + '\n').encode())
             with client.makefile('r') as stream:
