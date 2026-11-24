@@ -5,7 +5,7 @@ description: Send a note to, or read notes from, an agent in another open Claude
 
 # Messages between agent conversations
 
-Agent Bar (`agent-bar`) delivers short notes between open Claude Code and Codex conversations, across projects. When the recipient's next turn starts, a hook adds a one-line note with its unread count. If the user has turned on waking, an idle Claude Code recipient is also woken once per message; Codex recipients always wait for their next turn.
+Agent Bar (`agent-bar`) delivers short notes between open Claude Code and Codex conversations, across projects. When the recipient's next turn starts, a hook adds a one-line note with its unread count. If the user has turned on waking, Agent Bar also wakes idle Claude Code chats and Codex chats open in VS Code. On Codex versions with queue priority, an inbox notification goes ahead of pending prompts and the current turn finishes normally.
 
 Use this for other conversations rather than a client's built-in agent messaging (such as Claude Code's `SendMessage`), so the user sees every message and the loop guard applies. Built-in messaging stays for your own subagents.
 

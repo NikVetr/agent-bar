@@ -167,8 +167,10 @@ agent-bar inbox                   # read this chat's messages
 
 The recipient sees a one-line note with its unread count when its next turn starts. With **Wake idle chats** on in
 settings, a new message also starts a turn in an idle Claude Code chat (up to a week after its last turn) and in a
-Codex chat open in VS Code (after any turn in progress ends, and only if the message is still unread then; this
-needs the `codex` command with `codex queue`).
+Codex chat open in VS Code. If you already have prompts queued there, Agent Bar moves its inbox notification to
+the front. Your current turn finishes normally and your prompts keep their order. With an empty queue, a busy chat
+gets a wake-up after its turn if messages are still unread. Priority requires a local `codex` with the app-server
+queue API. Older versions with `codex queue` support ordinary wake-ups.
 Other chats wait for their next turn. Copilot and Antigravity chats cannot receive messages, because they have no
 hook to show the note. In the Messages tab, each chat's badge shows a sealed envelope while it has unread messages,
 amber when they wait for you to start a turn there, and an open one once it has read them.

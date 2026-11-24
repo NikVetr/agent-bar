@@ -103,11 +103,13 @@ copy it made holds a `.installed-by-agent-bar` file, and only such copies are up
 per-pair loop guard, reset by the sender's last human prompt or by the user, plus an hourly cap; refused sends are
 kept so the panel can show what was held back. Files under `wake/` hold each recipient's newest unread id, the
 newest it was woken or told about, and its one live waiter's pid. A chat in a turn gets new messages mid-turn only
-as the user's setting allows. With waking on, `send` queues the turn-start note for an idle Codex chat open in VS
-Code with `codex queue`, which VS Code's Codex runs as a turn; a `.queued` marker under `wake/` keeps it to one note
-until a turn starts there. A chat in a turn gets a `.deferred` marker instead, and the service queues its note once
-the turn ends, if the messages are still unread: a queued note cannot be withdrawn and its count is fixed when
-queued. When a queued note's turn starts with nothing unread, the hook says the messages were already read; any
+as the user's setting allows. With waking on, `codex_wake.py` uses the Codex app-server queue API on send for VS Code
+recipients. It adds one inbox notification, then moves its ID ahead of existing drafts using their current order.
+If the queue changes during the reorder, it reads the IDs again and retries once. A per-chat lock serializes sends
+and a `.queued` marker coalesces notifications until a turn starts. A busy chat with an empty queue receives a
+`.deferred` marker so the service can queue its notification after the turn if messages are still unread.
+If the queue API is unavailable, idle chats use the `codex queue` command and busy chats defer until turn end.
+When a queued note's turn starts with nothing unread, the hook says the messages were already read; any
 other turn start clears both markers, since that turn hears of unread messages itself. The snapshot's `messages.stranded` lists the open chats whose
 unread messages wait for the user to start a turn: Codex chats with no note queued, and Claude chats no waiter will
 wake (waking off, or idle with no live waiter left).

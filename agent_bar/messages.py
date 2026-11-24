@@ -2,7 +2,7 @@
 
 A recipient learns of unread messages from its own turn-start hook. With waking on, an idle Claude Code
 chat is also woken once per message by a background Stop hook (`agent_bar.hook wait`), and a Codex chat open in
-VS Code by a note queued with `codex queue`, which VS Code's Codex runs as a turn once any turn in progress ends.
+VS Code by a queued inbox notification, which VS Code's Codex runs as a turn once any turn in progress ends.
 The loop guard bounds how much two agents can say to each other before either user writes again or resets it."""
 import json
 import os
@@ -84,22 +84,42 @@ def codex_pending(key, root=ROOT, now=None):
 
 
 def wake_codex(key, root=ROOT):
-    """With waking on, queue the unread-messages note for a Codex chat open in VS Code, one note at a time. Says how
-    the messages will reach the chat. A chat in a turn gets its note once the turn ends (deliver_deferred): a note
-    queued now would run after the turn, by when the chat may have read the messages, and its count would be wrong."""
+    """Wake an open VS Code chat once, prioritizing the inbox when drafts are pending."""
+    import asyncio
+    import fcntl
+    from .codex_wake import QueueUnavailable, queue_wake
+
     rows = [row for row in snapshot(root)['rows'] if row['key'] == key]
     if not waking() or not any((row.get('target') or {}).get('kind') in VSCODE for row in rows): return 'at its next turn'
-    if codex_pending(key, root): return 'with the wake-up already queued'
-    if any(row['state'] in BUSY for row in rows):
-        deferred_file(key, root).write_text(key)
+    queued = queued_file(key, root)
+    deferred = deferred_file(key, root)
+    with queued.with_suffix('.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            if time.time() - queued.stat().st_mtime < QUEUED_HOLD: return 'with the wake-up already queued'
+        except FileNotFoundError: pass
+        note = notice(key, root)
+        if not note: return 'at its next turn'
+        thread = key.split(':', 1)[1]
+        text = f'<agent-message>{note}</agent-message>'
+        busy = any(row['state'] in BUSY for row in rows)
+        # Mark first so a fast turn-start hook can acknowledge this submission during the call.
+        queued.touch()
+        deferred.unlink(missing_ok=True)
+        try:
+            delivery = asyncio.run(queue_wake(thread, text, busy))
+        except QueueUnavailable:
+            delivery = None
+            if not busy:
+                try: codex_queue(thread, text)
+                except ValueError as error:
+                    queued.unlink(missing_ok=True)
+                    return f'at its next turn ({error})'
+                delivery = 'by a queued wake-up turn'
+        if delivery is not None: return delivery
+        if queued.exists(): deferred.write_text(key)
+        queued.unlink(missing_ok=True)
         return 'by a wake-up turn after its current turn'
-    note = notice(key, root)
-    if not note: return 'at its next turn'
-    # Marked as an agent message, so the turn-start hook takes it for an automatic turn, not the user's.
-    try: codex_queue(key.split(':', 1)[1], f'<agent-message>{note}</agent-message>')
-    except ValueError as error: return f'at its next turn ({error})'
-    queued_file(key, root).write_text(str(time.time()))
-    return 'by a queued wake-up turn'
 
 
 def deferred(root=ROOT):
