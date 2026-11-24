@@ -112,3 +112,37 @@ class HistorySearchTests(unittest.TestCase):
             self.assertIn('<Démultiplexing> & demux 🐈', hit['excerpt'])
             self.assertLessEqual(len(hit['parts'][0]), 38)
             self.assertLessEqual(len(hit['excerpt']), 161)
+
+    def test_context_follows_preview_and_pages_through_occurrences_and_messages(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'history.sqlite'
+            with sqlite3.connect(path) as db:
+                history_search.initialize(db)
+                db.execute('PRAGMA user_version=1')
+                db.execute("INSERT INTO sources(key,folder,title) VALUES ('a','/repo','Title')")
+                db.executemany('INSERT INTO messages VALUES (?,?,?)', [
+                    ('a', 'user', 'Maple and oak?'), ('a', 'assistant', 'A short reply.'),
+                    ('b', 'assistant', 'Another conversation.'),
+                    ('a', 'user', 'maple ' + 'filler ' * 110 + 'Dwarf maple & oak.'),
+                    ('b', 'user', 'Unrelated follow-up.'), ('a', 'assistant', 'Will check.')])
+            def context(message=1, hit=None):
+                return history_search.search('mapl oak', 'repo', path, conversation='a', message=message, hit=hit)['context']
+            selected = context()
+            self.assertEqual((selected['message'], selected['messages'], selected['hit'], selected['hits']), (1, 2, 2, 3))
+            self.assertEqual(selected['parts'][1], 'maple')
+            self.assertIsNone(selected['before'])
+            self.assertEqual(selected['after']['text'], 'Will check.')
+            first = context(hit=1)
+            self.assertEqual(first['before']['text'], 'A short reply.')
+            self.assertNotEqual(first['parts'], selected['parts'])
+            self.assertIsNone(first['after'])
+            self.assertEqual(context(hit=-1)['parts'][1], 'oak')
+            older = context(2, 1)
+            self.assertEqual(older['parts'][1], 'Maple')
+            self.assertIsNone(older['before'])
+            self.assertEqual(older['after']['text'], 'A short reply.')
+            for message, hit in [(0, 1), (3, 1), (1, 4), (1, 0)]:
+                with self.assertRaises(ValueError):
+                    context(message, hit)
+            with self.assertRaisesRegex(ValueError, 'outside the current search'):
+                history_search.search('mapl', '/other', path, conversation='a')

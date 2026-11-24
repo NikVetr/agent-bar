@@ -140,7 +140,10 @@ Clicking the counts opens the dropdown, with these tabs:
 - **History**: search saved Claude and Codex chats by title, folder, or words in your messages and the agents’ replies.
   Type `memory share` to search all projects or `repo:agent-bar memory share` to narrow the search. Use quotes around
   folder names with spaces. A message match shows who wrote it and a wrapped excerpt with matching words in bold. Each
-  keyword can match the start of a word in the same message. A title, folder, or provider match is labeled when
+  keyword can match the start of a word in the same message. **Show context** expands the selected hit in place.
+  Use **‹** and **›** to visit occurrences within a message and move between matching messages, newest message first.
+  At a message boundary, the preview also shows a short excerpt of the adjacent message when available.
+  A title, folder, or provider match is labeled when
   no indexed message matches. Click a result to open or resume the conversation. The index updates nightly and with **⟳**.
 - **Quota**: each provider's usage limits as Claude Code and Codex record them on this computer: the weekly limit, the
   5-hour one, and a weekly limit for one model such as Fable, with that model's share. Each shows what is left, when it
@@ -291,6 +294,7 @@ agent-bar usage         # usage limits, with pace, run-out time and use by day
 agent-bar ticket list   # tickets and what each waits for
 agent-bar inventory     # rescan saved chats
 agent-bar search-history --repo agent-bar "memory share"  # matching messages as JSON; omit --repo for all folders
+agent-bar search-history --conversation <key> --message 2 --hit 1 "memory share"  # context for one occurrence
 agent-bar resume <key>  # reopen a saved chat in VS Code
 ```
 

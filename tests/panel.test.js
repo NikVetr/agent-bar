@@ -790,3 +790,19 @@ test('history highlights literal title matches and escapes markup in message exc
     context.highlightHistoryParts(label, ['Agent · <', 'Démultiplexing', '> & ', 'demux', '']);
     assert.equal(markup, 'Agent · &lt;<b><u>Démultiplexing</u></b>&gt; &amp; <b><u>demux</u></b>');
 });
+
+test('a history context request respects repo scope and cannot reopen a collapsed result', async () => {
+    const {tracker} = fixture();
+    const lookup = {query: 'oak', repo: 'garden', details: new Map()};
+    let finish, args, renders = 0;
+    Object.assign(tracker, {_historyLookup: lookup, _view: 'history', _button: {menu: {isOpen: true}},
+        _renderRows() { renders++; }, _run(command) { args = Array.from(command); return new Promise(resolve => { finish = resolve; }); }});
+    const pending = tracker._loadHistoryContext(lookup, 'codex:a', 2, -1);
+    assert.equal(lookup.details.get('codex:a').loading, true);
+    assert.deepEqual(args, ['search-history', '--conversation', 'codex:a', '--message', '2', '--hit', '-1', '--repo', 'garden', '--', 'oak']);
+    lookup.details.delete('codex:a');
+    finish({context: {message: 2, hit: 5}});
+    await pending;
+    assert.equal(lookup.details.size, 0);
+    assert.equal(renders, 1);
+});

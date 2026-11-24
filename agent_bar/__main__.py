@@ -40,6 +40,9 @@ def main():
     search = subs.add_parser('search-history', help='search saved user and assistant messages for keywords (JSON)')
     search.add_argument('query')
     search.add_argument('--repo', help='project name or full folder path')
+    search.add_argument('--conversation', help='show context for a hit in this saved conversation')
+    search.add_argument('--message', type=int, default=1, help='matching message number, newest first')
+    search.add_argument('--hit', type=int, help='occurrence in the message (1-based, or -1 for the last)')
     subs.add_parser('info', help='skills, Agent Bar health and instruction files (JSON)')
     subs.add_parser('usage', help='usage limits Claude Code and Codex recorded, with pace, run-out time and use by day (JSON)')
     resume = subs.add_parser('resume', help='reopen an inventoried conversation in VS Code')
@@ -143,7 +146,7 @@ def main():
         sys.exit(0 if result['ok'] else 1)
     if name == 'search-history':
         from .history_search import search
-        try: result = search(args['query'], args['repo'])
+        try: result = search(args['query'], args['repo'], conversation=args['conversation'], message=args['message'], hit=args['hit'])
         except (OSError, ValueError, sqlite3.Error) as error: result = {'ok': False, 'error': str(error)}
         print(json.dumps(result, ensure_ascii=False))
         sys.exit(0 if result['ok'] else 1)

@@ -437,6 +437,13 @@ function historyGroups(rows, order = 'activity') {
         ? a[0].project.localeCompare(b[0].project) || folderA.localeCompare(folderB) : score(b) - score(a))));
 }
 
+/** @typedef {{role: string, text: string}} HistoryNeighbor */
+/** @typedef {{role: string, message: number, messages: number, hit: number, hits: number,
+ * parts: string[], before?: HistoryNeighbor, after?: HistoryNeighbor}} HistoryContext */
+/** @typedef {{query: string, repo: string, hits: Map<string, {role: string, excerpt: string, parts?: string[]}>,
+ * details: Map<string, {context?: HistoryContext, loading: boolean, error: string}>,
+ * loading: boolean, error: string}} HistoryLookup */
+
 // Odd parts are matches. Escape conversation text before giving it to Pango.
 /** @param {{clutter_text: {set_markup(text: string): void}}} label @param {string[]} parts */
 function highlightHistoryParts(label, parts) {
@@ -5077,7 +5084,7 @@ class Tracker {
         const previous = this._historyLookup;
         if (previous && previous.query === query && previous.repo === repo && previous.updated === this._inventory.updated) return previous;
         if (previous?.timer) GLib.source_remove(previous.timer);
-        const lookup = {query, repo, updated: this._inventory.updated, hits: new Map(), loading: !!query, timer: 0, error: ''};
+        const lookup = {query, repo, updated: this._inventory.updated, hits: new Map(), details: new Map(), loading: !!query, timer: 0, error: ''};
         this._historyLookup = lookup;
         if (query) lookup.timer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 250, () => {
             lookup.timer = 0;
@@ -5134,7 +5141,7 @@ class Tracker {
         else if (!rows.length) this._section.addMenuItem(this._item('No matching saved conversations', 'tracker-empty'));
     }
 
-    /** @param {{hits: Map<string, {role: string, excerpt: string, parts?: string[]}>, loading: boolean, error: string}} lookup
+    /** @param {HistoryLookup} lookup
      * @param {string} words */
     _historyItem(row, live, snapshot, section, lookup, words) {
         const hit = lookup.hits.get(row.key);
@@ -5153,20 +5160,81 @@ class Tracker {
         const detail = new St.Label({text: description, style_class: 'tracker-detail'});
         detail.clutter_text.ellipsize = Pango.EllipsizeMode.END;
         box.add_child(detail);
-        if (hit) {
-            const author = hit.role === 'user' ? 'You' : 'Agent';
-            const excerpt = new St.Label({text: `${author} · ${hit.excerpt}`, style_class: 'tracker-detail'});
-            if (hit.parts) highlightHistoryParts(excerpt, [`${author} · ${hit.parts[0]}`, ...hit.parts.slice(1)]);
-            excerpt.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
-            excerpt.clutter_text.line_wrap = true;
-            excerpt.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
-            box.add_child(excerpt);
-        }
+        if (hit) this._historyExcerpt(box, row.key, lookup);
         item.add_child(box);
         const [chip, style] = live ? ['Open', 'open'] : row.available ? ['Resume', 'muted'] : ['Folder missing', 'failed'];
         item.add_child(new St.Label({text: chip, style_class: `tracker-chip tracker-chip-${style}`, y_align: Clutter.ActorAlign.CENTER}));
         item.connect('activate', () => (live ? this._activate(live, snapshot) : this._resume(row)));
         section.addMenuItem(item);
+    }
+
+    /** @param {any} box @param {string} key @param {HistoryLookup} lookup */
+    _historyExcerpt(box, key, lookup) {
+        const hit = lookup.hits.get(key);
+        if (!hit) return;
+        const detail = lookup.details.get(key);
+        const context = detail?.context;
+        /** @param {string} role @param {string[]} parts @param {boolean} muted */
+        const passage = (role, parts, muted) => {
+            const author = role === 'user' ? 'You' : 'Agent';
+            const text = [`${author} · ${parts[0]}`, ...parts.slice(1)];
+            const label = new St.Label({text: text.join(''), style_class: muted ? 'tracker-detail tracker-muted' : 'tracker-detail'});
+            if (parts.length > 1) highlightHistoryParts(label, text);
+            label.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+            label.clutter_text.line_wrap = true;
+            label.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
+            box.add_child(label);
+        };
+        if (!context) passage(hit.role, hit.parts ?? [hit.excerpt], false);
+
+        const controls = new St.BoxLayout({style_class: 'tracker-row-heading'});
+        /** @param {string} caption @param {string} name @param {Function} action */
+        const button = (caption, name, action, enabled = true) => {
+            const actor = new St.Button({label: caption, accessible_name: name, reactive: enabled, can_focus: enabled,
+                opacity: enabled ? 255 : 90, style_class: 'tracker-ticket-chip'});
+            actor.connect('clicked', action);
+            controls.add_child(actor);
+        };
+        if (detail) button('Hide context', 'Hide context', () => {
+            lookup.details.delete(key);
+            this._renderRows();
+        });
+        else button('Show context', 'Show context and browse matching snippets', () => this._loadHistoryContext(lookup, key));
+        if (context) {
+            const {message, messages, hit: n, hits} = context;
+            const multiple = messages > 1 || hits > 1;
+            if (multiple) button('‹', 'Previous hit', () => this._loadHistoryContext(lookup, key,
+                n > 1 ? message : message - 1, n > 1 ? n - 1 : -1), !detail?.loading && (n > 1 || message > 1));
+            controls.add_child(new St.Label({text: `Message ${message} of ${messages} · Hit ${n} of ${hits}`,
+                style_class: 'tracker-detail', y_align: Clutter.ActorAlign.CENTER}));
+            if (multiple) button('›', 'Next hit', () => this._loadHistoryContext(lookup, key,
+                n < hits ? message : message + 1, n < hits ? n + 1 : 1), !detail?.loading && (n < hits || message < messages));
+        }
+        if (detail?.loading) controls.add_child(new St.Label({text: 'Loading…', style_class: 'tracker-detail'}));
+        box.add_child(controls);
+        if (context) {
+            if (context.before) passage(context.before.role, [context.before.text], true);
+            passage(context.role, context.parts, false);
+            if (context.after) passage(context.after.role, [context.after.text], true);
+        }
+        if (detail?.error) box.add_child(new St.Label({text: detail.error, style_class: 'tracker-warning'}));
+    }
+
+    /** @param {HistoryLookup} lookup @param {string} key @param {number} message @param {number | null} occurrence */
+    async _loadHistoryContext(lookup, key, message = 1, occurrence = null) {
+        const state = {context: lookup.details.get(key)?.context, loading: true, error: ''};
+        lookup.details.set(key, state);
+        this._renderRows();
+        try {
+            const args = ['search-history', '--conversation', key, '--message', String(message)];
+            if (occurrence !== null) args.push('--hit', String(occurrence));
+            if (lookup.repo) args.push('--repo', lookup.repo);
+            const data = await this._run([...args, '--', lookup.query]);
+            state.context = data.context;
+        } catch (error) { state.error = error instanceof Error ? error.message : String(error); }
+        state.loading = false;
+        if (this._enabled && this._historyLookup === lookup && lookup.details.get(key) === state &&
+            this._button.menu.isOpen && this._view === 'history' && !this._page) this._renderRows();
     }
 
     // History, and the Conversations list when sorted by total activity, read the inventory.

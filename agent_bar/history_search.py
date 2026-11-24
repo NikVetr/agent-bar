@@ -84,13 +84,57 @@ def excerpt_parts(snippet, marker):
     return visible
 
 
-def search(query, repo=None, path=INDEX):
+def match_context(db, key, match, message, hit):
+    """Fetch one occurrence in one matching message, newest message first."""
+    ids = [row[0] for row in db.execute('SELECT rowid FROM messages WHERE messages MATCH ? AND key=? ORDER BY rowid DESC',
+                                        (match, key))]
+    if not 1 <= message <= len(ids):
+        raise ValueError('Matching message no longer available. Run the search again.')
+    rowid = ids[message - 1]
+    marker, omitted = uuid4().hex, uuid4().hex
+    role, marked, snippet = db.execute("""SELECT role, highlight(messages, 2, ?, ?), snippet(messages, 2, ?, ?, ?, 18)
+                                          FROM messages WHERE rowid=? AND messages MATCH ?""",
+                                       (marker, marker, marker, marker, omitted, rowid, match)).fetchone()
+    parts = marked.split(marker)
+    hits = len(parts) // 2
+    if hit is None:
+        # Start on the first bold word in the compact FTS excerpt, which can be midway through a message.
+        start = marked.index(snippet.removeprefix(omitted).removesuffix(omitted))
+        hit = 1 + marked.count(marker, 0, start) // 2
+    elif hit == -1:
+        hit = hits
+    if not 1 <= hit <= hits:
+        raise ValueError('Occurrence outside this message.')
+    at = 2 * hit - 1
+    left, word, right = ''.join(parts[:at]), parts[at], ''.join(parts[at + 1:])
+    def neighbor(previous):
+        # Look in the same conversation even when transcripts were indexed in interleaved batches.
+        direction, order, start = ('<', 'DESC', -161) if previous else ('>', 'ASC', 1)
+        row = db.execute(f'SELECT role, substr(body, ?, 161) FROM messages WHERE key=? AND rowid {direction} ? '
+                         f'ORDER BY rowid {order} LIMIT 1', (start, key, rowid)).fetchone()
+        if not row: return None
+        text = row[1]
+        if len(text) == 161: text = '…' + text[1:] if previous else text[:-1] + '…'
+        return {'role': row[0], 'text': text.strip()}
+    return {'role': role, 'message': message, 'messages': len(ids), 'hit': hit, 'hits': hits,
+            'parts': [left if len(left) <= 280 else '…' + left[-280:],
+                      word if len(word) <= 360 else word[:360] + '…',
+                      right if len(right) <= 280 else right[:280] + '…'],
+            'before': neighbor(True) if len(left) <= 280 else None,
+            'after': neighbor(False) if len(right) <= 280 else None}
+
+
+def search(query, repo=None, path=INDEX, *, conversation=None, message=1, hit=None):
     """Match all literal keyword prefixes in one message and return one excerpt per conversation."""
     words = re.findall(r'[^\W_]+', query, re.UNICODE)
+    if not conversation and (message != 1 or hit is not None):
+        raise ValueError('Select a conversation with --conversation to navigate hits.')
+    if conversation and not words: raise ValueError('Enter a search term to see matching context.')
     if not words: return {'ok': True, 'results': []}
     match = ' AND '.join(f'"{word}"*' for word in words)
     if not path.exists(): raise ValueError('Message index not built yet. Refresh History with ⟳.')
     with closing(sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True)) as db:
+        db.execute('BEGIN')
         if db.execute('PRAGMA user_version').fetchone()[0] != 1:
             raise ValueError('Message index is being built. Try again after the History scan.')
         scope_path = Path(repo.casefold()) if repo else None
@@ -100,6 +144,9 @@ def search(query, repo=None, path=INDEX):
             if (scope_path is None or path_parts.is_relative_to(scope_path)
                     or str(scope_path) in path_parts.parts):
                 sources[key] = (folder, title)
+        if conversation:
+            if conversation not in sources: raise ValueError('Conversation outside the current search.')
+            return {'ok': True, 'context': match_context(db, conversation, match, message, hit)}
         if not sources: return {'ok': True, 'results': []}
         # Pick the newest matching message per thread. Unary + keeps SQLite from expanding a common FTS
         # prefix again for each rowid; it runs MATCH once and tests membership before extracting excerpts.
