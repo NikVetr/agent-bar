@@ -276,7 +276,8 @@
 .tracker-quota-legend { spacing: 6px; }
 .tracker-bulk-toggle { padding: 4px 10px; font-size: 12px; }
 .tracker-cluster-tab { padding: 0; }
-.tracker-row-heading { spacing: 6px; }
+.tracker-row-heading, .tracker-row-actions { spacing: 6px; }
+.tracker-row-action { padding: 3px 7px; }
 .tracker-title-full { max-width: 470px; }
 .tracker-copy-compact { padding: 3px 5px; }
 

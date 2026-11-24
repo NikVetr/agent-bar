@@ -62,8 +62,8 @@ state and unread reasons stay separate in the data.
 - **Inventory** (`inventory.py`): every saved Claude and Codex chat, rescanned daily at idle priority, reading only
   appended transcript data. The same pass indexes direct message text in `history-search.sqlite` using SQLite FTS5.
   The search index and inventory track the file identity and byte offset. Replacing or truncating a transcript rebuilds
-  its entries. History queries run through the CLI after a short typing delay and return one excerpt per matching
-  conversation. Expanding a hit queries that conversation for a bounded passage around the selected occurrence
+  its entries. Chats and History share a query and hit cache. Message searches run through the CLI after a short typing delay
+  and return one excerpt per matching conversation. Expanding a hit queries that conversation for a bounded passage around the selected occurrence
   and nearby dialogue. The panel loads one passage at a time and keeps its position while the search is open.
 - **Git** (`git.py`): every 20 s, off the collection loop, the `git status` of each repository holding an open folder,
   with `GIT_OPTIONAL_LOCKS=0` so it never takes the index lock an agent's own git command needs. It never fetches.

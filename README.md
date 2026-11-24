@@ -114,7 +114,10 @@ again, leaving your history and settings (`--purge` deletes those too).
 Clicking the counts opens the dropdown, with these tabs:
 
 - **Chats**: open chats grouped by project and window, with sort and filter, each with its whole name and a copy button
-  for its name, id, folder and resume command. Clicking a chat selects it and brings its window forward. When several Codex
+  for its name, id, folder and resume command. Chats and History share a search box, including `repo:` scopes,
+  highlighted message excerpts and **Show context**. Switching tabs keeps your search. Chats shows open conversations
+  and History includes closed ones. Message text comes from the saved History index.
+  Clicking a chat selects it and brings its window forward. When several Codex
   chats share a window and the sidebar could show any of them, the row and review shortcut open the selected chat
   by ID in an editor tab. Clicking again sends the window back. When a usage limit stops chats open in VS Code, a line above
   them names them and when Claude's limit resets; **Continue** queues "Please continue where you left off." in the
@@ -144,7 +147,8 @@ Clicking the counts opens the dropdown, with these tabs:
   Use **‹** and **›** to visit occurrences within a message and move between matching messages, newest message first.
   At a message boundary, the preview also shows a short excerpt of the adjacent message when available.
   A title, folder, or provider match is labeled when
-  no indexed message matches. Click a result to open or resume the conversation. The index updates nightly and with **⟳**.
+  no indexed message matches. Clicking **Open** or **Resume** has the same effect as clicking that conversation’s row.
+  The project header’s maximize button brings its window to the main display with the current tab selected. The index updates nightly and with **⟳**.
 - **Quota**: each provider's usage limits as Claude Code and Codex record them on this computer: the weekly limit, the
   5-hour one, and a weekly limit for one model such as Fable, with that model's share. Each shows what is left, when it
   resets, its pace over the last day (or this window's average), when that pace would use the rest and how that compares

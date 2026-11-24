@@ -442,7 +442,18 @@ function historyGroups(rows, order = 'activity') {
  * parts: string[], before?: HistoryNeighbor, after?: HistoryNeighbor}} HistoryContext */
 /** @typedef {{query: string, repo: string, hits: Map<string, {role: string, excerpt: string, parts?: string[]}>,
  * details: Map<string, {context?: HistoryContext, loading: boolean, error: string}>,
- * loading: boolean, error: string}} HistoryLookup */
+ * loading: boolean, error: string, updated?: number, timer: number}} HistoryLookup */
+
+/** @param {{key: string, folder?: string, roots?: string[], title: string, project: string, provider: string}} row
+ * @param {HistoryLookup} lookup */
+function matchesChatSearch(row, lookup) {
+    const {repo, query} = lookup;
+    if ((!repo && !query) || lookup.hits.has(row.key)) return true;  // Message hits already respect the repo scope.
+    const folders = (row.folder ? [row.folder] : row.roots?.length ? row.roots : [row.project]).map(path => path.toLowerCase());
+    return (!repo || folders.some(folder => folder.split('/').includes(repo) || folder === repo ||
+        folder.startsWith(repo === '/' ? '/' : repo + '/'))) &&
+        [row.title, row.project, row.provider, ...folders].some(text => text.toLowerCase().includes(query));
+}
 
 // Odd parts are matches. Escape conversation text before giving it to Pango.
 /** @param {{clutter_text: {set_markup(text: string): void}}} label @param {string[]} parts */
@@ -1154,7 +1165,9 @@ class Tracker {
         this._returnsLoaded = false;
         this._filter = 'all';
         this._historyFilter = 'all';
-        this._historyQuery = '';
+        this._chatQuery = '';
+        /** @type {HistoryLookup | null} */
+        this._historyLookup = null;
         this._queueFilter = 'counted';
         this._gitFilter = 'all';
         this._messageFilter = 'all';
@@ -2971,7 +2984,7 @@ class Tracker {
         // null for the lists, or 'settings' or 'help'.
         const page = this._page;
         this._historyNote = null;
-        if (!page && this._usesInventory()) this._loadInventory();
+        if (!page && this._isChatList()) this._loadInventory();
         const header = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
         header._ornamentLabel?.hide();
         header.add_style_class_name('tracker-heading');
@@ -3045,9 +3058,9 @@ class Tracker {
             this._button.menu.addMenuItem(item);
             return item;
         };
-        this._search = new St.Entry({hint_text: this._view === 'history' ? 'Search messages and titles · repo:name to narrow' : 'Search conversations, projects, or queues…',
+        this._search = new St.Entry({hint_text: this._isChatList() ? 'Search messages and titles · repo:name to narrow' : 'Search conversations, projects, or queues…',
             can_focus: true, x_expand: true, style_class: 'tracker-search'});
-        if (this._view === 'history') this._search.set_text(this._historyQuery);
+        if (this._isChatList()) this._search.set_text(this._chatQuery);
         const tabs = new St.BoxLayout({style_class: 'tracker-filters tracker-tabs'});
         // Integrations turned off in settings take their tabs with them.
         const shown = {queues: this._setting('scheduler'), cluster: this._setting('scheduler') && !!this._cluster,
@@ -3143,7 +3156,7 @@ class Tracker {
         this._button.menu.box.insert_child_at_index(this._sideHolder, 0);
         this._renderSide();
         this._search.clutter_text.connect('text-changed', () => {
-            if (this._view === 'history') this._historyQuery = String(this._search.text);
+            if (this._isChatList()) this._chatQuery = String(this._search.text);
             this._togglePicker(null);
             this._renderRows();
         });
@@ -3345,8 +3358,8 @@ class Tracker {
         }
         const limited = limitedConversations(snapshot.rows);
         if (limited.length) this._section.addMenuItem(this._limitBanner(limited));
-        const rows = snapshot.rows.filter(row => matchesFilter(row, this._filter)
-            && `${row.title} ${row.project} ${row.provider}`.toLowerCase().includes(query));
+        const lookup = this._chatSearch(query);
+        const rows = snapshot.rows.filter(row => matchesFilter(row, this._filter) && matchesChatSearch(row, lookup));
         const totals = new Map((this._inventory?.conversations || []).map(row => [row.key, row.active]));
         for (const project of groupProjects(rows, this._setting('projectOrder'), totals)) {
             const firstWindow = snapshot.windows.find(w => w.id === project.rows[0].window);
@@ -3357,7 +3370,7 @@ class Tracker {
             const body = this._projectSection(project.key, project.name,
                 project.windows.size === 1 ? this._place(firstWindow) : `${project.windows.size} windows`,
                 summary, !!(project.review || queues.done),
-                project.windows.size === 1 ? this._windowControls(firstWindow.id, snapshot) : null);
+                project.windows.size === 1 ? this._windowControls(firstWindow.id, snapshot) : null, null, null, lookup.query);
             let index = 0;
             for (const [windowId, conversations] of project.windows) {
                 const window = snapshot.windows.find(w => w.id === windowId);
@@ -3370,10 +3383,10 @@ class Tracker {
                     heading.add_child(this._windowControls(windowId, snapshot));
                     body.addMenuItem(heading);
                 }
-                for (const row of conversations) this._conversationItem(row, snapshot, body);
+                for (const row of conversations) this._conversationItem(row, snapshot, body, lookup);
             }
         }
-        if (!rows.length) this._section.addMenuItem(this._item('No matching open conversations', 'tracker-empty'));
+        this._chatSearchFeedback(lookup, rows.length, 'No matching open conversations');
         for (const warning of snapshot.warnings)
             this._section.addMenuItem(this._item(warning, 'tracker-warning'));
         if (rows.some(row => row.provider === 'claude' && row.state === 'unknown'))
@@ -5079,12 +5092,17 @@ class Tracker {
         }
     }
 
-    /** @param {string} query @param {string} repo */
-    _historyMessageMatches(query, repo) {
+    /** @param {string} input @returns {HistoryLookup} */
+    _chatSearch(input) {
+        const scope = /^repo:(?:"([^"]+)"|(\S+))(?:\s+|$)/.exec(input.trim());
+        const repo = scope ? (scope[1] || scope[2]).replace(/\/+$/, '') || '/' : '';
+        const query = input.trim().slice(scope?.[0].length || 0).trim();
+        const updated = this._inventory?.updated;
         const previous = this._historyLookup;
-        if (previous && previous.query === query && previous.repo === repo && previous.updated === this._inventory.updated) return previous;
+        if (previous && previous.query === query && previous.repo === repo && previous.updated === updated) return previous;
         if (previous?.timer) GLib.source_remove(previous.timer);
-        const lookup = {query, repo, updated: this._inventory.updated, hits: new Map(), details: new Map(), loading: !!query, timer: 0, error: ''};
+        /** @type {HistoryLookup} */
+        const lookup = {query, repo, updated, hits: new Map(), details: new Map(), loading: !!query, timer: 0, error: ''};
         this._historyLookup = lookup;
         if (query) lookup.timer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 250, () => {
             lookup.timer = 0;
@@ -5093,7 +5111,7 @@ class Tracker {
             }).catch(error => { lookup.error = error.message; }).finally(() => {
                 lookup.loading = false;
                 if (this._enabled && this._historyLookup === lookup && this._button.menu.isOpen &&
-                    this._view === 'history' && !this._page) this._renderRows();
+                    this._isChatList() && !this._page) this._renderRows();
             });
             return GLib.SOURCE_REMOVE;
         });
@@ -5106,15 +5124,11 @@ class Tracker {
                 this._inventoryError ? 'tracker-warning' : 'tracker-empty'));
             return;
         }
-        const scope = /^repo:(?:"([^"]+)"|(\S+))(?:\s+|$)/.exec(query.trim());
-        const repo = scope ? (scope[1] || scope[2]).replace(/\/+$/, '') || '/' : '';
-        const words = query.trim().slice(scope?.[0].length || 0).trim();
-        const lookup = this._historyMessageMatches(words, repo);
+        const lookup = this._chatSearch(query);
+        const words = lookup.query;
         const open = new Map(snapshot.rows.filter(row => row.target).map(row => [row.key, row]));
         const matches = this._inventory.conversations.filter(row => (this._historyFilter === 'all' || row.provider === this._historyFilter)
-            && (!repo || row.folder.toLowerCase().split('/').includes(repo) || row.folder.toLowerCase() === repo
-                || row.folder.toLowerCase().startsWith(repo === '/' ? '/' : repo + '/'))
-            && (lookup.hits.has(row.key) || [row.title, row.folder, row.provider].some(text => text.toLowerCase().includes(words))));
+            && matchesChatSearch(row, lookup));
         // A search expands every folder, so it shows only the most recent matches.
         const rows = query ? matches.slice(0, HISTORY_SEARCH_LIMIT) : matches;
         const order = this._setting('historyOrder');
@@ -5136,21 +5150,22 @@ class Tracker {
         }
         if (matches.length > rows.length)
             this._section.addMenuItem(this._item(`${matches.length - rows.length} more matches · refine the search`, 'tracker-empty'));
+        this._chatSearchFeedback(lookup, rows.length, 'No matching saved conversations');
+    }
+
+    /** @param {HistoryLookup} lookup @param {number} count @param {string} empty */
+    _chatSearchFeedback(lookup, count, empty) {
         if (lookup.error) this._section.addMenuItem(this._item(lookup.error, 'tracker-warning'));
         else if (lookup.loading) this._section.addMenuItem(this._item('Searching messages…', 'tracker-empty'));
-        else if (!rows.length) this._section.addMenuItem(this._item('No matching saved conversations', 'tracker-empty'));
+        else if (!count) this._section.addMenuItem(this._item(empty, 'tracker-empty'));
     }
 
     /** @param {HistoryLookup} lookup
      * @param {string} words */
     _historyItem(row, live, snapshot, section, lookup, words) {
         const hit = lookup.hits.get(row.key);
-        const item = new PopupMenu.PopupBaseMenuItem({reactive: row.available, can_focus: row.available});
-        item._ornamentLabel?.hide();
-        item.add_style_class_name('tracker-conversation');
-        item.add_child(this._providerLabel(row.provider, words));
-        const box = new St.BoxLayout({vertical: true, style_class: 'tracker-row', x_expand: true});
-        box.add_child(this._chatHeading(row, false, words));
+        const activate = live ? () => this._activate(live, snapshot) : row.available ? () => this._resume(row) : null;
+        const {box, actions} = this._chatRow(row, section, activate, words);
         let description = historyDetail(row);
         if (words && !hit && !lookup.loading && !lookup.error) {
             const field = row.title.toLowerCase().includes(words) ? 'Title'
@@ -5160,16 +5175,20 @@ class Tracker {
         const detail = new St.Label({text: description, style_class: 'tracker-detail'});
         detail.clutter_text.ellipsize = Pango.EllipsizeMode.END;
         box.add_child(detail);
-        if (hit) this._historyExcerpt(box, row.key, lookup);
-        item.add_child(box);
-        const [chip, style] = live ? ['Open', 'open'] : row.available ? ['Resume', 'muted'] : ['Folder missing', 'failed'];
-        item.add_child(new St.Label({text: chip, style_class: `tracker-chip tracker-chip-${style}`, y_align: Clutter.ActorAlign.CENTER}));
-        item.connect('activate', () => (live ? this._activate(live, snapshot) : this._resume(row)));
-        section.addMenuItem(item);
+        if (hit) this._historyExcerpt(box, actions, row.key, lookup);
+        if (activate) {
+            const caption = live ? 'Open' : 'Resume';
+            const button = new St.Button({label: caption, can_focus: true, accessible_name: `${caption} conversation`,
+                style_class: 'tracker-copy tracker-row-action'});
+            button.connect('clicked', activate);
+            actions.add_child(button);
+        } else {
+            actions.add_child(new St.Label({text: 'Folder missing', style_class: 'tracker-chip tracker-chip-failed'}));
+        }
     }
 
-    /** @param {any} box @param {string} key @param {HistoryLookup} lookup */
-    _historyExcerpt(box, key, lookup) {
+    /** @param {any} box @param {any} actions @param {string} key @param {HistoryLookup} lookup */
+    _historyExcerpt(box, actions, key, lookup) {
         const hit = lookup.hits.get(key);
         if (!hit) return;
         const detail = lookup.details.get(key);
@@ -5187,7 +5206,18 @@ class Tracker {
         };
         if (!context) passage(hit.role, hit.parts ?? [hit.excerpt], false);
 
-        const controls = new St.BoxLayout({style_class: 'tracker-row-heading'});
+        const toggle = new St.Button({label: detail ? 'Hide context' : 'Show context', can_focus: true,
+            accessible_name: detail ? 'Hide context' : 'Show context and browse matching snippets',
+            style_class: 'tracker-copy tracker-row-action'});
+        toggle.connect('clicked', () => {
+            if (detail) {
+                lookup.details.delete(key);
+                this._renderRows();
+            } else this._loadHistoryContext(lookup, key);
+        });
+        actions.insert_child_at_index(toggle, 0);
+        if (!detail) return;
+        const controls = new St.BoxLayout({style_class: 'tracker-row-heading', x_align: Clutter.ActorAlign.END});
         /** @param {string} caption @param {string} name @param {Function} action */
         const button = (caption, name, action, enabled = true) => {
             const actor = new St.Button({label: caption, accessible_name: name, reactive: enabled, can_focus: enabled,
@@ -5195,11 +5225,6 @@ class Tracker {
             actor.connect('clicked', action);
             controls.add_child(actor);
         };
-        if (detail) button('Hide context', 'Hide context', () => {
-            lookup.details.delete(key);
-            this._renderRows();
-        });
-        else button('Show context', 'Show context and browse matching snippets', () => this._loadHistoryContext(lookup, key));
         if (context) {
             const {message, messages, hit: n, hits} = context;
             const multiple = messages > 1 || hits > 1;
@@ -5211,7 +5236,7 @@ class Tracker {
                 n < hits ? message : message + 1, n < hits ? n + 1 : 1), !detail?.loading && (n < hits || message < messages));
         }
         if (detail?.loading) controls.add_child(new St.Label({text: 'Loading…', style_class: 'tracker-detail'}));
-        box.add_child(controls);
+        if (context || detail?.loading) box.add_child(controls);
         if (context) {
             if (context.before) passage(context.before.role, [context.before.text], true);
             passage(context.role, context.parts, false);
@@ -5234,12 +5259,11 @@ class Tracker {
         } catch (error) { state.error = error instanceof Error ? error.message : String(error); }
         state.loading = false;
         if (this._enabled && this._historyLookup === lookup && lookup.details.get(key) === state &&
-            this._button.menu.isOpen && this._view === 'history' && !this._page) this._renderRows();
+            this._button.menu.isOpen && this._isChatList() && !this._page) this._renderRows();
     }
 
-    // History, and the Conversations list when sorted by total activity, read the inventory.
-    _usesInventory() {
-        return this._view === 'history' || (this._view === 'conversations' && this._setting('projectOrder') === 'total');
+    _isChatList() {
+        return this._view === 'history' || this._view === 'conversations';
     }
 
     _historyNoteText() {
@@ -5263,7 +5287,7 @@ class Tracker {
                     ? 'No inventory yet · press ⟳ to scan saved conversations' : error.message;
             }
             this._historyNote?.set_text(this._historyNoteText());
-            if (this._button.menu.isOpen && this._usesInventory() && !this._page) this._renderRows();
+            if (this._button.menu.isOpen && this._isChatList() && !this._page) this._renderRows();
         });
     }
 
@@ -5315,9 +5339,9 @@ class Tracker {
     }
 
     _providerLabel(name, search = '') {
-        const provider = new St.BoxLayout({style_class: 'tracker-row-provider'});
+        const provider = new St.BoxLayout({style_class: 'tracker-row-provider', y_align: Clutter.ActorAlign.CENTER});
         provider.add_child(new St.Label({text: PROVIDERS[name]?.[0] || '•',
-            style_class: `tracker-provider-symbol tracker-${name}`}));
+            style_class: `tracker-provider-symbol tracker-${name}`, y_align: Clutter.ActorAlign.CENTER}));
         const label = new St.Label({text: PROVIDERS[name]?.[1] || name,
             style_class: `tracker-provider-name tracker-${name}`, y_align: Clutter.ActorAlign.CENTER});
         highlightHistoryText(label, search);
@@ -5329,25 +5353,38 @@ class Tracker {
     _windowControls(id, snapshot) {
         const box = new St.BoxLayout({style_class: 'tracker-window-controls', y_align: Clutter.ActorAlign.CENTER});
         for (const [icon, mode, name] of [
-            ['window-restore-symbolic', 'return', 'Return to its previous place'],
-            ['window-maximize-symbolic', 'place', 'Show maximized on the main display']]) {
+            ['window-restore-symbolic', 'return', 'Return the window to its previous place'],
+            ['window-maximize-symbolic', 'place', 'Maximize the window on the main display']]) {
             const button = new St.Button({child: new St.Icon({icon_name: icon, icon_size: 16}),
                 can_focus: true, accessible_name: name, style_class: 'tracker-window-control'});
+            this._tooltip(button, name);
             button.connect('clicked', () => this._activate({window: id, key: null}, snapshot, mode));
             box.add_child(button);
         }
         return box;
     }
 
-    // A chat's whole title, wrapped, and a button that copies it with what identifies the chat.
-    _chatHeading(row, schedule = false, search = '') {
+    /** @param {any} row @param {any} section @param {Function | null} activate @param {string} search */
+    _chatRow(row, section, activate, search, schedule = false) {
+        const item = new PopupMenu.PopupBaseMenuItem({reactive: !!activate, can_focus: !!activate});
+        item._ornamentLabel?.hide();
+        item.add_style_class_name('tracker-conversation');
+        item.add_child(this._providerLabel(row.provider, search));
+        const box = new St.BoxLayout({vertical: true, style_class: 'tracker-row', x_expand: true});
         const heading = new St.BoxLayout({style_class: 'tracker-row-heading'});
         const title = new St.Label({text: row.title, style_class: 'tracker-title tracker-title-full', x_expand: true,
-            y_align: Clutter.ActorAlign.CENTER});
+            y_align: Clutter.ActorAlign.START});
         title.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
         title.clutter_text.line_wrap = true;
+        title.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
         highlightHistoryText(title, search);
         heading.add_child(title);
+        const actions = new St.BoxLayout({style_class: 'tracker-row-actions', y_align: Clutter.ActorAlign.START});
+        heading.add_child(actions);
+        box.add_child(heading);
+        item.add_child(box);
+        if (activate) item.connect('activate', activate);
+        section.addMenuItem(item);
         const lists = schedule ? (row.roots || []).map(root => this._menuSnapshot?.checklists?.[root]).filter(Boolean) : [];
         if (lists.length) {
             const total = key => lists.reduce((sum, counts) => sum + counts[key], 0);
@@ -5362,7 +5399,7 @@ class Tracker {
                 y_align: Clutter.ActorAlign.CENTER});
             this._tooltip(button, name);
             button.connect('clicked', () => this._openChecklists(row));
-            heading.add_child(button);
+            actions.add_child(button);
         }
         if (schedule && ['claude', 'codex'].includes(row.provider) && this._setting('messages')) {
             const count = scheduledFor(this._menuSnapshot?.tickets, row.key).length;
@@ -5375,20 +5412,16 @@ class Tracker {
                 y_align: Clutter.ActorAlign.CENTER});
             this._tooltip(button, name);
             button.connect('clicked', () => this._openSchedule(row));
-            heading.add_child(button);
+            actions.add_child(button);
         }
-        heading.add_child(this._copyButton(() => chatIdentity(row), 'Copy the chat\'s name, id and folder', true));
-        return heading;
+        actions.add_child(this._copyButton(() => chatIdentity(row), 'Copy the chat\'s name, id and folder', true));
+        return {item, box, actions};
     }
 
-    _conversationItem(row, snapshot, section) {
-        const item = new PopupMenu.PopupBaseMenuItem({reactive: !!row.target, can_focus: !!row.target});
-        item._ornamentLabel?.hide();
-        item.add_style_class_name('tracker-conversation');
+    /** @param {HistoryLookup} lookup */
+    _conversationItem(row, snapshot, section, lookup) {
+        const {item, box, actions} = this._chatRow(row, section, row.target ? () => this._activate(row, snapshot) : null, lookup.query, true);
         if (row.unread.length) item.add_style_class_name('tracker-unread');
-        item.add_child(this._providerLabel(row.provider));
-        const box = new St.BoxLayout({vertical: true, style_class: 'tracker-row', x_expand: true});
-        box.add_child(this._chatHeading(row, true));
         const native = this._findWindow(snapshot.windows.find(w => w.id === row.window), false);
         const borrowed = native && this._borrowed.get(row.window);
         const action = borrowed?.key === row.key && native === this._menuFocus ? ' · click to return' : '';
@@ -5402,12 +5435,10 @@ class Tracker {
         // A finished reply is what "Needs review" means by default; any other reason is spelled out.
         if (row.unread.some(reason => reason !== 'Reply finished'))
             box.add_child(new St.Label({text: row.unread.join(' · '), style_class: 'tracker-reason tracker-attention'}));
-        item.add_child(box);
-        item.add_child(new St.Label({text: row.unread.length ? 'Needs review' : state,
+        if (lookup.hits.has(row.key)) this._historyExcerpt(box, actions, row.key, lookup);
+        actions.add_child(new St.Label({text: row.unread.length ? 'Needs review' : state,
             style_class: `tracker-chip tracker-chip-${row.unread.length ? 'attention' : stateStyle(row.state)}`,
             y_align: Clutter.ActorAlign.CENTER}));
-        item.connect('activate', () => this._activate(row, snapshot));
-        section.addMenuItem(item);
     }
 
     _findWindow(window, strict = true) {

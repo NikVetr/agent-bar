@@ -806,3 +806,20 @@ test('a history context request respects repo scope and cannot reopen a collapse
     assert.equal(lookup.details.size, 0);
     assert.equal(renders, 1);
 });
+
+test('Chats and History share message matches and repo scope while keeping unindexed open chats searchable', () => {
+    const {context, tracker} = fixture();
+    const row = {key: 'codex:a', title: 'Open questions', project: 'tools', provider: 'codex', roots: ['/repos/tools']};
+    const lookup = {repo: 'tools', query: 'sample', hits: new Map()};
+    assert.equal(context.matchesChatSearch(row, lookup), false);
+    lookup.hits.set(row.key, {});
+    assert.equal(context.matchesChatSearch(row, lookup), true);
+    lookup.hits.clear();
+    lookup.query = 'questions';
+    assert.equal(context.matchesChatSearch(row, lookup), true);
+    assert.equal(context.matchesChatSearch({...row, folder: '/repos/other'}, lookup), false);
+    const scope = tracker._chatSearch('repo:"my repo"');
+    assert.equal(scope.repo, 'my repo');
+    assert.equal(scope.query, '');
+    assert.equal(tracker._chatSearch('repo:"my repo"'), scope);
+});
