@@ -1,3 +1,4 @@
+import asyncio
 import json
 import tempfile
 import time
@@ -65,13 +66,30 @@ class QueueWorkflowTests(unittest.TestCase):
             self.assertIn(tag, read(snapshot, tracked, {}, {tag})[1]['errors'])
             self.assertEqual(read(snapshot, tracked, {}, set())[0], {})
 
-    def test_numbers_persist_across_pruning_and_missing_metadata(self):
-        ledger = Ledger({'since': 0, 'queues': {'z': {'id': 'z', 'started': 2}, 'a': {'id': 'a', 'started': 1}},
-                         'project_turns': {}})
-        self.assertEqual([ledger.queue_number(k) for k in ('a', 'z')], [1, 2])
-        del ledger.data['queues']['z']
-        number = ledger.queue_number('pool/unlisted-token')
-        restored = Ledger(ledger.data)
-        self.assertEqual(restored.queue_number('restored-tag', 'pool/unlisted-token'), number)
-        self.assertEqual(restored.queue_number('z'), 2)
-        self.assertGreater(restored.queue_number('new'), number)
+    def test_active_numbers_follow_launch_order_within_each_project(self):
+        queues = {tag: {'id': tag, 'project': project, 'started': started, 'state': state}
+                  for tag, project, started, state in [('z', 'one', 3, 'PENDING'), ('b', 'two', 2, 'RUNNING'),
+                                                       ('a', 'one', 3, 'DRAINING'), ('c', 'one', 2, 'PENDING'),
+                                                       ('f', 'one', 0, 'FINISHED_INCOMPLETE')]}
+        ledger = Ledger({'queues': queues, 'queue_numbers': {'z': 298}, 'project_turns': {}})
+        self.assertNotIn('queue_numbers', ledger.data)
+        self.assertEqual(ledger.active_queue_numbers(), {'c': 1, 'a': 2, 'z': 3, 'b': 1})
+        queues['c']['state'] = 'COMPLETED'
+        self.assertEqual(ledger.active_queue_numbers(), {'a': 1, 'z': 2, 'b': 1})
+
+    def test_cached_dependencies_resolve_against_current_project_numbers(self):
+        from agent_bar.service import Tracker
+        with tempfile.TemporaryDirectory() as tmp:
+            tracker = Tracker(tmp)
+            queues = {tag: {'id': tag, 'project': project, 'state': 'RUNNING', 'started': i}
+                      for i, (tag, project) in enumerate([('a', 'one'), ('b', 'one'), ('c', 'two')])}
+            tracker.ledger.data['queues'] = queues
+            tracker.workflow_tags, tracker.workflow_at = set(queues), time.monotonic()
+            tracker.workflow_result = {'links': {'a': [{'tag': 'b'}], 'b': [{'tag': 'a'}], 'c': [{'tag': 'b'}]}, 'errors': {}}
+            query = tracker.queue_dependencies
+            self.assertEqual(set(asyncio.run(query([1]))['links']), {'a', 'c'})
+            self.assertEqual(asyncio.run(query([1], 'two'))['links']['c'][0]['number'], 2)
+            queues['a']['state'] = 'COMPLETED'
+            self.assertEqual(asyncio.run(query([1], 'two'))['links']['c'][0]['number'], 1)
+            self.assertIsNone(asyncio.run(query([], ids=['b']))['links']['b'][0]['number'])
+            self.assertEqual(set(asyncio.run(query([], ids=['a']))['links']), {'a'})

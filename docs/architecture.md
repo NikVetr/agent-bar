@@ -94,8 +94,9 @@ The Queues tab reads prerequisite outcomes through `agent-bar queue-dependencies
 adaptive registrations and the scheduler’s retained registration index to find immutable batch declarations. For
 queues in the selected list, it reads each prerequisite’s status and verification markers on the mounted share.
 Reads run outside the collection loop, only on request, with a 30-second result cache.
-The ledger keeps queue numbers across sorting, filtering, and restarts and retains declarations for tracked queues
-after scheduler retirement.
+The ledger retains declarations for tracked queues after scheduler retirement. Each snapshot numbers active queues
+by launch time within their project. Dependency lookup and caching use monitor IDs so a change in display number
+preserves the link to the original queue.
 
 ## Hooks
 

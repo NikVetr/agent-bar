@@ -129,8 +129,10 @@ Clicking the counts opens the dropdown, with these tabs:
   Weekly limits, depleted workspace credits, and stops with an unknown reset still have the manual **Continue** action.
 - **Queues**: job queues from parallel-workers, by project, with progress, ETA and failed jobs. A project's finished
   queues count until a chat there starts a turn, or until you press Clear beside the project. **Adjust** on a queue,
-  and under **Pool and hosts**, changes what the scheduler offers there (see below). Each tracked queue has a stable number you can search for with `#123`.
+  and under **Pool and hosts**, changes what the scheduler offers there (see below). Each project numbers its active queues from `#1` in
+  launch order. The numbers close up as queues finish. Search for `#2` to see the second active queue in each project.
   After **Adjust**, an arrow lists the queue’s prerequisites, followed by its default priority in a small badge.
+  A number with ↗ belongs to another project, named on hover. Finished prerequisites use their names.
   Failed or incomplete prerequisites appear in red with **!**, and **?** marks unknown or unverified outcomes.
   Hover over the prerequisites for the full list and each status, or over the priority for host overrides.
 - **Git**: each repository holding an open project, with its branch, uncommitted files, and commits ahead of or
@@ -298,6 +300,7 @@ Everything the menu bar shows is available as JSON:
 agent-bar status        # open chats, their states and counts
 agent-bar queues        # numbered queues and their progress
 agent-bar queue-dependencies  # prerequisite numbers and outcomes
+agent-bar queue-dependencies --project example 1 2  # two active queues in one project
 agent-bar host-projects HOST  # projects, jobs, reserved CPU slots and sampled memory on one node
 agent-bar git           # git status of repositories holding open projects
 agent-bar info --project .  # project hooks, skills, tracker health, instruction files

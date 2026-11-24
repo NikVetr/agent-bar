@@ -64,7 +64,7 @@ def ended(queue):
 class Ledger:
     def __init__(self, data=None):
         self.data = data or {'since': time.time(), 'conversations': {}, 'queues': {}, 'project_turns': {}}
-        for retired in ['links', 'receipts']:
+        for retired in ['links', 'receipts', 'queue_numbers']:
             self.data.pop(retired, None)
         if 'project_turns' not in self.data:
             # Queues that finished before per-turn counting began are already seen.
@@ -72,17 +72,15 @@ class Ledger:
             for queue in self.data['queues'].values():
                 queue['finished_at'] = 0 if queue['state'] in TERMINAL else None
 
-        if 'queue_numbers' not in self.data:
-            self.data['queue_numbers'] = {}
-            for q in sorted(self.data['queues'].values(), key=lambda q: (q.get('started', 0), q['id'])):
-                self.queue_number(q['id'])
-
-    def queue_number(self, key, alias=None):
-        numbers = self.data['queue_numbers']
-        if key not in numbers:
-            numbers[key] = numbers[alias] if alias in numbers else max(numbers.values(), default=0) + 1
-        if alias: numbers[alias] = numbers[key]
-        return numbers[key]
+    def active_queue_numbers(self):
+        """Number active queues within each project by launch time, breaking ties by monitor ID."""
+        counts, numbers = {}, {}
+        active = (q for q in self.data['queues'].values() if q['state'] not in TERMINAL)
+        for q in sorted(active, key=lambda q: (q.get('started', 0), q['id'])):
+            project = q['project']
+            counts[project] = counts.get(project, 0) + 1
+            numbers[q['id']] = counts[project]
+        return numbers
 
     def conversation(self, key):
         return self.data['conversations'].setdefault(key, {

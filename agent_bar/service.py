@@ -288,7 +288,8 @@ class Tracker:
                          'queue_counts': {'done': sum(c['done'] for c in matched),
                                           'total': sum(c['total'] for c in matched)}})
         unique = {r['key']: r for r in rows}
-        queues = [{**queue, 'number': self.ledger.queue_number(queue['id']), 'counted': self.ledger.counted(queue)}
+        numbers = self.ledger.active_queue_numbers() if scheduler else {}
+        queues = [{**queue, 'number': numbers.get(queue['id']), 'counted': self.ledger.counted(queue)}
                   for queue in self.ledger.data['queues'].values()] if scheduler else []
         return {'schema': 1, 'updated': time.time(), 'cutoff': time.time(),
                 'rows': rows, 'windows': list(self.windows.values()),
@@ -432,30 +433,32 @@ class Tracker:
             self.navigation.discard(window_id)
             with contextlib.suppress(FileNotFoundError): request.unlink()
 
-    async def queue_dependencies(self, numbers):
+    async def queue_dependencies(self, numbers, project=None, ids=None):
         async with self.workflow_lock:
             if self.scheduler_status != 'on': raise ValueError('Scheduler integration unavailable')
-            tracked = {key: q.get('started') for key, q in self.ledger.data['queues'].items()}
+            queues = self.ledger.data['queues']
+            active = self.ledger.active_queue_numbers()
             requested = set(numbers)
-            tags = {tag for tag in tracked if not requested or self.ledger.queue_number(tag) in requested}
-            if self.workflow_result is not None and tags <= self.workflow_tags and time.monotonic() - self.workflow_at < 30:
-                return {field: {tag: data for tag, data in rows.items() if tag in tags}
-                        for field, rows in self.workflow_result.items()}
-            cached = self.ledger.data.get('queue_workflows', {})
-            path = QUEUES.with_name('cluster-status.json')
-            declarations, result = await asyncio.to_thread(queue_workflows.read, path, tracked, cached, tags)
-            self.ledger.data['queue_workflows'] = declarations
-            for deps in result['links'].values():
-                for dep in deps:
-                    ref = f"{dep['pool']}/{dep['id']}"
-                    dep['number'] = self.ledger.queue_number(dep.get('tag') or ref, ref)
-            self.save_ledger()
-            self.workflow_result, self.workflow_at, self.workflow_tags = result, time.monotonic(), tags
-            return result
+            tags = set(queues) if ids is None else set(ids).intersection(queues)
+            if project is not None: tags = {tag for tag in tags if queues[tag]['project'] == project}
+            if requested: tags = {tag for tag in tags if active.get(tag) in requested}
+            if self.workflow_result is None or not tags <= self.workflow_tags or time.monotonic() - self.workflow_at >= 30:
+                tracked = {tag: q.get('started') for tag, q in queues.items()}
+                cached = self.ledger.data.get('queue_workflows', {})
+                path = QUEUES.with_name('cluster-status.json')
+                declarations, result = await asyncio.to_thread(queue_workflows.read, path, tracked, cached, tags)
+                self.ledger.data['queue_workflows'] = declarations
+                self.save_ledger()
+                self.workflow_result, self.workflow_at, self.workflow_tags = result, time.monotonic(), tags
+            # Cache outcomes by identity. Their display numbers belong to the requesting snapshot.
+            return {'links': {tag: [{**d, 'number': active.get(d.get('tag'))} for d in deps]
+                              for tag, deps in self.workflow_result['links'].items() if tag in tags},
+                    'errors': {tag: error for tag, error in self.workflow_result['errors'].items() if tag in tags}}
 
     async def dispatch(self, command):
         op = command.get('op')
-        if op == 'queue-dependencies': return await self.queue_dependencies(command.get('numbers', []))
+        if op == 'queue-dependencies':
+            return await self.queue_dependencies(command.get('numbers', []), command.get('project'), command.get('ids'))
         if op == 'snapshot': return self.snapshot()
         if op == 'navigate': return await self.navigate(command['key'], command['window'], command.get('input', False))
         if op == 'continue': return await self.go_on(command['key'])

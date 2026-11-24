@@ -16,7 +16,9 @@ def main():
     for name in ['serve', 'status', 'queues', 'git']:
         subs.add_parser(name)
     workflows = subs.add_parser('queue-dependencies', help='numbered prerequisite queues and their reported outcomes')
-    workflows.add_argument('numbers', type=int, nargs='*', help='limit to these Agent Bar queue numbers')
+    workflows.add_argument('numbers', type=int, nargs='*', help='active queue numbers within each selected project')
+    workflows.add_argument('--project', help='limit to one queue project')
+    workflows.add_argument('--ids', nargs='+', help='limit to these monitor queue IDs')
     hosts = subs.add_parser('host-projects', help='jobs, reserved CPU slots and sampled memory by project on a node')
     hosts.add_argument('host')
     nav = subs.add_parser('navigate')
@@ -158,7 +160,7 @@ def main():
         with socket.socket(socket.AF_UNIX) as client:
             client.settimeout(60 if name == 'queue-dependencies' else 12)
             client.connect(str(ROOT / 'service.sock'))
-            client.sendall((json.dumps(command) + '\n').encode())
+            client.sendall((json.dumps(command, ensure_ascii=False, separators=(',', ':')) + '\n').encode())
             with client.makefile('r') as stream:
                 result = json.loads(stream.readline())
         if name in ['queues', 'git'] and result.get('ok') is not False: result = result[name]

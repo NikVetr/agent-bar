@@ -1198,8 +1198,8 @@ class Tracker {
         this._controls = null;
         this._controlsAt = 0;
         this._dependenciesAt = 0;
-        /** @type {Set<number>} */
-        this._coveredNumbers = new Set();
+        /** @type {Set<string>} */
+        this._coveredQueueIds = new Set();
         this._dependencies = null;
         this._controlsError = null;
         this._openControls = new Set();
@@ -2903,6 +2903,13 @@ class Tracker {
                     this._menuSnapshot = snapshot;
                     this._later(() => this._renderRows());
                 }
+                if (this._button.menu.isOpen && this._view === 'queues' && !this._page &&
+                    snapshot.queue_updated !== this._menuSnapshot?.queue_updated) {
+                    this._menuSnapshot = snapshot;
+                    if (snapshot.queues.length !== this._queueById?.size || snapshot.queues.some(
+                        /** @param {{id:string, number:number|null}} q */ q => q.number !== this._queueById?.get(q.id)?.number))
+                        this._later(() => this._renderRows());
+                }
                 if (!this._returnsLoaded) {
                     this._borrowed = new Map(Object.entries(snapshot.returns || {}));
                     this._returnsLoaded = true;
@@ -3545,27 +3552,29 @@ class Tracker {
     }
 
     async _loadQueueDependencies() {
-        const numbers = this._dependencyNumbers;
-        if (this._dependenciesLoading || !numbers?.length || this._menuSnapshot?.scheduler !== 'on') return;
-        if (Date.now() - (this._dependenciesAt || 0) < 30000 && numbers.every(n => this._coveredNumbers?.has(n))) return;
+        const ids = this._dependencyIds;
+        if (this._dependenciesLoading || !ids?.length || this._menuSnapshot?.scheduler !== 'on') return;
+        if (Date.now() - (this._dependenciesAt || 0) < 30000 && ids.every(n => this._coveredQueueIds?.has(n))) return;
         this._dependenciesLoading = true;
         try {
-            this._dependencies = await this._run(['queue-dependencies', ...numbers.map(String)]);
+            // A full list needs no selectors. Keep large selections within the service's request-line limit.
+            const all = ids.length === this._menuSnapshot.queues.length || ByteArray.fromString(JSON.stringify(ids)).length > 60000;
+            this._dependencies = await this._run(all ? ['queue-dependencies'] : ['queue-dependencies', '--ids', ...ids]);
         } catch (error) {
             this._dependencies = {error: error instanceof Error ? error.message : String(error)};
         } finally {
             this._dependenciesLoading = false;
             this._dependenciesAt = Date.now();
-            this._coveredNumbers = new Set(numbers);
+            this._coveredQueueIds = new Set(ids);
         }
         if (!this._enabled || this._view !== 'queues' || this._page || !this._button.menu.isOpen) return;
         this._updateQueueGates();
-        if (numbers !== this._dependencyNumbers) this._loadQueueDependencies();
+        if (ids !== this._dependencyIds) this._loadQueueDependencies();
     }
 
     _updateQueueGates() {
         if (this._gateWarning) {
-            const loading = this._dependenciesLoading && this._dependencyNumbers?.some(n => !this._coveredNumbers?.has(n));
+            const loading = this._dependenciesLoading && this._dependencyIds?.some(n => !this._coveredQueueIds?.has(n));
             const error = this._dependencies?.error;
             this._gateWarning.visible = !!(error || loading);
             this._gateWarning.label.text = error ? `Queue dependencies unavailable · ${error}` : loading ? 'Reading queue dependencies…' : '';
@@ -3573,9 +3582,17 @@ class Tracker {
         for (const [id, box] of this._gateRows || []) {
             const deps = this._dependencies?.links?.[id] || [];
             const error = this._dependencies?.errors?.[id];
-            const tip = error ? `Prerequisites unavailable · ${error}` : !deps.length ? '' : 'Prerequisite queues\n' +
-                deps.map(/** @param {{number:number, name:string, detail:string, project?:string}} d */ d =>
-                    `#${d.number} · ${d.name}${d.project ? ' (' + d.project + ')' : ''} · ${d.detail}`).join('\n');
+            const project = this._queueById?.get(id)?.project;
+            const references = deps.map(/** @param {{tag?:string, project?:string, name:string, detail:string, state:string}} dep */ dep => {
+                const target = this._queueById?.get(dep.tag);
+                const owner = target?.project || dep.project;
+                const number = target?.number;
+                const short = number ? `#${number}${owner !== project ? '↗' : ''}` : dep.name;
+                const full = [owner, number && `#${number}`, dep.name, dep.detail].filter(Boolean).join(' · ');
+                return {short, full, state: dep.state};
+            });
+            const tip = error ? `Prerequisites unavailable · ${error}` : !references.length ? '' : 'Prerequisite queues\n' +
+                references.map(/** @param {{full:string}} ref */ ref => ref.full).join('\n');
             box.visible = !!tip;
             if (box.accessible_name === tip) continue;
             box.destroy_all_children();
@@ -3586,11 +3603,12 @@ class Tracker {
             label('←');
             if (error) { label('?', 'tracker-attention'); continue; }
             // Keep the row narrow and show failed prerequisites first. The tooltip includes the entire list.
-            const ordered = [...deps].sort((a, b) => Number(b.state === 'failed') - Number(a.state === 'failed'));
+            const ordered = [...references].sort((a, b) => Number(b.state === 'failed') - Number(a.state === 'failed'));
             for (const dep of ordered.slice(0, 3)) {
                 const failed = dep.state === 'failed', uncertain = ['unknown', 'verify'].includes(dep.state);
                 const style = failed ? 'tracker-failed' : uncertain ? 'tracker-attention' : dep.state === 'complete' ? 'tracker-finished' : 'tracker-detail';
-                label(`#${dep.number}${failed ? '!' : uncertain ? '?' : ''}`, style);
+                const short = dep.short.length > 11 ? dep.short.slice(0, 10) + '…' : dep.short;
+                label(`${short}${failed ? '!' : uncertain ? '?' : ''}`, style);
             }
             if (ordered.length > 3) label(`+${ordered.length - 3}`);
         }
@@ -3607,8 +3625,9 @@ class Tracker {
         if (Date.now() / 1000 - snapshot.queue_updated > 120)
             this._section.addMenuItem(this._item('Snapshot stale · start the parallel-workers monitor to refresh queue progress', 'tracker-warning'));
         if (Date.now() - this._controlsAt > 10000) this._loadControls();
-        /** @type {number[]} */
-        this._dependencyNumbers = groups.flatMap(([, items]) => items.map(/** @param {{number:number}} q */ q => q.number)).filter(Number.isInteger);
+        this._queueById = new Map(snapshot.queues.map(/** @param {{id:string, project:string, number:number|null}} q */ q => [q.id, q]));
+        /** @type {string[]} */
+        this._dependencyIds = groups.flatMap(([, items]) => items.map(/** @param {{id:string}} q */ q => q.id));
         this._loadQueueDependencies();
         this._gateRows = new Map();
         this._gateWarning = this._item('', 'tracker-warning');
@@ -3644,7 +3663,7 @@ class Tracker {
                 const box = new St.BoxLayout({vertical: true, x_expand: true, style_class: 'tracker-row'});
                 const line = new St.BoxLayout({style_class: 'tracker-row-title'});
                 if (queue.number) line.add_child(new St.Label({text: `#${queue.number}`,
-                    style_class: ['FAILED', 'FINISHED_INCOMPLETE', 'KILLED'].includes(queue.state) ? 'tracker-failed' : 'tracker-detail',
+                    style_class: 'tracker-detail',
                     y_align: Clutter.ActorAlign.CENTER}));
                 const title = new St.Label({text: queue.label, x_expand: true, style_class: 'tracker-title'});
                 title.clutter_text.ellipsize = Pango.EllipsizeMode.END;
