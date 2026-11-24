@@ -437,6 +437,23 @@ function historyGroups(rows, order = 'activity') {
         ? a[0].project.localeCompare(b[0].project) || folderA.localeCompare(folderB) : score(b) - score(a))));
 }
 
+// Odd parts are matches. Escape conversation text before giving it to Pango.
+/** @param {{clutter_text: {set_markup(text: string): void}}} label @param {string[]} parts */
+function highlightHistoryParts(label, parts) {
+    label.clutter_text.set_markup(parts.map((part, i) => {
+        const text = GLib.markup_escape_text(part, -1);
+        return i % 2 ? `<b><u>${text}</u></b>` : text;
+    }).join(''));
+}
+
+/** @param {{text: string, clutter_text: {set_markup(text: string): void}}} label @param {string} query */
+function highlightHistoryText(label, query) {
+    if (!query) return;
+    const literal = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const parts = label.text.split(new RegExp(`(${literal})`, 'giu'));
+    if (parts.length > 1) highlightHistoryParts(label, parts);
+}
+
 function historyDetail(row) {
     const started = new Date(row.started * 1000).toLocaleDateString('en-US', {month: 'short', day: 'numeric'});
     return `${age(row.last)} · ${row.prompts} prompt${row.prompts === 1 ? '' : 's'} · ${duration(row.active)} active · started ${started}`;
@@ -3196,7 +3213,7 @@ class Tracker {
 
     // fill(body), when given, builds the rows on first expansion instead of up front.
     // below: a line under the heading that stays visible when the group is collapsed.
-    _projectSection(key, title, context, summary, highlight = false, controls = null, fill = null, below = null) {
+    _projectSection(key, title, context, summary, highlight = false, controls = null, fill = null, below = null, search = '') {
         this._projectKeys.push(key);
         const section = new PopupMenu.PopupMenuSection();
         section.actor.add_style_class_name('tracker-project');
@@ -3211,8 +3228,11 @@ class Tracker {
         line.add_child(arrow);
         const label = new St.Label({text: title, x_expand: true, style_class: 'tracker-project-name'});
         label.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+        highlightHistoryText(label, search);
         line.add_child(label);
-        line.add_child(new St.Label({text: context, style_class: 'tracker-project-context'}));
+        const location = new St.Label({text: context, style_class: 'tracker-project-context'});
+        highlightHistoryText(location, search);
+        line.add_child(location);
         line.add_child(new St.Label({text: summary, style_class: highlight ? 'tracker-attention tracker-project-total' : 'tracker-project-total'}));
         button.set_child(line);
         if (below) {
@@ -5087,7 +5107,7 @@ class Tracker {
         const matches = this._inventory.conversations.filter(row => (this._historyFilter === 'all' || row.provider === this._historyFilter)
             && (!repo || row.folder.toLowerCase().split('/').includes(repo) || row.folder.toLowerCase() === repo
                 || row.folder.toLowerCase().startsWith(repo === '/' ? '/' : repo + '/'))
-            && (lookup.hits.has(row.key) || `${row.title} ${row.folder} ${row.provider}`.toLowerCase().includes(words)));
+            && (lookup.hits.has(row.key) || [row.title, row.folder, row.provider].some(text => text.toLowerCase().includes(words))));
         // A search expands every folder, so it shows only the most recent matches.
         const rows = query ? matches.slice(0, HISTORY_SEARCH_LIMIT) : matches;
         const order = this._setting('historyOrder');
@@ -5104,7 +5124,8 @@ class Tracker {
             this._projectSection(key, items[0].project, parent,
                 `${items.length} chat${items.length === 1 ? '' : 's'}${live ? ` · ${live} open` : ''}${total} · ${age(items[0].last)}`,
                 false, window ? this._windowControls(window.id, snapshot) : null,
-                body => { for (const row of items) this._historyItem(row, open.get(row.key), snapshot, body, lookup.hits.get(row.key)); });
+                body => { for (const row of items) this._historyItem(row, open.get(row.key), snapshot, body,
+                    lookup, words); }, null, words);
         }
         if (matches.length > rows.length)
             this._section.addMenuItem(this._item(`${matches.length - rows.length} more matches · refine the search`, 'tracker-empty'));
@@ -5113,20 +5134,32 @@ class Tracker {
         else if (!rows.length) this._section.addMenuItem(this._item('No matching saved conversations', 'tracker-empty'));
     }
 
-    /** @param {{role: string, excerpt: string} | undefined} hit */
-    _historyItem(row, live, snapshot, section, hit) {
+    /** @param {{hits: Map<string, {role: string, excerpt: string, parts?: string[]}>, loading: boolean, error: string}} lookup
+     * @param {string} words */
+    _historyItem(row, live, snapshot, section, lookup, words) {
+        const hit = lookup.hits.get(row.key);
         const item = new PopupMenu.PopupBaseMenuItem({reactive: row.available, can_focus: row.available});
         item._ornamentLabel?.hide();
         item.add_style_class_name('tracker-conversation');
-        item.add_child(this._providerLabel(row.provider));
+        item.add_child(this._providerLabel(row.provider, words));
         const box = new St.BoxLayout({vertical: true, style_class: 'tracker-row', x_expand: true});
-        box.add_child(this._chatHeading(row));
-        const detail = new St.Label({text: historyDetail(row), style_class: 'tracker-detail'});
+        box.add_child(this._chatHeading(row, false, words));
+        let description = historyDetail(row);
+        if (words && !hit && !lookup.loading && !lookup.error) {
+            const field = row.title.toLowerCase().includes(words) ? 'Title'
+                : row.folder.toLowerCase().includes(words) ? 'Folder' : 'Provider';
+            description = `${field} match · ${description}`;
+        }
+        const detail = new St.Label({text: description, style_class: 'tracker-detail'});
         detail.clutter_text.ellipsize = Pango.EllipsizeMode.END;
         box.add_child(detail);
         if (hit) {
-            const excerpt = new St.Label({text: `${hit.role === 'user' ? 'You' : 'Agent'} · ${hit.excerpt}`, style_class: 'tracker-detail'});
-            excerpt.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+            const author = hit.role === 'user' ? 'You' : 'Agent';
+            const excerpt = new St.Label({text: `${author} · ${hit.excerpt}`, style_class: 'tracker-detail'});
+            if (hit.parts) highlightHistoryParts(excerpt, [`${author} · ${hit.parts[0]}`, ...hit.parts.slice(1)]);
+            excerpt.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+            excerpt.clutter_text.line_wrap = true;
+            excerpt.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
             box.add_child(excerpt);
         }
         item.add_child(box);
@@ -5213,12 +5246,14 @@ class Tracker {
         } finally { this._resuming = false; }
     }
 
-    _providerLabel(name) {
+    _providerLabel(name, search = '') {
         const provider = new St.BoxLayout({style_class: 'tracker-row-provider'});
         provider.add_child(new St.Label({text: PROVIDERS[name]?.[0] || '•',
             style_class: `tracker-provider-symbol tracker-${name}`}));
-        provider.add_child(new St.Label({text: PROVIDERS[name]?.[1] || name,
-            style_class: `tracker-provider-name tracker-${name}`, y_align: Clutter.ActorAlign.CENTER}));
+        const label = new St.Label({text: PROVIDERS[name]?.[1] || name,
+            style_class: `tracker-provider-name tracker-${name}`, y_align: Clutter.ActorAlign.CENTER});
+        highlightHistoryText(label, search);
+        provider.add_child(label);
         return provider;
     }
 
@@ -5237,12 +5272,13 @@ class Tracker {
     }
 
     // A chat's whole title, wrapped, and a button that copies it with what identifies the chat.
-    _chatHeading(row, schedule = false) {
+    _chatHeading(row, schedule = false, search = '') {
         const heading = new St.BoxLayout({style_class: 'tracker-row-heading'});
         const title = new St.Label({text: row.title, style_class: 'tracker-title tracker-title-full', x_expand: true,
             y_align: Clutter.ActorAlign.CENTER});
         title.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
         title.clutter_text.line_wrap = true;
+        highlightHistoryText(title, search);
         heading.add_child(title);
         const lists = schedule ? (row.roots || []).map(root => this._menuSnapshot?.checklists?.[root]).filter(Boolean) : [];
         if (lists.length) {

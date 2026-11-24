@@ -779,3 +779,14 @@ test('a chat\'s checklists: the ones it edited, then recent ones, then older one
     assert.equal(f.context.checklistSections(files, 'claude:x').map(([name, list]) => `${name}:${list.map(x => x.path)}`).join(' | '),
         'Edited by this chat:a | Recently updated:b | Older, with open items:c,d');
 });
+
+test('history highlights literal title matches and escapes markup in message excerpts', () => {
+    const {context} = fixture();
+    context.imports.gi.GLib.markup_escape_text = text => text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    let markup;
+    const label = {text: 'Review [A+B] & <notes>', clutter_text: {set_markup: value => { markup = value; }}};
+    context.highlightHistoryText(label, '[a+b]');
+    assert.equal(markup, 'Review <b><u>[A+B]</u></b> &amp; &lt;notes&gt;');
+    context.highlightHistoryParts(label, ['Agent · <', 'Démultiplexing', '> & ', 'demux', '']);
+    assert.equal(markup, 'Agent · &lt;<b><u>Démultiplexing</u></b>&gt; &amp; <b><u>demux</u></b>');
+});

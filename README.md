@@ -139,8 +139,9 @@ Clicking the counts opens the dropdown, with these tabs:
   for a Codex chat or any other; **Done**, **Drop** and **Reopen** close or reopen a ticket.
 - **History**: search saved Claude and Codex chats by title, folder, or words in your messages and the agents’ replies.
   Type `memory share` to search all projects or `repo:agent-bar memory share` to narrow the search. Use quotes around
-  folder names with spaces. A message match shows an excerpt and who wrote it. Each word can match the start of a word
-  in the same message. Click a result to open or resume the conversation. The index updates nightly and with **⟳**.
+  folder names with spaces. A message match shows who wrote it and a wrapped excerpt with matching words in bold. Each
+  keyword can match the start of a word in the same message. A title, folder, or provider match is labeled when
+  no indexed message matches. Click a result to open or resume the conversation. The index updates nightly and with **⟳**.
 - **Quota**: each provider's usage limits as Claude Code and Codex record them on this computer: the weekly limit, the
   5-hour one, and a weekly limit for one model such as Fable, with that model's share. Each shows what is left, when it
   resets, its pace over the last day (or this window's average), when that pace would use the rest and how that compares

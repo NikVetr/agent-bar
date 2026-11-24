@@ -96,3 +96,19 @@ class HistorySearchTests(unittest.TestCase):
                 with sqlite3.connect(database) as db: db.execute('UPDATE threads SET archived=1')
                 inventory.refresh()
                 self.assertEqual(history_search.search('apricot', path=index)['results'], [])
+
+    def test_excerpt_keeps_highlighted_fts_words_visible_after_long_context(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'history.sqlite'
+            with sqlite3.connect(path) as db:
+                history_search.initialize(db)
+                db.execute('PRAGMA user_version=1')
+                db.execute("INSERT INTO sources(key,folder,title) VALUES ('a','/repo','Title')")
+                body = 'x' * 500 + ' <Démultiplexing> & demux 🐈 ' + 'y' * 250
+                db.execute("INSERT INTO messages VALUES ('a','assistant',?)", (body,))
+            hit, = history_search.search('demu', path=path)['results']
+            self.assertEqual(hit['parts'][1::2], ['Démultiplexing', 'demux'])
+            self.assertEqual(''.join(hit['parts']), hit['excerpt'])
+            self.assertIn('<Démultiplexing> & demux 🐈', hit['excerpt'])
+            self.assertLessEqual(len(hit['parts'][0]), 38)
+            self.assertLessEqual(len(hit['excerpt']), 161)

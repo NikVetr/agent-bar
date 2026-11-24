@@ -4,6 +4,7 @@ import re
 import sqlite3
 from contextlib import closing
 from pathlib import Path
+from uuid import uuid4
 
 from .state import ROOT
 
@@ -66,6 +67,23 @@ def initialize(db):
     db.execute('CREATE VIRTUAL TABLE IF NOT EXISTS messages USING fts5(key UNINDEXED, role UNINDEXED, body)')
 
 
+def excerpt_parts(snippet, marker):
+    """Alternate plain text and FTS-matched words, keeping the first hit in view."""
+    parts = ' '.join(snippet.split()).split(marker)
+    if len(parts[0]) > 38:
+        parts[0] = '…' + parts[0][-37:]
+    remaining = 160
+    visible = []
+    for index, part in enumerate(parts):
+        visible.append(part[:remaining])
+        remaining -= len(part)
+        if remaining < 0 or (remaining == 0 and any(parts[index + 1:])):
+            if index % 2: visible.append('…')
+            else: visible[-1] += '…'
+            break
+    return visible
+
+
 def search(query, repo=None, path=INDEX):
     """Match all literal keyword prefixes in one message and return one excerpt per conversation."""
     words = re.findall(r'[^\W_]+', query, re.UNICODE)
@@ -86,10 +104,16 @@ def search(query, repo=None, path=INDEX):
         # Pick the newest matching message per thread. Unary + keeps SQLite from expanding a common FTS
         # prefix again for each rowid; it runs MATCH once and tests membership before extracting excerpts.
         scope = 'AND key IN (SELECT value FROM json_each(?))' if repo else ''
-        rows = db.execute(f"""SELECT key, role, snippet(messages, 2, '', '', '…', 18) FROM messages
+        marker = uuid4().hex
+        params = (marker, marker, match, match)
+        rows = db.execute(f"""SELECT key, role, snippet(messages, 2, ?, ?, '…', 18) FROM messages
                            WHERE messages MATCH ? AND +rowid IN
                              (SELECT max(rowid) FROM messages WHERE messages MATCH ? {scope} GROUP BY key)""",
-                          (match, match, json.dumps(list(sources))) if repo else (match, match))
-        results = [{'key': key, 'title': sources[key][1], 'folder': sources[key][0], 'role': role,
-                    'excerpt': ' '.join(excerpt.split())[:360]} for key, role, excerpt in rows if key in sources]
+                          (*params, json.dumps(list(sources))) if repo else params)
+        results = []
+        for key, role, snippet in rows:
+            if key in sources:
+                parts = excerpt_parts(snippet, marker)
+                results.append({'key': key, 'title': sources[key][1], 'folder': sources[key][0], 'role': role,
+                                'excerpt': ''.join(parts), 'parts': parts})
     return {'ok': True, 'results': results}
