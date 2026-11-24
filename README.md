@@ -129,7 +129,8 @@ Clicking the counts opens the dropdown, with these tabs:
   Weekly limits, depleted workspace credits, and stops with an unknown reset still have the manual **Continue** action.
 - **Queues**: job queues from parallel-workers, by project, with progress, ETA and failed jobs. A project's finished
   queues count until a chat there starts a turn, or until you press Clear beside the project. **Adjust** on a queue,
-  and under **Pool and hosts**, changes what the scheduler offers there (see below).
+  and under **Pool and hosts**, changes what the scheduler offers there (see below). A circled number beside Adjust
+  shows the queue’s default priority when available. Hover over it for the scheduling order and any host overrides.
 - **Git**: each repository holding an open project, with its branch, uncommitted files, and commits ahead of or
   behind its upstream (as of the last fetch; Agent Bar never fetches or takes git's lock). Clicking one opens VS
   Code's Source Control for it.

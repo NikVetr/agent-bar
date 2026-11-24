@@ -252,6 +252,19 @@ test('queue details show workers and timing from the monitor, or when a queue fi
         '1 / 2 jobs · 50.0% · finished');
 });
 
+test('queue priority prefers the scheduler setting and reads signed monitor priorities without controls', () => {
+    const {queuePriority} = fixture().context;
+    const live = queuePriority('2 run P50*', {default: 0, hosts: {mba: 'off', desktop: 60}});
+    assert.equal(live.value, 0);
+    assert.match(live.tip, /mba off, desktop 60/);
+    const reported = queuePriority('1-0 P-1000* WAIT');
+    assert.equal(reported.value, -1000);
+    assert.match(reported.tip, /per-host priority overrides/);
+    assert.equal(queuePriority('1-1 P50').value, 50);
+    assert.equal(queuePriority('1-1'), null);
+    assert.equal(queuePriority('adaptive:n/a'), null);
+});
+
 test('window menu shows every window with its most urgent state, most recent first or by name', () => {
     const f = fixture();
     const snapshot = {windows: [{id: 'b', workspace: 'zeta'}, {id: 'a', workspace: 'alpha'}, {id: 'c', workspace: 'empty'}],

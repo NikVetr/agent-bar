@@ -124,6 +124,19 @@ function duration(seconds) {
     return `${Math.floor(seconds / 86400)}d ${Math.floor(seconds % 86400 / 3600)}h`;
 }
 
+/** @param {string} workers @param {{default: number, hosts?: Record<string, number|string>} | undefined} setting */
+function queuePriority(workers, setting) {
+    // The monitor's worker column carries P50 or P50* even for queues without editable controls.
+    const monitored = /(?:^|\s)P(-?\d+)(\*)?(?=\s|$)/.exec(workers);
+    const value = setting?.default ?? (monitored ? Number(monitored[1]) : null);
+    if (value === null) return null;
+    let tip = `Default queue priority: ${value}. Higher numbers get available slots first.`;
+    const hosts = Object.entries(setting?.hosts || {});
+    if (hosts.length) tip += '\nHost overrides: ' + hosts.map(([host, priority]) => `${host} ${priority}`).join(', ');
+    else if (!setting && monitored?.[2]) tip += '\nThis queue has per-host priority overrides.';
+    return {value, tip};
+}
+
 function queueDetail(queue) {
     const parts = [`${queue.done} / ${queue.total} jobs · ${queue.pct.toFixed(1)}%`];
     // Records from before the monitor reported failures have no count.
@@ -3571,6 +3584,14 @@ class Tracker {
                 if (entity) {
                     line.add_child(this._controlsToggle(`queue:${entity.id}`, queue.label, entity, editor,
                         section => this._fillControls(section, {kind: 'queue', id: entity.id}, entity, true)));
+                }
+                const setting = entity?.controls.find(/** @param {{name: string}} control */ control => control.name === 'priority');
+                const priority = queuePriority(queue.workers, setting?.value);
+                if (priority) {
+                    const badge = new St.Bin({style_class: 'tracker-queue-priority', can_focus: true, accessible_name: priority.tip,
+                        y_align: Clutter.ActorAlign.CENTER, child: new St.Label({text: String(priority.value),
+                            x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER})});
+                    line.add_child(this._tooltip(badge, priority.tip));
                 }
                 line.add_child(new St.Label({text: queue.state, style_class: `tracker-chip tracker-chip-${stateStyle(queue.state)}`}));
                 box.add_child(line);

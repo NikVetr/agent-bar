@@ -94,6 +94,9 @@
 .tracker-queue-row { padding: 10px 12px; border-top: 1px solid #3b414a; }
 .tracker-queue-earlier { opacity: 150; }
 .tracker-control-toggle { padding: 3px 10px; font-size: 12px; }
+.tracker-queue-priority { min-width: 20px; height: 24px; padding: 0 2px; border: 1px solid #798594;
+    border-radius: 16px; color: #d0d8e2; font-size: 11px; }
+.tracker-queue-priority:hover, .tracker-queue-priority:focus { border-color: #eef2f7; color: #eef2f7; }
 /* Scheduler controls, opened under a queue, the pool or a host. */
 .tracker-control { padding: 2px 12px 10px 24px; }
 .tracker-control-panel { width: 592px; spacing: 10px; padding: 12px 14px; border: 1px solid #3b414a; border-radius: 8px; background-color: #1d2126; }
