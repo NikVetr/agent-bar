@@ -57,8 +57,13 @@ class HookInventoryTests(unittest.TestCase):
             (plugins / 'installed_plugins.json').write_text(json.dumps({'plugins': {
                 key: [{'scope': 'user', 'installPath': str(folder)}] for key in ['formatter@test', 'off@test']}}))
             (folder / 'hooks/hooks.json').write_text(json.dumps({'hooks': {'PostToolUse': [
-                {'matcher': 'Edit', 'hooks': [{'type': 'command', 'command': 'node format.js'}]}]}}))
+                {'matcher': 'Edit', 'hooks': [{'type': 'command', 'command': 'node', 'args': ['format.js'],
+                                               'if': 'Edit(*.js)', 'asyncRewake': True, 'timeout': 90}]}]}}))
             with patch.dict('os.environ', {'CLAUDE_CONFIG_DIR': str(config), 'CODEX_HOME': str(home/'.codex')}):
                 result = hook_inventory.inventory(home, home)
             item, = result['items']
             self.assertEqual((item['scope'], item['name'], item['events']), ('formatter@test', 'format.js', ['PostToolUse · Edit']))
+
+        self.assertEqual(item['triggers'], [{'event': 'PostToolUse', 'matcher': 'Edit', 'condition': 'Edit(*.js)'}])
+        self.assertEqual((item['action'], item['mode'], item['timeout'], item['description']),
+                         ('Run format.js', 'Background with reawakening', 90, ''))

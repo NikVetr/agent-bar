@@ -2984,7 +2984,7 @@ class Tracker {
         // null for the lists, or 'settings' or 'help'.
         const page = this._page;
         this._historyNote = null;
-        if (!page && this._isChatList()) this._loadInventory();
+        if (!page && this._needsInventory()) this._loadInventory();
         const header = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
         header._ornamentLabel?.hide();
         header.add_style_class_name('tracker-heading');
@@ -3156,7 +3156,11 @@ class Tracker {
         this._button.menu.box.insert_child_at_index(this._sideHolder, 0);
         this._renderSide();
         this._search.clutter_text.connect('text-changed', () => {
-            if (this._isChatList()) this._chatQuery = String(this._search.text);
+            if (this._isChatList()) {
+                const needed = this._needsInventory();
+                this._chatQuery = String(this._search.text);
+                if (!needed && this._needsInventory()) this._loadInventory();
+            }
             this._togglePicker(null);
             this._renderRows();
         });
@@ -3233,6 +3237,7 @@ class Tracker {
 
     // fill(body), when given, builds the rows on first expansion instead of up front.
     // below: a line under the heading that stays visible when the group is collapsed.
+    /** @param {((body: any) => void) | null} [fill] */
     _projectSection(key, title, context, summary, highlight = false, controls = null, fill = null, below = null, search = '') {
         this._projectKeys.push(key);
         const section = new PopupMenu.PopupMenuSection();
@@ -3360,31 +3365,35 @@ class Tracker {
         if (limited.length) this._section.addMenuItem(this._limitBanner(limited));
         const lookup = this._chatSearch(query);
         const rows = snapshot.rows.filter(row => matchesFilter(row, this._filter) && matchesChatSearch(row, lookup));
-        const totals = new Map((this._inventory?.conversations || []).map(row => [row.key, row.active]));
-        for (const project of groupProjects(rows, this._setting('projectOrder'), totals)) {
+        const order = this._setting('projectOrder');
+        const totals = new Map(order === 'total' ? this._inventory?.conversations.map(row => [row.key, row.active]) : []);
+        for (const project of groupProjects(rows, order, totals)) {
             const firstWindow = snapshot.windows.find(w => w.id === project.rows[0].window);
             const total = new Set(project.rows.map(row => row.key)).size;
             const queues = project.rows[0].queue_counts;
             const summary = (project.review ? `${project.review} review / ${total}` : `${total} open`)
                 + (queues.total ? ` · Q ${queues.done}/${queues.total}` : '');
-            const body = this._projectSection(project.key, project.name,
+            /** @param {any} body */
+            const fill = body => {
+                let index = 0;
+                for (const [windowId, conversations] of project.windows) {
+                    const window = snapshot.windows.find(w => w.id === windowId);
+                    if (project.windows.size > 1) {
+                        const heading = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
+                        heading._ornamentLabel?.hide();
+                        const name = window?.kind ? window.label || 'Terminal' : `Window ${++index}`;
+                        heading.add_child(new St.Label({text: `${name} · ${this._place(window)}`, x_expand: true,
+                            style_class: 'tracker-window-heading', y_align: Clutter.ActorAlign.CENTER}));
+                        heading.add_child(this._windowControls(windowId, snapshot));
+                        body.addMenuItem(heading);
+                    }
+                    for (const row of conversations) this._conversationItem(row, snapshot, body, lookup);
+                }
+            };
+            this._projectSection(project.key, project.name,
                 project.windows.size === 1 ? this._place(firstWindow) : `${project.windows.size} windows`,
                 summary, !!(project.review || queues.done),
-                project.windows.size === 1 ? this._windowControls(firstWindow.id, snapshot) : null, null, null, lookup.query);
-            let index = 0;
-            for (const [windowId, conversations] of project.windows) {
-                const window = snapshot.windows.find(w => w.id === windowId);
-                if (project.windows.size > 1) {
-                    const heading = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
-                    heading._ornamentLabel?.hide();
-                    const name = window?.kind ? window.label || 'Terminal' : `Window ${++index}`;
-                    heading.add_child(new St.Label({text: `${name} · ${this._place(window)}`, x_expand: true,
-                        style_class: 'tracker-window-heading', y_align: Clutter.ActorAlign.CENTER}));
-                    heading.add_child(this._windowControls(windowId, snapshot));
-                    body.addMenuItem(heading);
-                }
-                for (const row of conversations) this._conversationItem(row, snapshot, body, lookup);
-            }
+                project.windows.size === 1 ? this._windowControls(firstWindow.id, snapshot) : null, fill, null, lookup.query);
         }
         this._chatSearchFeedback(lookup, rows.length, 'No matching open conversations');
         for (const warning of snapshot.warnings)
@@ -4879,7 +4888,8 @@ class Tracker {
             return actor;
         };
         // A summary line that shows or hides the rows under it; `key` remembers the choice while the panel runs.
-        const group = (section, key, text) => {
+        /** @param {(() => void) | null} [fill] */
+        const group = (section, key, text, fill = null) => {
             const head = new St.BoxLayout({x_expand: true, style_class: 'tracker-info-skill'});
             const arrow = label(this._openSkills.has(key) ? '⌄' : '›', 'tracker-muted');
             head.add_child(arrow);
@@ -4887,32 +4897,56 @@ class Tracker {
             const toggle = new St.Button({child: head, x_expand: true, can_focus: true, accessible_name: text, style_class: 'tracker-message-button'});
             line(section, [toggle]);
             const rows = [];
+            const apply = () => {
+                const open = this._openSkills.has(key);
+                arrow.text = open ? '⌄' : '›';
+                if (open && fill) { fill(); fill = null; }
+                for (const row of rows) row.visible = open;
+            };
             toggle.connect('clicked', () => {
                 if (this._openSkills.has(key)) this._openSkills.delete(key);
                 else this._openSkills.add(key);
-                arrow.text = this._openSkills.has(key) ? '⌄' : '›';
-                for (const row of rows) row.visible = this._openSkills.has(key);
+                apply();
             });
+            apply();
             return row => { row.visible = this._openSkills.has(key); rows.push(row); };
         };
 
         /** @type {{items: {provider: 'claude'|'codex', scope: string, name: string, path: string,
-         * status: string, type: string, description: string, events: string[]}[], warnings: string[]}} */
+         * status: string, type: string, description: string, action: string, mode: string, timeout: number|null,
+         * triggers: {event: string, matcher: string, condition: string}[]}[], warnings: string[]}} */
         const inventory = info.hook_inventory;
         if (inventory) {
             const section = card('Hooks');
-            const shown = inventory.items.filter(h => [h.name, h.provider, h.scope, h.status, h.type, h.path, h.description, ...h.events]
-                .some(value => value.toLowerCase().includes(query)));
+            const shown = inventory.items.filter(h => [h.name, h.provider, h.scope, h.status, h.type, h.path, h.description, h.action, h.mode,
+                ...h.triggers.flatMap(t => [t.event, t.matcher, t.condition])].some(value => value.toLowerCase().includes(query)));
             if (!shown.length) line(section, [label(query ? 'No matching hooks' : 'No hooks found for this project')]);
             for (const hook of shown) {
                 const key = JSON.stringify(['hook', this._infoProject, hook.provider, hook.path, hook.name, hook.status, inventory.items.indexOf(hook)]);
-                const toggle = group(section, key, `${PROVIDERS[hook.provider][1]} · ${hook.name} · ${hook.status}`);
-                const text = label([hook.description, `${hook.type} · ${hook.scope}`, ...hook.events, hook.path.replace(GLib.get_home_dir(), '~')].filter(Boolean).join('\n'),
-                    'tracker-help-text', true);
-                text.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
-                text.clutter_text.line_wrap = true;
-                text.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
-                toggle(line(section, [text]));
+                const detail = new St.BoxLayout({vertical: true, x_expand: true, style_class: 'tracker-info-detail'});
+                /** @param {string} caption @param {string} value */
+                const field = (caption, value) => {
+                    if (!value) return;
+                    const row = new St.BoxLayout({x_expand: true, style_class: 'tracker-info-skill'});
+                    row.add_child(new St.Label({text: caption, style_class: 'tracker-hook-caption tracker-detail', y_align: Clutter.ActorAlign.START}));
+                    const content = label(value, 'tracker-help-text', true);
+                    content.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+                    content.clutter_text.line_wrap = true;
+                    content.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
+                    row.add_child(content);
+                    detail.add_child(row);
+                };
+                const toggle = group(section, key, `${PROVIDERS[hook.provider][1]} · ${hook.name} · ${hook.status}`, () => {
+                    const events = hook.triggers.filter(t => (!t.matcher || t.matcher === '*') && !t.condition).map(t => t.event);
+                    const when = hook.triggers.filter(t => (t.matcher && t.matcher !== '*') || t.condition)
+                        .map(t => [t.event, t.matcher && t.matcher !== '*' ? `matches ${t.matcher}` : '', t.condition && `if ${t.condition}`].filter(Boolean).join(' · '));
+                    field('When', [events.join(', '), ...when].filter(Boolean).join('\n'));
+                    field('Action', hook.action);
+                    field('Effect', hook.description);
+                    field('Execution', [hook.mode, hook.timeout != null && `timeout set to ${hook.timeout}s`].filter(Boolean).join(' · '));
+                    field('Source', `${hook.scope} · ${hook.path.replace(GLib.get_home_dir(), '~')}`);
+                });
+                toggle(line(section, [detail]));
             }
             for (const warning of inventory.warnings) line(section, [label(warning, 'tracker-warning', true)]);
         }
@@ -5290,6 +5324,11 @@ class Tracker {
         return this._view === 'history' || this._view === 'conversations';
     }
 
+    _needsInventory() {
+        return this._view === 'history' || (this._view === 'conversations' &&
+            (this._setting('projectOrder') === 'total' || !!this._chatQuery.trim()));
+    }
+
     _historyNoteText() {
         if (this._refreshing) return 'Scanning…';
         return this._inventory ? `Scanned ${age(this._inventory.updated)}` : 'Not scanned yet';
@@ -5311,7 +5350,7 @@ class Tracker {
                     ? 'No inventory yet · press ⟳ to scan saved conversations' : error.message;
             }
             this._historyNote?.set_text(this._historyNoteText());
-            if (this._button.menu.isOpen && this._isChatList() && !this._page) this._renderRows();
+            if (this._button.menu.isOpen && this._needsInventory() && !this._page) this._renderRows();
         });
     }
 

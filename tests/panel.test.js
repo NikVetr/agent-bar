@@ -823,3 +823,19 @@ test('Chats and History share message matches and repo scope while keeping unind
     assert.equal(scope.query, '');
     assert.equal(tracker._chatSearch('repo:"my repo"'), scope);
 });
+
+test('Chats needs the saved inventory only for a query or total activity order', () => {
+    const {tracker} = fixture();
+    tracker._view = 'conversations';
+    tracker._chatQuery = '';
+    tracker._setting = () => 'activity';
+    assert.equal(tracker._needsInventory(), false);
+    tracker._chatQuery = 'keyword';
+    assert.equal(tracker._needsInventory(), true);
+    tracker._chatQuery = '';
+    tracker._setting = () => 'total';
+    assert.equal(tracker._needsInventory(), true);
+    tracker._setting = () => 'activity';
+    tracker._view = 'history';
+    assert.equal(tracker._needsInventory(), true);
+});

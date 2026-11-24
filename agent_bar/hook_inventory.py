@@ -9,18 +9,37 @@ from . import hooks
 from .codex_rpc import RpcError, app_server
 
 
-def command_name(handler, kind):
-    command = handler.get('command', '')
-    if hooks.MODULE in command:
-        return 'Agent Bar message waiter' if command.endswith(' wait') else 'Agent Bar lifecycle observer'
-    if handler.get('statusMessage'): return handler['statusMessage']
-    try: words = shlex.split(command)
-    except ValueError: words = []
-    if words[:1] == ['exec']: words = words[1:]
-    if words:
-        script = next((word for word in words if word.endswith(('.sh', '.py', '.js', '.mjs'))), words[0])
-        return Path(script).name
-    return handler.get('tool') or f'{kind} hook'
+def hook_action(handler, kind):
+    """Return a display name, declared action and, for our own commands, a known effect."""
+    status = handler.get('statusMessage')
+    if kind == 'command':
+        command = handler.get('command') or ''
+        if isinstance(handler.get('args'), list):
+            words = [command, *handler['args']]
+        else:
+            try: words = shlex.split(command)
+            except ValueError: words = []
+            if words[:1] == ['exec']: words = words[1:]
+        executable = Path(words[0]).name if words else ''
+        python = executable.rstrip('0123456789.') == 'python'
+        if len(words) >= 3 and words[1:3] == ['-m', 'agent_bar.hook'] and python:
+            if words[3:] == ['wait']:
+                return ('Agent Bar message waiter', 'Run agent_bar.hook wait',
+                        'Wakes an idle Claude chat when another agent sends it a message and waking is enabled.')
+            if words[3:] in ([], ['codex']):
+                return ('Agent Bar lifecycle observer', 'Run ' + ' '.join(words[2:]),
+                        'Reports turn and tool events to Agent Bar and surfaces unread agent messages at turn start.')
+        if executable and '=' not in words[0]:
+            target = executable
+            if (python or executable in ('node', 'bash', 'sh')) and len(words) > 1 and not words[1].startswith('-'):
+                target = Path(words[1]).name
+            return status or target, f'Run {target}', ''
+    if kind in ('mcpTool', 'mcp_tool'):
+        tool = handler.get('tool') or 'MCP tool'
+        return status or tool, 'Call ' + ' / '.join(filter(None, [handler.get('server'), tool])), ''
+    action = {'command': 'Run a shell command', 'http': 'Send an HTTP request', 'prompt': 'Evaluate a prompt',
+              'agent': 'Run an agent'}.get(kind, f'Run {kind} hook')
+    return status or f'{kind} hook', action, ''
 
 
 def claude_sources(home, project, warnings):
@@ -90,18 +109,20 @@ def inventory(home, project):
 
     def add(provider, path, scope, status, event, matcher, handler):
         kind = handler.get('type') or handler.get('handlerType') or 'command'
-        name = command_name(handler, kind)
+        name, action, description = hook_action(handler, kind)
         target = {key: handler[key] for key in ('command', 'args', 'prompt', 'url', 'server', 'tool') if key in handler}
-        identity = (provider, str(path), scope, status, kind, name, json.dumps(target, sort_keys=True))
-        description = handler.get('statusMessage') or ''
-        if name == 'Agent Bar message waiter':
-            description = 'Wakes an idle Claude chat when another agent sends it a message and waking is enabled.'
-        elif name == 'Agent Bar lifecycle observer':
-            description = 'Reports turn and tool events to Agent Bar and surfaces unread agent messages at turn start.'
+        mode = ('Background with reawakening' if handler.get('asyncRewake') else
+                'Background' if handler.get('async') else '')
+        timeout = handler.get('timeout', handler.get('timeoutSec'))
+        identity = (provider, str(path), scope, status, kind, name, json.dumps(target, sort_keys=True), mode, timeout)
         row = found.setdefault(identity, {'provider': provider, 'path': str(path), 'scope': scope, 'status': status,
-                                          'type': kind, 'name': name, 'description': description if description != name else '', 'events': []})
-        trigger = f'{event} · {matcher}' if matcher else event
-        if trigger not in row['events']: row['events'].append(trigger)
+                                          'type': kind, 'name': name, 'action': action, 'description': description,
+                                          'mode': mode, 'timeout': timeout, 'triggers': [], 'events': []})
+        trigger = {'event': event, 'matcher': matcher or '', 'condition': handler.get('if') or ''}
+        if trigger not in row['triggers']: row['triggers'].append(trigger)
+        # Keep the display strings published by the info CLI alongside the structured triggers.
+        display = f'{event} · {matcher}' if matcher else event
+        if display not in row['events']: row['events'].append(display)
 
     try:
         for path, scope, status, event, matcher, handler in claude_sources(home, project, warnings):

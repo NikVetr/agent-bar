@@ -86,7 +86,9 @@ state and unread reasons stay separate in the data.
   carries per-folder counts for the panel's row buttons.
 - **Info** (`info.py`): read only when the panel's Info tab asks: skills, hook registrations, tracker health, and instruction files.
   The hook inventory reads Claude settings and enabled installed plugin definitions for the selected folder and requests
-  Codex’s effective hook list and trust states for that folder over the local app-server connection.
+  Codex’s effective hook list and trust states for that folder over the local app-server connection. The CLI returns
+  each handler’s declared action and its event, matcher, and condition together for each trigger. Reading Info never
+  executes a registered handler.
 
 ## Hooks
 
