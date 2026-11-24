@@ -84,12 +84,26 @@ def remove(provider):
     if write(path, data, before): print(f'Removed {provider} hooks from {path}')
 
 
+def registrations(data):
+    """Yield the event, matcher and handler from a hook settings document."""
+    groups = data.get('hooks', {}) if isinstance(data, dict) else None
+    if not isinstance(groups, dict): raise ValueError('expected a hook event map')
+    for event, entries in groups.items():
+        if not isinstance(entries, list): raise ValueError(f'{event}: expected a list of matchers')
+        for entry in entries:
+            if not isinstance(entry, dict) or not isinstance(entry.get('hooks'), list):
+                raise ValueError(f'{event}: invalid matcher group')
+            for handler in entry['hooks']:
+                if not isinstance(handler, dict): raise ValueError(f'{event}: invalid hook handler')
+                yield event, entry.get('matcher'), handler
+
+
 def installed(provider, home=None):
     """Which of agent-bar's hooks the provider's settings hold, by kind."""
-    try: data = json.loads(settings(provider, home).read_text())
+    try:
+        data = json.loads(settings(provider, home).read_text())
+        commands = [hook['command'] for _, _, hook in registrations(data) if isinstance(hook.get('command'), str)]
     except (OSError, ValueError): return {}
-    commands = [hook.get('command', '') for entries in (data.get('hooks') or {}).values()
-                for entry in entries for hook in entry.get('hooks', [])]
     found = {'observer': any(command.endswith(MODULE + (' codex' if provider == 'codex' else '')) for command in commands)}
     if provider == 'claude': found['waiter'] = any(command.endswith(f'{MODULE} wait') for command in commands)
     return found

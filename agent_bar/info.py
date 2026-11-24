@@ -3,7 +3,7 @@ each open project. Read on demand from small local files; nothing polls."""
 import json
 from pathlib import Path
 
-from . import hooks
+from . import hook_inventory, hooks
 from .state import ROOT
 
 # Instruction files an agent reads in a folder or any folder above it, up to home.
@@ -74,10 +74,11 @@ def instructions(folders, home):
     return {'folders': result, 'user': shared}
 
 
-def collect(root=ROOT, home=None):
+def collect(root=ROOT, home=None, project=None):
     home = Path(home or Path.home())
     try: snapshot = json.loads((Path(root) / 'snapshot.json').read_text())
     except (OSError, ValueError): snapshot = {'windows': [], 'rows': []}
     folders = {root for window in snapshot['windows'] for root in window.get('roots') or []}
-    return {'ok': True, 'skills': skills(home), 'health': health(Path(root), home),
+    return {'ok': True, 'skills': skills(home), 'hook_inventory': hook_inventory.inventory(home, Path(project or home).resolve()),
+            'health': health(Path(root), home),
             'instructions': instructions(folders, home)}

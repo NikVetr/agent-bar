@@ -43,7 +43,8 @@ def main():
     search.add_argument('--conversation', help='show context for a hit in this saved conversation')
     search.add_argument('--message', type=int, default=1, help='matching message number, newest first')
     search.add_argument('--hit', type=int, help='occurrence in the message (1-based, or -1 for the last)')
-    subs.add_parser('info', help='skills, Agent Bar health and instruction files (JSON)')
+    info = subs.add_parser('info', help='skills, hooks, Agent Bar health and instruction files (JSON)')
+    info.add_argument('--project', help='inspect hooks for this folder (default: user scope)')
     subs.add_parser('usage', help='usage limits Claude Code and Codex recorded, with pace, run-out time and use by day (JSON)')
     resume = subs.add_parser('resume', help='reopen an inventoried conversation in VS Code')
     resume.add_argument('key')
@@ -132,7 +133,7 @@ def main():
         sys.exit(0 if result['ok'] else 1)
     if name == 'info':
         from . import info
-        print(json.dumps(info.collect(), ensure_ascii=False))
+        print(json.dumps(info.collect(project=args['project']), ensure_ascii=False))
         return
     if name == 'usage':
         from . import usage

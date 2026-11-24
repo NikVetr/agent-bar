@@ -84,7 +84,9 @@ state and unread reasons stay separate in the data.
   notes Claude's Edit/Write/writing Bash calls, `Providers.events` Codex's apply_patch and shell calls, both from the
   transcript tails they already read). The full result goes to `checklists.json` only when it changes; the snapshot
   carries per-folder counts for the panel's row buttons.
-- **Info** (`info.py`): read only when the panel's Info tab asks: skills, hook health, and instruction files.
+- **Info** (`info.py`): read only when the panel's Info tab asks: skills, hook registrations, tracker health, and instruction files.
+  The hook inventory reads Claude settings and enabled installed plugin definitions for the selected folder and requests
+  Codex’s effective hook list and trust states for that folder over the local app-server connection.
 
 ## Hooks
 

@@ -156,8 +156,10 @@ Clicking the counts opens the dropdown, with these tabs:
   Claude Code refreshes its figures only when it fetches them, as `/usage` does, so they can be hours old; with
   **Settings › Integrations › Read Claude limits** on, Agent Bar reads them itself every 10 minutes. Codex records its
   own as it works. Copilot and Antigravity record none on this computer.
-- **Info**: your skills (start a new chat with one), the health of Agent Bar's own hooks and bridges, and the AGENTS.md
-  or CLAUDE.md files each project uses.
+- **Info**: choose a project to inspect its hooks or start a chat with a skill. Expand a hook to see its events,
+  tool matchers, and configuration source. Codex reports enablement and trust for the selected folder. Claude entries
+  reflect local settings and enabled installed plugins; an individual session can have different settings.
+  Info also shows Agent Bar hook and bridge health and the instruction files each project uses.
 
 **?** opens a guide to every symbol and color, at the part about the tab you were on; the gear opens settings,
 including a color-blind-safe palette.
@@ -293,7 +295,7 @@ agent-bar status        # open chats, their states and counts
 agent-bar queues        # queues and their progress
 agent-bar host-projects HOST  # projects, jobs, reserved CPU slots and sampled memory on one node
 agent-bar git           # git status of repositories holding open projects
-agent-bar info          # skills, hook health, instruction files
+agent-bar info --project .  # project hooks, skills, tracker health, instruction files
 agent-bar usage         # usage limits, with pace, run-out time and use by day
 agent-bar ticket list   # tickets and what each waits for
 agent-bar inventory     # rescan saved chats

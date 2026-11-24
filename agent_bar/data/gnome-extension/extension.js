@@ -2350,13 +2350,13 @@ class Tracker {
         let timer = 0;
         button.connect('clicked', () => {
             St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, text());
-            label.text = 'Copied';
-            label.show();
+            if (compact) icon.icon_name = 'object-select-symbolic';
+            else label.text = 'Copied';
             if (timer) GLib.source_remove(timer);
             timer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1500, () => {
                 timer = 0;
-                label.text = compact ? '' : 'Copy';
-                label.visible = !compact;
+                if (compact) icon.icon_name = 'edit-copy-symbolic';
+                else label.text = 'Copy';
                 return GLib.SOURCE_REMOVE;
             });
         });
@@ -3058,7 +3058,7 @@ class Tracker {
             this._button.menu.addMenuItem(item);
             return item;
         };
-        this._search = new St.Entry({hint_text: this._isChatList() ? 'Search messages and titles · repo:name to narrow' : 'Search conversations, projects, or queues…',
+        this._search = new St.Entry({hint_text: this._isChatList() ? 'Search messages and titles · repo:name to narrow' : this._view === 'info' ? 'Search hooks and skills…' : 'Search conversations, projects, or queues…',
             can_focus: true, x_expand: true, style_class: 'tracker-search'});
         if (this._isChatList()) this._search.set_text(this._chatQuery);
         const tabs = new St.BoxLayout({style_class: 'tracker-filters tracker-tabs'});
@@ -3090,7 +3090,7 @@ class Tracker {
                 : ['agent', 'project'].includes(this._messageFilter) ? ['filter', 'value'] : ['filter'];
             for (const picker of pickers) {
                 const [options, current] = this._pickerOptions(picker);
-                const caption = {sort: 'Sort', filter: 'Filter', project: 'New chats in'}[picker]
+                const caption = {sort: 'Sort', filter: 'Filter', project: 'Project'}[picker]
                     || (this._messageFilter === 'agent' ? 'Agent' : 'Project');
                 const value = options.find(([v]) => v === current)[1];
                 const content = new St.BoxLayout({style_class: 'tracker-picker-content'});
@@ -4847,8 +4847,9 @@ class Tracker {
     // Usage limits, skills, tracker health and instruction files, from `agent-bar info`, read when this tab
     // opens and again once 30 s old.
     _renderInfo(snapshot, query) {
-        if (Date.now() - this._infoAt > 30000) this._loadInfo();
-        const info = this._info;
+        const sameProject = this._infoFor === this._infoProject;
+        if (!sameProject || Date.now() - this._infoAt > 30000) this._loadInfo();
+        const info = sameProject ? this._info : null;
         if (!info) {
             this._section.addMenuItem(this._item(this._infoError || 'Reading…', this._infoError ? 'tracker-warning' : 'tracker-empty'));
             return;
@@ -4883,7 +4884,7 @@ class Tracker {
             const arrow = label(this._openSkills.has(key) ? '⌄' : '›', 'tracker-muted');
             head.add_child(arrow);
             head.add_child(label(text, 'tracker-detail', true));
-            const toggle = new St.Button({child: head, x_expand: true, can_focus: true, style_class: 'tracker-message-button'});
+            const toggle = new St.Button({child: head, x_expand: true, can_focus: true, accessible_name: text, style_class: 'tracker-message-button'});
             line(section, [toggle]);
             const rows = [];
             toggle.connect('clicked', () => {
@@ -4894,6 +4895,27 @@ class Tracker {
             });
             return row => { row.visible = this._openSkills.has(key); rows.push(row); };
         };
+
+        /** @type {{items: {provider: 'claude'|'codex', scope: string, name: string, path: string,
+         * status: string, type: string, description: string, events: string[]}[], warnings: string[]}} */
+        const inventory = info.hook_inventory;
+        if (inventory) {
+            const section = card('Hooks');
+            const shown = inventory.items.filter(h => [h.name, h.provider, h.scope, h.status, h.type, h.path, h.description, ...h.events]
+                .some(value => value.toLowerCase().includes(query)));
+            if (!shown.length) line(section, [label(query ? 'No matching hooks' : 'No hooks found for this project')]);
+            for (const hook of shown) {
+                const key = JSON.stringify(['hook', this._infoProject, hook.provider, hook.path, hook.name, hook.status, inventory.items.indexOf(hook)]);
+                const toggle = group(section, key, `${PROVIDERS[hook.provider][1]} · ${hook.name} · ${hook.status}`);
+                const text = label([hook.description, `${hook.type} · ${hook.scope}`, ...hook.events, hook.path.replace(GLib.get_home_dir(), '~')].filter(Boolean).join('\n'),
+                    'tracker-help-text', true);
+                text.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+                text.clutter_text.line_wrap = true;
+                text.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
+                toggle(line(section, [text]));
+            }
+            for (const warning of inventory.warnings) line(section, [label(warning, 'tracker-warning', true)]);
+        }
 
         const skills = card('Skills');
         const shown = info.skills.filter(skill => `${skill.name} ${skill.description}`.toLowerCase().includes(query));
@@ -4976,14 +4998,16 @@ class Tracker {
     async _loadInfo() {
         if (this._infoLoading) return;
         this._infoLoading = true;
+        const project = this._infoProject;
         try {
-            this._info = await this._run(['info']);
+            this._info = await this._run(project ? ['info', '--project', project] : ['info']);
             this._infoError = null;
             this._infoAt = Date.now();
         } catch (error) {
+            this._info = null;
             this._infoError = `Info unavailable: ${error.message}`;
             this._infoAt = Date.now();
-        } finally { this._infoLoading = false; }
+        } finally { this._infoLoading = false; this._infoFor = project; }
         if (this._enabled && this._button.menu.isOpen && this._view === 'info' && !this._page) this._later(() => this._renderRows());
     }
 
@@ -5179,7 +5203,7 @@ class Tracker {
         if (activate) {
             const caption = live ? 'Open' : 'Resume';
             const button = new St.Button({label: caption, can_focus: true, accessible_name: `${caption} conversation`,
-                style_class: 'tracker-copy tracker-row-action'});
+                style_class: 'tracker-copy tracker-row-action tracker-open-slot'});
             button.connect('clicked', activate);
             actions.add_child(button);
         } else {
@@ -5208,14 +5232,14 @@ class Tracker {
 
         const toggle = new St.Button({label: detail ? 'Hide context' : 'Show context', can_focus: true,
             accessible_name: detail ? 'Hide context' : 'Show context and browse matching snippets',
-            style_class: 'tracker-copy tracker-row-action'});
+            style_class: 'tracker-copy tracker-row-action tracker-context-slot'});
         toggle.connect('clicked', () => {
             if (detail) {
                 lookup.details.delete(key);
                 this._renderRows();
             } else this._loadHistoryContext(lookup, key);
         });
-        actions.insert_child_at_index(toggle, 0);
+        actions.insert_child_below(toggle, actions.get_last_child());
         if (!detail) return;
         const controls = new St.BoxLayout({style_class: 'tracker-row-heading', x_align: Clutter.ActorAlign.END});
         /** @param {string} caption @param {string} name @param {Function} action */
@@ -5437,7 +5461,7 @@ class Tracker {
             box.add_child(new St.Label({text: row.unread.join(' · '), style_class: 'tracker-reason tracker-attention'}));
         if (lookup.hits.has(row.key)) this._historyExcerpt(box, actions, row.key, lookup);
         actions.add_child(new St.Label({text: row.unread.length ? 'Needs review' : state,
-            style_class: `tracker-chip tracker-chip-${row.unread.length ? 'attention' : stateStyle(row.state)}`,
+            style_class: `tracker-chip tracker-chat-state tracker-chip-${row.unread.length ? 'attention' : stateStyle(row.state)}`,
             y_align: Clutter.ActorAlign.CENTER}));
     }
 
