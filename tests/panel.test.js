@@ -265,6 +265,20 @@ test('queue priority prefers the scheduler setting and reads signed monitor prio
     assert.equal(queuePriority('adaptive:n/a'), null);
 });
 
+test('prerequisite indices follow active numbers and reuse a project-local index for completed or unavailable targets', () => {
+    const {queueReferenceIndex} = fixture().context;
+    const rows = new Map([['active', {project: 'A', number: 1}], ['done', {project: 'A', number: null}],
+        ['other', {project: 'B', number: 1}]]);
+    const known = new Map([['pool/1', {tag: 'done', project: 'A'}], ['pool/2', {tag: 'other', project: 'B'}],
+        ['pool/3', {project: 'A'}], ['pool/4', {tag: 'done', project: 'A'}], ['pool/5', {project: 'B'}]]);
+    const index = queueReferenceIndex(rows, known);
+    assert.deepEqual(Array.from(index.references.values(), ref => ref.number), [2, 1, 3, 2, 2]);
+    assert.equal(index.numbers.get('done'), 2);
+    assert.equal(index.references.get('pool/2').project, 'B');
+    rows.set('new', {project: 'A', number: 2});
+    assert.equal(queueReferenceIndex(rows, known).references.get('pool/1').number, 3);
+});
+
 test('window menu shows every window with its most urgent state, most recent first or by name', () => {
     const f = fixture();
     const snapshot = {windows: [{id: 'b', workspace: 'zeta'}, {id: 'a', workspace: 'alpha'}, {id: 'c', workspace: 'empty'}],

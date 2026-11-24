@@ -124,6 +124,35 @@ function duration(seconds) {
     return `${Math.floor(seconds / 86400)}d ${Math.floor(seconds % 86400 / 3600)}h`;
 }
 
+/** @typedef {{id:string, pool:string, tag?:string, project?:string, name:string, detail:string, state:string}} QueuePrerequisite */
+/** @param {QueuePrerequisite} dep */
+function prerequisiteKey(dep) {
+    return JSON.stringify([dep.pool, dep.id]);
+}
+
+// Reserve the active numbers first. Only prerequisites encountered in this menu need extra numbers.
+/** @param {Map<string,{number:number|null, project:string}>} rows
+ * @param {Map<string,{tag?:string, project:string}>} known */
+function queueReferenceIndex(rows, known) {
+    const numbers = new Map(), references = new Map(), last = new Map();
+    for (const [tag, row] of rows) {
+        if (!row.number) continue;
+        numbers.set(tag, row.number);
+        last.set(row.project, Math.max(last.get(row.project) || 0, row.number));
+    }
+    for (const [key, ref] of known) {
+        const project = (ref.tag && rows.get(ref.tag)?.project) || ref.project;
+        let number = ref.tag ? numbers.get(ref.tag) : undefined;
+        if (number === undefined) {
+            number = (last.get(project) || 0) + 1;
+            last.set(project, number);
+            if (ref.tag) numbers.set(ref.tag, number);
+        }
+        references.set(key, {number, project});
+    }
+    return {numbers, references};
+}
+
 /** @param {string} workers @param {{default: number, hosts?: Record<string, number|string>} | undefined} setting */
 function queuePriority(workers, setting) {
     // The monitor's worker column carries P50 or P50* even for queues without editable controls.
@@ -1377,6 +1406,7 @@ class Tracker {
                 this._picker = null;
                 if (this._setting('openTab') === 'conversations') this._view = 'conversations';
                 if (tab) this._view = tab;
+                this._knownQueueRefs = new Map();
                 this._menuFocus = global.display.focus_window;
                 this._menuSnapshot = this._snapshot;
                 this._renderedPlace = null;
@@ -3568,8 +3598,24 @@ class Tracker {
             this._coveredQueueIds = new Set(ids);
         }
         if (!this._enabled || this._view !== 'queues' || this._page || !this._button.menu.isOpen) return;
+        this._indexQueueGates();
         this._updateQueueGates();
         if (ids !== this._dependencyIds) this._loadQueueDependencies();
+    }
+
+    _indexQueueGates() {
+        /** @type {Record<string,QueuePrerequisite[]>} */
+        const links = this._dependencies?.links || {};
+        const known = this._knownQueueRefs ??= new Map();
+        for (const [parent, deps] of Object.entries(links)) {
+            for (const dep of deps) {
+                const key = prerequisiteKey(dep);
+                const previous = known.get(key);
+                known.set(key, {tag: dep.tag || previous?.tag,
+                    project: dep.project || previous?.project || this._queueById?.get(parent)?.project});
+            }
+        }
+        if (this._queueById) this._refIndex = queueReferenceIndex(this._queueById, known);
     }
 
     _updateQueueGates() {
@@ -3579,16 +3625,19 @@ class Tracker {
             this._gateWarning.visible = !!(error || loading);
             this._gateWarning.label.text = error ? `Queue dependencies unavailable · ${error}` : loading ? 'Reading queue dependencies…' : '';
         }
-        for (const [id, box] of this._gateRows || []) {
+        const index = this._refIndex;
+        if (!index) return;
+        for (const [id, {box, rowNumber}] of this._gateRows || []) {
+            const n = index.numbers.get(id);
+            rowNumber.visible = !!n;
+            rowNumber.text = n ? `#${n}` : '';
             const deps = this._dependencies?.links?.[id] || [];
             const error = this._dependencies?.errors?.[id];
             const project = this._queueById?.get(id)?.project;
-            const references = deps.map(/** @param {{tag?:string, project?:string, name:string, detail:string, state:string}} dep */ dep => {
-                const target = this._queueById?.get(dep.tag);
-                const owner = target?.project || dep.project;
-                const number = target?.number;
-                const short = number ? `#${number}${owner !== project ? '↗' : ''}` : dep.name;
-                const full = [owner, number && `#${number}`, dep.name, dep.detail].filter(Boolean).join(' · ');
+            const references = deps.map(/** @param {QueuePrerequisite} dep */ dep => {
+                const ref = index.references.get(prerequisiteKey(dep));
+                const short = `#${ref.number}${ref.project !== project ? '↗' : ''}`;
+                const full = [short, dep.name, ref.project, dep.detail].filter(Boolean).join(' · ');
                 return {short, full, state: dep.state};
             });
             const tip = error ? `Prerequisites unavailable · ${error}` : !references.length ? '' : 'Prerequisite queues\n' +
@@ -3598,19 +3647,24 @@ class Tracker {
             box.destroy_all_children();
             box.accessible_name = tip;
             if (!tip) continue;
-            const label = (/** @type {string} */ text, style = 'tracker-detail') =>
-                box.add_child(new St.Label({text, style_class: style, y_align: Clutter.ActorAlign.CENTER}));
-            label('←');
-            if (error) { label('?', 'tracker-attention'); continue; }
+            const label = (/** @type {string} */ text, style = 'tracker-detail', help = '') => {
+                const actor = new St.Label({text, style_class: style, can_focus: !!help, y_align: Clutter.ActorAlign.CENTER});
+                if (help) {
+                    actor.accessible_name = help;
+                    this._tooltip(actor, help);
+                }
+                box.add_child(actor);
+            };
+            label('←', 'tracker-detail', tip);
+            if (error) { label('?', 'tracker-attention', tip); continue; }
             // Keep the row narrow and show failed prerequisites first. The tooltip includes the entire list.
             const ordered = [...references].sort((a, b) => Number(b.state === 'failed') - Number(a.state === 'failed'));
             for (const dep of ordered.slice(0, 3)) {
                 const failed = dep.state === 'failed', uncertain = ['unknown', 'verify'].includes(dep.state);
                 const style = failed ? 'tracker-failed' : uncertain ? 'tracker-attention' : dep.state === 'complete' ? 'tracker-finished' : 'tracker-detail';
-                const short = dep.short.length > 11 ? dep.short.slice(0, 10) + '…' : dep.short;
-                label(`${short}${failed ? '!' : uncertain ? '?' : ''}`, style);
+                label(`${dep.short}${failed ? '!' : uncertain ? '?' : ''}`, style, dep.full);
             }
-            if (ordered.length > 3) label(`+${ordered.length - 3}`);
+            if (ordered.length > 3) label(`+${ordered.length - 3}`, 'tracker-detail', tip);
         }
     }
 
@@ -3619,13 +3673,14 @@ class Tracker {
             this._renderSchedulerMissing();
             return;
         }
-        const queues = snapshot.queues.filter(q => /^#\d+$/.test(query) ? `#${q.number}` === query :
+        this._queueById = new Map(snapshot.queues.map(/** @param {{id:string, project:string, number:number|null}} q */ q => [q.id, q]));
+        this._indexQueueGates();
+        const queues = snapshot.queues.filter(q => /^#\d+$/.test(query) ? `#${this._refIndex?.numbers.get(q.id)}` === query :
             `${q.project} ${q.label}`.toLowerCase().includes(query));
         const groups = queueGroups(queues, snapshot.queue_counts, this._setting('queueOrder'), this._queueFilter);
         if (Date.now() / 1000 - snapshot.queue_updated > 120)
             this._section.addMenuItem(this._item('Snapshot stale · start the parallel-workers monitor to refresh queue progress', 'tracker-warning'));
         if (Date.now() - this._controlsAt > 10000) this._loadControls();
-        this._queueById = new Map(snapshot.queues.map(/** @param {{id:string, project:string, number:number|null}} q */ q => [q.id, q]));
         /** @type {string[]} */
         this._dependencyIds = groups.flatMap(([, items]) => items.map(/** @param {{id:string}} q */ q => q.id));
         this._loadQueueDependencies();
@@ -3662,9 +3717,8 @@ class Tracker {
                 if (!queue.counted) item.add_style_class_name('tracker-queue-earlier');
                 const box = new St.BoxLayout({vertical: true, x_expand: true, style_class: 'tracker-row'});
                 const line = new St.BoxLayout({style_class: 'tracker-row-title'});
-                if (queue.number) line.add_child(new St.Label({text: `#${queue.number}`,
-                    style_class: 'tracker-detail',
-                    y_align: Clutter.ActorAlign.CENTER}));
+                const rowNumber = new St.Label({style_class: 'tracker-detail', y_align: Clutter.ActorAlign.CENTER});
+                line.add_child(rowNumber);
                 const title = new St.Label({text: queue.label, x_expand: true, style_class: 'tracker-title'});
                 title.clutter_text.ellipsize = Pango.EllipsizeMode.END;
                 line.add_child(title);
@@ -3673,18 +3727,6 @@ class Tracker {
                 if (entity) {
                     line.add_child(this._controlsToggle(`queue:${entity.id}`, queue.label, entity, editor,
                         section => this._fillControls(section, {kind: 'queue', id: entity.id}, entity, true)));
-                }
-                const gates = new St.BoxLayout({style_class: 'tracker-queue-gates', can_focus: true,
-                    y_align: Clutter.ActorAlign.CENTER, visible: false});
-                this._gateRows.set(queue.id, gates);
-                line.add_child(this._tooltip(gates, () => gates.accessible_name));
-                const setting = entity?.controls.find(/** @param {{name: string}} control */ control => control.name === 'priority');
-                const priority = queuePriority(queue.workers, setting?.value);
-                if (priority) {
-                    const badge = new St.Bin({style_class: 'tracker-queue-priority', can_focus: true, accessible_name: priority.tip,
-                        y_align: Clutter.ActorAlign.CENTER, child: new St.Label({text: String(priority.value),
-                            x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER})});
-                    line.add_child(this._tooltip(badge, priority.tip));
                 }
                 line.add_child(new St.Label({text: queue.state, style_class: `tracker-chip tracker-chip-${stateStyle(queue.state)}`}));
                 box.add_child(line);
@@ -3695,9 +3737,21 @@ class Tracker {
                 track.add_child(fill);
                 progress.add_child(track);
                 const detail = new St.Label({text: queueDetail(queue) + (queue.counted ? '' : ' · before last turn'),
-                    style_class: 'tracker-detail', y_align: Clutter.ActorAlign.CENTER});
+                    style_class: 'tracker-detail', x_expand: true, y_align: Clutter.ActorAlign.CENTER});
                 detail.clutter_text.ellipsize = Pango.EllipsizeMode.END;
                 progress.add_child(detail);
+                const gates = new St.BoxLayout({style_class: 'tracker-queue-gates',
+                    y_align: Clutter.ActorAlign.CENTER, visible: false});
+                this._gateRows.set(queue.id, {box: gates, rowNumber});
+                progress.add_child(gates);
+                const setting = entity?.controls.find(/** @param {{name: string}} control */ control => control.name === 'priority');
+                const priority = queuePriority(queue.workers, setting?.value);
+                if (priority) {
+                    const badge = new St.Bin({style_class: 'tracker-queue-priority', can_focus: true, accessible_name: priority.tip,
+                        y_align: Clutter.ActorAlign.CENTER, child: new St.Label({text: String(priority.value),
+                            x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER})});
+                    progress.add_child(this._tooltip(badge, priority.tip));
+                }
                 box.add_child(progress);
                 item.add_child(box);
                 body.addMenuItem(item);
