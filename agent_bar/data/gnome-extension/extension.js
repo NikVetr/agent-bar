@@ -667,8 +667,21 @@ function clusterTotals(snapshot, scope = 'all') {
 // Keeps a top-bar widget at the widest it has been, so a number changing does not shift what follows it. The
 // width goes in its style, where St raises the natural width with it; a minimum above the natural width set on
 // the actor itself is a fatal error in Clutter's box layout.
+// The display's scale: CSS sizes are logical pixels, while measured sizes, set_width and drawing areas are in
+// physical ones, twice as many at 200%.
+function scaleFactor() {
+    return (typeof St !== 'undefined' && St.ThemeContext?.get_for_stage(global.stage).scale_factor) || 1;
+}
+
+// Logical pixels as the physical ones set_width and drawing areas take.
+function px(value) {
+    return Math.round(value * scaleFactor());
+}
+
+// Keeps a label at least as wide as it has been (in logical pixels, the unit of its min-width), so changing
+// figures don't shift what follows it.
 function holdWidth(actor, most = Infinity) {
-    const width = Math.min(most, actor.get_preferred_width(-1)[1]);
+    const width = Math.min(most, actor.get_preferred_width(-1)[1] / scaleFactor());
     if (width > (actor._held || 0)) {
         actor._held = width;
         restyle(actor, actor._style);
@@ -1870,7 +1883,7 @@ class Tracker {
         const quota = card('Quota');
         const bar = new St.Widget({style_class: 'tracker-progress tracker-help-progress', y_align: Clutter.ActorAlign.CENTER});
         const used = new St.Widget({style_class: 'tracker-progress-fill tracker-progress-attention'});
-        used.set_width(64);
+        used.set_width(px(64));
         bar.add_child(used);
         row(quota, [bar], 'How much of a limit is used, amber once under 25% is left and red under 10%, with when it resets.');
         row(quota, [chip('Limiting now', 'failed')], 'A limit that is holding you back now, such as a model\'s own weekly limit once it is used up.');
@@ -1889,7 +1902,7 @@ class Tracker {
         const queues = card('Queues');
         const track = new St.Widget({style_class: 'tracker-progress tracker-help-progress', y_align: Clutter.ActorAlign.CENTER});
         const fill = new St.Widget({style_class: 'tracker-progress-fill tracker-progress-working'});
-        fill.set_width(72);
+        fill.set_width(px(72));
         track.add_child(fill);
         row(queues, [track], 'Jobs done of the total, colored by state; the line beside it adds workers, run time and ETA while active.');
         row(queues, [chip('RUNNING', 'working')], 'Workers are running its jobs.');
@@ -2384,11 +2397,13 @@ class Tracker {
 
     // A warning's glyph (see paintGlyph), drawn in its tone's text color.
     _glyph(kind, used = null, tone = 'attention') {
-        const area = new St.DrawingArea({width: 14, height: 14, y_align: Clutter.ActorAlign.CENTER});
+        const area = new St.DrawingArea({width: px(14), height: px(14), y_align: Clutter.ActorAlign.CENTER});
         area.connect('repaint', () => {
             const cr = area.get_context();
             const color = area.get_theme_node().get_foreground_color();
-            paintGlyph(cr, Math.min(...area.get_surface_size()), area._kind, area._used,
+            const scale = scaleFactor();
+            cr.scale(scale, scale);
+            paintGlyph(cr, Math.min(...area.get_surface_size()) / scale, area._kind, area._used,
                 [color.red / 255, color.green / 255, color.blue / 255, color.alpha / 255]);
             cr.$dispose();
         });
@@ -2407,11 +2422,15 @@ class Tracker {
     }
 
     // A drawn bar or strip; paint(cr, width, height) reads its values whenever it repaints.
+    // A drawing area `props.width` by `props.height` logical pixels; `paint` draws in logical pixels too.
     _drawing(paint, props) {
-        const area = new St.DrawingArea({y_align: Clutter.ActorAlign.CENTER, ...props});
+        const area = new St.DrawingArea({y_align: Clutter.ActorAlign.CENTER, ...props, width: px(props.width), height: px(props.height)});
         area.connect('repaint', () => {
             const cr = area.get_context();
-            paint(cr, ...area.get_surface_size());
+            const scale = scaleFactor();
+            const [width, height] = area.get_surface_size();
+            cr.scale(scale, scale);
+            paint(cr, width / scale, height / scale);
             cr.$dispose();
         });
         return area;
@@ -3195,10 +3214,11 @@ class Tracker {
             const mark = () => new St.Label({text: '?', style_class: 'tracker-help-mark', x_align: Clutter.ActorAlign.CENTER,
                 y_align: Clutter.ActorAlign.CENTER});
             const gear = () => {
-                const area = new St.DrawingArea({width: 16, height: 16, y_align: Clutter.ActorAlign.CENTER});
+                const area = new St.DrawingArea({width: px(16), height: px(16), y_align: Clutter.ActorAlign.CENTER});
                 area.connect('repaint', () => {
                     const cr = area.get_context();
                     const color = area.get_theme_node().get_foreground_color();
+                    cr.scale(scaleFactor(), scaleFactor());
                     paintGlyph(cr, 16, 'gear', null, [color.red / 255, color.green / 255, color.blue / 255, color.alpha / 255]);
                     cr.$dispose();
                 });
@@ -3883,7 +3903,7 @@ class Tracker {
                 const progress = new St.BoxLayout({style_class: 'tracker-progress-line'});
                 const track = new St.Widget({style_class: 'tracker-progress', y_align: Clutter.ActorAlign.CENTER});
                 const fill = new St.Widget({style_class: `tracker-progress-fill tracker-progress-${stateStyle(queue.state)}`});
-                fill.set_width(Math.round(QUEUE_BAR * Math.min(100, Math.max(0, queue.pct)) / 100));
+                fill.set_width(px(QUEUE_BAR * Math.min(100, Math.max(0, queue.pct)) / 100));
                 track.add_child(fill);
                 progress.add_child(track);
                 const detail = new St.Label({text: queueDetail(queue) + (queue.counted ? '' : ' · before last turn'),
@@ -4935,7 +4955,7 @@ class Tracker {
                 const progress = checklistProgress(file);
                 const bar = new St.Widget({style_class: 'tracker-progress tracker-checklist-progress'});
                 const fill = new St.Widget({style_class: `tracker-progress-fill tracker-progress-${file.open ? 'working' : 'finished'}`});
-                fill.set_width(Math.round(280 * progress.fraction));
+                fill.set_width(px(280 * progress.fraction));
                 bar.add_child(fill);
                 card.add_child(bar);
                 add(progress.text, 'tracker-detail', card);
@@ -5069,10 +5089,11 @@ class Tracker {
         const usage = snapshot.usage || {};
         if (snapshot.usage_error) this._section.addMenuItem(this._item(`Usage limits unreadable: ${snapshot.usage_error}`, 'tracker-warning'));
         const providers = Object.keys(PROVIDERS).filter(provider => usage[provider]?.limits?.length);
-        if (!providers.length)
+        if (!providers.length) {
             this._section.addMenuItem(this._item('Neither Claude Code nor Codex has recorded its limits on this computer yet', 'tracker-empty'));
-        this._renderCosts(snapshot);
-        if (!providers.length) return;
+            this._renderCosts(snapshot);
+            return;
+        }
         const now = Date.now() / 1000;
         const order = limit => limit.key === 'weekly' ? 0 : limit.key.startsWith('weekly:') ? 1 : limit.key === 'session' ? 2 : 3;
         for (const provider of providers) {
@@ -5092,6 +5113,7 @@ class Tracker {
             }
             for (const limit of [...value.limits].sort((a, b) => order(a) - order(b))) body.addMenuItem(this._quotaLimit(limit, value.as_of, now));
         }
+        this._renderCosts(snapshot);
     }
 
     // What recorded use would cost at API prices: today and the last 7 days, each day's cost by provider, each model's
@@ -5185,7 +5207,7 @@ class Tracker {
         const line = new St.BoxLayout({style_class: 'tracker-progress-line'});
         const track = new St.Widget({style_class: 'tracker-progress tracker-quota-track', y_align: Clutter.ActorAlign.CENTER});
         const fill = new St.Widget({style_class: `tracker-progress-fill tracker-progress-${{failed: 'failed', attention: 'attention'}[style] || 'working'}`});
-        fill.set_width(Math.round(300 * Math.min(100, Math.max(0, limit.expired ? 0 : limit.percent)) / 100));
+        fill.set_width(px(300 * Math.min(100, Math.max(0, limit.expired ? 0 : limit.percent)) / 100));
         track.add_child(fill);
         line.add_child(track);
         const resets = limit.resets_at;
