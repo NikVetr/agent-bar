@@ -21,14 +21,28 @@ how many tickets are ready, and how many queues have finished. Project buttons t
 <p><img src="docs/images/topbar.webp" alt="The top bar: counts per provider, limits left, working and waiting, mail, tickets, queues, and review buttons" width="100%"></p>
 <p><img src="docs/images/notification.webp" alt="A desktop notification: Codex · sampler-study, Reply finished" width="420"></p>
 
-**Chats and History.** Chats groups open conversations by project and window. Each row tells you what the agent
-is doing, why it needs review, and its estimated cost at API prices where available. History also includes saved
-Claude Code and Codex chats you’ve closed. You can resume one or export its messages.
+**The dropdown.** Clicking a part of the bar opens the dropdown on its tab:
 
-<p><img src="docs/images/chats.webp" alt="The Chats tab" width="49%"> <img src="docs/images/history.webp" alt="History search with context" width="49%"></p>
+- **Chats** groups open conversations by project and window, with what each agent is doing, why it needs review, and
+  its estimated cost at API prices.
+- **Queues** and **Cluster**, if you run jobs with ROTA, show each project's queues, which you can adjust from the bar,
+  and how busy each host is.
+- **Git** shows what you've changed locally, what you still need to push, and (if you enable it) each branch's pull
+  request and checks.
+- **Messages** and **Tickets** hold the notes chats leave each other and work saved for later.
+- **History** holds every saved Claude Code and Codex chat, closed ones included. You can resume one or export its
+  messages.
+- **Quota** shows the five-hour, weekly, and model-specific limits each provider reports, whether you're on course to
+  run out before the reset, and what your usage would cost at API prices.
+- **Info** lists the hooks, skills, and instruction files for each project.
 
-Remember what you discussed but not which chat it was in? Search for words you or the agent wrote.
-**Show context** opens the conversation around a match. Use the arrows to read the next one.
+<p align="center"><picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/tabs-dark.webp">
+  <img src="docs/images/tabs-light.webp" alt="The dropdown under the top bar while the cursor clicks through its tabs: Chats, Queues, Cluster, Git, Messages, Tickets, History, Quota, and Info" width="560">
+</picture></p>
+
+**Search.** Remember what you discussed but not which chat it was in? Search History for words you or the agent
+wrote. **Show context** opens the conversation around a match. Use the arrows to read the next one.
 
 <p align="center"><picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/history-search-dark.webp">
@@ -42,19 +56,6 @@ a message yourself, or write a ticket for work that has to wait for a quota rese
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/agent-messages-dark.webp">
   <img src="docs/images/agent-messages-light.webp" alt="A Codex chat sends a Claude Code chat a message with agent-bar send; the Claude chat sees it at its next turn" width="820">
 </picture></p>
-<p><img src="docs/images/messages.webp" alt="The Messages tab" width="49%"> <img src="docs/images/tickets.webp" alt="The Tickets tab" width="49%"></p>
-
-**Quota, Git, and Info.** Quota shows the five-hour, weekly, and model-specific limits each provider reports.
-The forecast tells you whether you’re on course to run out before the reset. You can also see what your usage would
-cost at API prices. Git shows what you’ve changed locally, what you still need to push, and (if you enable it) the
-branch’s pull request and checks. Info lists the hooks, skills, and instruction files for each project.
-
-<p><img src="docs/images/quota.webp" alt="The Quota tab" width="32%"> <img src="docs/images/git.webp" alt="The Git tab" width="32%"> <img src="docs/images/info.webp" alt="The Info tab" width="32%"></p>
-
-**Queues and Cluster.** If you run jobs with ROTA, you can check or adjust a project’s queues from the top bar.
-Open Cluster to see how busy each host is and how much memory and disk space it has left.
-
-<p><img src="docs/images/queues.webp" alt="The Queues tab" width="49%"> <img src="docs/images/cluster.webp" alt="The Cluster tab" width="49%"></p>
 
 The [user guide](docs/guide.md) describes every part in detail.
 
@@ -71,16 +72,17 @@ The [user guide](docs/guide.md) describes every part in detail.
 ## Where it fits
 
 ```mermaid
+%%{init: {"flowchart": {"nodeSpacing": 40, "rankSpacing": 70, "padding": 18}, "themeCSS": "span.edgeLabel { line-height: 2; }"}}%%
 flowchart TD
     start(["How do you run your coding agents?"])
-    start -->|"A tool starts and runs them"| orch["Orchestrators and session managers<br/>Agent Deck, Claude Squad, Conductor, Orca"]
-    start -->|"Inside one vendor's app"| first["First-party views<br/>Claude Code agent view, Codex app,<br/>VS Code Agents window"]
-    start -->|"In the VS Code windows, terminals<br/>and apps you already use"| need{"What do you need most?"}
-    need -->|"Limits and spending"| meters["Usage meters<br/>CodexBar, ccusage, Claude HUD"]
-    need -->|"Search saved chats"| search["History tools<br/>cass, Agent Sessions,<br/>Agent Bar's History tab"]
-    need -->|"Which chats need you, one click to each,<br/>and agents messaging each other"| desk{"Which desktop?"}
-    desk -->|"Linux, GNOME"| ab(["Agent Bar"])
-    desk -->|"macOS"| mac["Open Island, Vibe Island<br/>(Agent Bar's menu bar planned)"]
+    start -->|"#nbsp;#nbsp;A#nbsp;tool#nbsp;launches#nbsp;them#nbsp;#nbsp;"| orch["<b>Orchestrators</b><br/>Agent Deck, Claude Squad,<br/>Conductor, Orca"]
+    start -->|"#nbsp;#nbsp;Inside#nbsp;one#nbsp;vendor's#nbsp;app#nbsp;#nbsp;"| first["<b>First-party views</b><br/>Claude Code agent view,<br/>Codex app, VS Code Agents"]
+    start -->|"#nbsp;#nbsp;In#nbsp;your#nbsp;own#nbsp;windows#nbsp;and#nbsp;terminals#nbsp;#nbsp;"| need{"What do you<br/>need most?"}
+    need -->|"#nbsp;#nbsp;Limits#nbsp;and#nbsp;spending#nbsp;#nbsp;"| meters["<b>Usage meters</b><br/>CodexBar, ccusage,<br/>Claude HUD"]
+    need -->|"#nbsp;#nbsp;Search#nbsp;old#nbsp;chats#nbsp;#nbsp;"| search["<b>History tools</b><br/>cass, Agent Sessions,<br/>Agent Bar's History tab"]
+    need -->|"#nbsp;#nbsp;Every#nbsp;chat's#nbsp;status,#nbsp;one#nbsp;click#nbsp;away#nbsp;#nbsp;"| desk{"Which<br/>desktop?"}
+    desk -->|"#nbsp;#nbsp;Linux#nbsp;(GNOME)#nbsp;#nbsp;"| ab(["<b>Agent Bar</b>"])
+    desk -->|"#nbsp;#nbsp;macOS#nbsp;#nbsp;"| mac["<b>Notch apps</b><br/>Open Island, Vibe Island<br/>(Agent Bar planned)"]
     classDef ours fill:#1f6feb,stroke:#1f6feb,color:#ffffff
     class ab ours
 ```
