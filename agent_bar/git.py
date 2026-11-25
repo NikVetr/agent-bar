@@ -1,12 +1,17 @@
-"""Read-only git status of the repositories that hold open projects. Never fetches or locks."""
+"""Read-only git status of the repositories that hold open projects. Never fetches or locks. With the panel's
+pull-request setting on, also asks GitHub, through the gh command, about each branch's pull request."""
+import json
 import os
 import re
+import shutil
 import subprocess
 import time
 from pathlib import Path
 
 TIMEOUT = 10
 RECHECK = 300  # Seconds before a folder found outside any repository is checked again.
+PULL_EVERY = 300  # Seconds a branch's pull request, once read from GitHub, is shown before it is asked again.
+DIFF_FILES = 8  # Most-changed files listed with a diff summary.
 # Background readers must not take index.lock, which would make an agent's own git command fail.
 ENV = {**os.environ, 'GIT_OPTIONAL_LOCKS': '0', 'LC_ALL': 'C', 'GIT_TERMINAL_PROMPT': '0'}
 OPERATIONS = [('rebase-merge', 'rebasing'), ('rebase-apply', 'rebasing'), ('MERGE_HEAD', 'merging'),
@@ -40,6 +45,43 @@ def parse_status(text):
         elif field.startswith('u '): value['conflicts'] += 1
         elif field.startswith('? '): value['untracked'] += 1
     return value
+
+
+def parse_numstat(text):
+    """`git diff --numstat` as files changed, lines added and removed, and the files most changed (binary files count as
+    changed with no lines)."""
+    files = []
+    for line in text.splitlines():
+        parts = line.split('\t', 2)
+        if len(parts) != 3: continue
+        added, removed = (int(value) if value.isdigit() else 0 for value in parts[:2])
+        files.append([parts[2], added, removed])
+    files.sort(key=lambda entry: -(entry[1] + entry[2]))
+    return {'files': len(files), 'added': sum(f[1] for f in files), 'removed': sum(f[2] for f in files), 'top': files[:DIFF_FILES]}
+
+
+def checks_state(rollup):
+    """One word for a pull request's checks: failing, pending, passing, or None when it has none."""
+    states = [(item.get('conclusion') or item.get('state') or '').upper() if (item.get('status') or 'COMPLETED').upper() == 'COMPLETED'
+              else 'PENDING' for item in rollup or [] if isinstance(item, dict)]
+    if any(state in ('FAILURE', 'ERROR', 'TIMED_OUT', 'CANCELLED', 'ACTION_REQUIRED', 'STARTUP_FAILURE') for state in states): return 'failing'
+    if any(state in ('PENDING', 'EXPECTED', 'QUEUED', 'IN_PROGRESS', '') for state in states): return 'pending'
+    return 'passing' if states else None
+
+
+def pull_request(top, branch):
+    """The GitHub pull request whose head is `branch`, through gh, or None when there is none."""
+    result = subprocess.run(['gh', 'pr', 'view', branch, '--json', 'number,title,state,isDraft,url,reviewDecision,statusCheckRollup'],
+                            cwd=top, capture_output=True, text=True, timeout=15, stdin=subprocess.DEVNULL,
+                            env={**ENV, 'GH_PROMPT_DISABLED': '1', 'GH_NO_UPDATE_NOTIFIER': '1'})
+    if result.returncode:
+        message = (result.stderr.strip() or 'gh pr view failed').splitlines()[0]
+        if 'no pull requests found' in message.lower(): return None
+        raise ValueError(message[:200])
+    data = json.loads(result.stdout)
+    return {'number': data['number'], 'title': data['title'], 'state': data['state'].lower(), 'draft': bool(data.get('isDraft')),
+            'url': data['url'], 'review': (data.get('reviewDecision') or '').lower() or None,
+            'checks': checks_state(data.get('statusCheckRollup'))}
 
 
 def web_url(remote):
@@ -84,8 +126,14 @@ def status(top, known=None):
         try: known['urls'][remote] = web_url(git(top, 'remote', 'get-url', remote).strip())
         except ValueError: known['urls'][remote] = None
     value['web'] = known['urls'][remote]
-    if value['web'] and value['branch'] and 'github.com/' in value['web']:
+    value['github'] = bool(value['web'] and 'github.com/' in value['web'])
+    if value['web'] and value['branch'] and value['github']:
         value['web'] += f'/tree/{value["branch"]}'
+    # Lines changed in tracked files since the last commit, staged or not; untracked files are counted above.
+    value['diff'] = None
+    if (value['staged'] or value['modified']) and known['commit'][0] is not None:
+        try: value['diff'] = parse_numstat(git(top, 'diff', 'HEAD', '--numstat', '--no-renames'))
+        except ValueError: pass
     return value
 
 
@@ -93,6 +141,7 @@ class Repositories:
     def __init__(self):
         self.tops = {}  # Folder -> (its repository's top level, or None outside any; when that was found).
         self.known = {}  # Repository top level -> what status() keeps between reads.
+        self.pulls = {}  # (top level, branch) -> (when read, pull request or None, error or None).
 
     def top(self, folder):
         # A folder outside any repository may become one (git init, or a timeout that passes), so ask again later.
@@ -103,8 +152,21 @@ class Repositories:
             self.tops[folder] = top, time.time()
         return top
 
-    def read(self, folders):
-        """Status of each repository holding one of these folders, with the folders it holds."""
+    def pull(self, value):
+        """The branch's pull request and why it could not be read, asked of GitHub at most every PULL_EVERY."""
+        if not shutil.which('gh'): return None, 'the gh command is not installed'
+        key = (value['top'], value['branch'])
+        at, found, error = self.pulls.get(key, (0, None, None))
+        if time.time() - at >= PULL_EVERY:
+            try: found, error = pull_request(value['top'], value['branch']), None
+            except (ValueError, OSError, subprocess.TimeoutExpired, KeyError, json.JSONDecodeError) as problem:
+                found, error = None, str(problem) or type(problem).__name__
+            self.pulls[key] = (time.time(), found, error)
+        return found, error
+
+    def read(self, folders, pulls=False):
+        """Status of each repository holding one of these folders, with the folders it holds; with `pulls`, each
+        GitHub branch's pull request."""
         held = {}
         for folder in folders:
             if Path(folder).is_dir() and (top := self.top(folder)): held.setdefault(top, set()).add(folder)
@@ -114,5 +176,7 @@ class Repositories:
             except (ValueError, OSError, subprocess.TimeoutExpired) as error:
                 self.known.pop(top, None)
                 value = {'top': top, 'name': Path(top).name, 'error': (str(error) or type(error).__name__).splitlines()[0][:200]}
+            if pulls and value.get('github') and value.get('branch'):
+                value['pull'], value['pull_error'] = self.pull(value)
             result.append({**value, 'folders': sorted(inside)})
         return result

@@ -49,6 +49,7 @@ class Tracker:
         self.rows, self.windows, self.warnings = [], {}, []
         self.quiet, self.scheduler, self.settings_stamp = QUIET, True, None
         self.git_enabled, self.repositories, self.git = True, Repositories(), None
+        self.pull_requests = False  # Whether the user turned on asking GitHub about each branch's pull request.
         self.messages_enabled = True
         # The ticket listing and what it was read from.
         self.tickets, self.tickets_read = None, None
@@ -89,11 +90,12 @@ class Tracker:
                 self.claude_reads = saved.get('claudeUsage', False) is True
                 self.resume_codex = saved.get('resumeCodex', False) is True
                 self.costs_enabled = saved.get('costs', True) is not False
+                self.pull_requests = saved.get('pullRequests', False) is True
                 self.settings_stamp = stamp
         except FileNotFoundError:
             self.quiet, self.settings_stamp = QUIET, None
             self.scheduler = self.git_enabled = self.messages_enabled = self.costs_enabled = True
-            self.claude_reads = self.resume_codex = False
+            self.claude_reads = self.resume_codex = self.pull_requests = False
         except (OSError, ValueError, TypeError) as error:
             warnings.append(f'Panel settings unreadable: {error}')
         for path in (self.root / 'windows').glob('*.json'):
@@ -519,7 +521,7 @@ class Tracker:
                 last = time.time()
                 folders = {root for window in self.windows.values() for root in window.get('roots', [])}
                 folders |= {root for row in self.rows for root in row['roots']}
-                try: self.git = {'updated': time.time(), 'repos': await asyncio.to_thread(self.repositories.read, folders)}
+                try: self.git = {'updated': time.time(), 'repos': await asyncio.to_thread(self.repositories.read, folders, self.pull_requests)}
                 except Exception as error:
                     print(f'Git status failed: {type(error).__name__}: {error}', flush=True)
             await asyncio.sleep(3)

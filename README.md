@@ -51,8 +51,9 @@ what each offers, and where Agent Bar fits.
   waiting for a usage limit to reset, queues to finish, or a time. *(screenshots: Messages tab, Tickets tab)*
 - **Quota.** Each provider's 5-hour, weekly and per-model limits, the pace, and when you would run out compared with
   the reset. *(screenshot: Quota tab)*
-- **Git and History.** Uncommitted and unpushed work in every open repository; every saved chat, searchable and
-  resumable in its folder. *(screenshots: Git tab, History tab)*
+- **Git and History.** Uncommitted and unpushed work in every open repository, with a diff summary and, optionally,
+  each branch's pull request and checks; every saved chat, searchable and resumable in its folder.
+  *(screenshots: Git tab, History tab)*
 - **Info.** Each project's active hooks, skills and instruction files. *(screenshot: Info tab)*
 - **Queues and Cluster** (with parallel-workers). Job queues per project, adjustable from the bar, and each host's
   CPU, memory and disk. *(screenshots: Queues tab, Cluster tab)*
@@ -123,7 +124,8 @@ results, reasoning, and client-supplied context. Its hooks record when turns sta
 text. It contacts no server, unless you turn on **Read Claude limits**: then every 10 minutes it asks Anthropic's
 usage endpoint (`api.anthropic.com`, the one Claude Code's `/usage` reads, which is undocumented) for your limits,
 sending Claude Code's sign-in token from `~/.claude/.credentials.json`. It never renews or changes that sign-in; when
-it has expired, Agent Bar waits for Claude Code to renew it.
+it has expired, Agent Bar waits for Claude Code to renew it. With **Pull requests** on, the Git tab asks GitHub about
+each open branch's pull request through the `gh` command, at most every 5 minutes per branch.
 
 ## Development
 

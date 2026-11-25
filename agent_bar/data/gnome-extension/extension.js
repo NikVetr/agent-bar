@@ -79,6 +79,9 @@ const SETTINGS = [
         [[true, 'On'], [false, 'Off']]],
     ['Integrations', 'git', 'Git status', 'Git tab: branch, uncommitted changes and unpushed commits of open projects', true,
         [[true, 'On'], [false, 'Off']]],
+    ['Integrations', 'pullRequests', 'Pull requests', 'Git tab: each GitHub branch\'s pull request, its review and checks, asked of '
+        + 'GitHub with the gh command at most every 5 minutes. Off, Agent Bar does not contact GitHub', false,
+        [[true, 'On'], [false, 'Off']]],
     ['Integrations', 'messages', 'Agent messages', 'Chats can message one open chat; it sees an unread count at its next turn start', true,
         [[true, 'On'], [false, 'Off']]],
     ['Integrations', 'wake', 'Wake idle chats', 'A message starts a turn in an idle Claude Code chat (up to a week after its last turn), or in a Codex chat open in VS Code once any turn in progress ends', false,
@@ -490,6 +493,23 @@ function gitRepos(repos, order = 'changes', filter = 'all') {
     const recent = (a, b) => (b.commit_at || 0) - (a.commit_at || 0);
     const sort = {changes: (a, b) => urgency(b) - urgency(a) || recent(a, b), recent, name: () => 0}[order];
     return (keep ? repos.filter(keep) : [...repos]).sort((a, b) => sort(a, b) || a.name.localeCompare(b.name));
+}
+
+// Lines changed in tracked files since the last commit, and the files most changed for a tooltip.
+function gitDiff(repo) {
+    const diff = repo.diff;
+    if (!diff?.files) return null;
+    const text = `+${diff.added} −${diff.removed} in ${diff.files} file${diff.files === 1 ? '' : 's'} since the last commit`;
+    const more = diff.files - diff.top.length;
+    return [text, diff.top.map(([path, added, removed]) => `+${added} −${removed}  ${path}`).join('\n') + (more > 0 ? `\n…and ${more} more` : '')];
+}
+
+// A branch's pull request in a line: number, state, review and checks.
+function gitPull(pull) {
+    const state = pull.draft ? 'draft' : pull.state;
+    const review = {approved: 'approved', changes_requested: 'changes requested', review_required: 'review required'}[pull.review];
+    const checks = pull.checks ? `checks ${pull.checks}` : null;
+    return [`PR #${pull.number}`, state, review, checks].filter(Boolean).join(' · ') + `: ${pull.title}`;
 }
 
 function gitDetail(repo) {
@@ -5466,6 +5486,29 @@ class Tracker {
             if (!window) lines.push(['Not open in a VS Code window', 'tracker-detail tracker-muted']);
             for (const [text, style] of lines) {
                 const label = new St.Label({text, style_class: style});
+                label.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+                box.add_child(label);
+            }
+            const diff = !repo.error && gitDiff(repo);
+            if (diff) {
+                const label = new St.Label({text: diff[0], style_class: 'tracker-detail', x_align: Clutter.ActorAlign.START});
+                label.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+                box.add_child(this._tooltip(label, diff[1]));
+            }
+            if (this._setting('pullRequests') && repo.pull) {
+                const tone = repo.pull.checks === 'failing' || repo.pull.review === 'changes_requested' ? 'failed'
+                    : repo.pull.checks === 'pending' ? 'attention' : repo.pull.state === 'open' ? 'working' : 'muted';
+                const text = new St.Label({text: gitPull(repo.pull), style_class: `tracker-detail tracker-${tone}`});
+                text.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+                const pull = new St.Button({child: text, can_focus: true, x_align: Clutter.ActorAlign.START,
+                    style_class: 'tracker-link', accessible_name: `Open pull request ${repo.pull.number}`});
+                pull.connect('clicked', () => {
+                    this._button.menu.close();
+                    Gio.AppInfo.launch_default_for_uri(repo.pull.url, null);
+                });
+                box.add_child(this._tooltip(pull, `${repo.pull.url}\nAs of GitHub's answer within the last 5 minutes`));
+            } else if (this._setting('pullRequests') && repo.pull_error) {
+                const label = new St.Label({text: `Pull request unknown: ${repo.pull_error}`, style_class: 'tracker-detail tracker-muted'});
                 label.clutter_text.ellipsize = Pango.EllipsizeMode.END;
                 box.add_child(label);
             }

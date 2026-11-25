@@ -104,6 +104,13 @@ Each repository holding an open project, with its branch, uncommitted files, and
 upstream (as of the last fetch; Agent Bar never fetches or takes git's lock). Clicking one opens VS Code's Source
 Control for it.
 
+- **Diff summary.** A repository with uncommitted changes to tracked files shows the lines added and removed since
+  the last commit, staged or not. Hovering lists the files most changed.
+- **Pull requests.** With **Settings › Integrations › Pull requests** on (off by default), a GitHub branch also shows
+  its pull request: number, state, review decision and checks, in red when checks fail or changes were requested.
+  Clicking it opens the pull request. Agent Bar asks GitHub through the `gh` command, signed in as `gh` is, at most
+  every 5 minutes per branch.
+
 ### Messages
 
 Notes between agents, as threads. See [Messages between agents](#messages-between-agents).

@@ -917,3 +917,15 @@ test('costs read as dollars and token counts', () => {
     assert.equal(tokenCount(408_013_714), '408.0M');
     assert.equal(tokenCount(260_774), '261k');
 });
+
+test('git rows summarize the diff and a pull request', () => {
+    const f = fixture();
+    const {gitDiff, gitPull} = f.context;
+    assert.equal(gitDiff({diff: null}), null);
+    const [text, tip] = gitDiff({diff: {files: 10, added: 120, removed: 30, top: [['a.py', 100, 10], ['b.py', 20, 20]]}});
+    assert.equal(text, '+120 −30 in 10 files since the last commit');
+    assert.match(tip, /^\+100 −10  a\.py\n\+20 −20  b\.py\n…and 8 more$/);
+    assert.equal(gitPull({number: 7, state: 'open', draft: false, review: 'approved', checks: 'passing', title: 'Fix it'}),
+        'PR #7 · open · approved · checks passing: Fix it');
+    assert.equal(gitPull({number: 8, state: 'open', draft: true, review: null, checks: null, title: 'WIP'}), 'PR #8 · draft: WIP');
+});

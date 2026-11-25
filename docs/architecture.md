@@ -67,6 +67,9 @@ state and unread reasons stay separate in the data.
   and nearby dialogue. The panel loads one passage at a time and keeps its position while the search is open.
 - **Git** (`git.py`): every 20 s, off the collection loop, the `git status` of each repository holding an open folder,
   with `GIT_OPTIONAL_LOCKS=0` so it never takes the index lock an agent's own git command needs. It never fetches.
+  A repository with staged or modified files also gets `git diff HEAD --numstat`. With the panel's Pull requests
+  setting on, each GitHub branch's pull request comes from `gh pr view <branch> --json …`, cached per repository and
+  branch for 5 minutes; a missing `gh`, or its error, is reported on the repository instead.
 - **Usage** (`usage.py`): once a minute, off the collection loop, the usage limits Claude Code caches in
   `~/.claude.json` (its `limits`, including weekly limits scoped to a model, and those models' shares of the weekly
   limit) and the `rate_limits` Codex writes into its rollouts. Rollouts are read from a saved offset per file, so after
