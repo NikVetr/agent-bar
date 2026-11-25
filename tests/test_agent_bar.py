@@ -482,8 +482,21 @@ class TrackerTests(unittest.TestCase):
             with unittest.mock.patch.object(messages, 'SETTINGS', root / 'settings.json'):
                 # Ten chats, one message each: the per-pair limit is not reached, the hourly one is.
                 for n in range(1, 11): messages.send('claude:0', f'claude:{n}', 'hi', root, now=1000 + n * 60)
-                with self.assertRaisesRegex(ValueError, r'10 messages sent in the last hour\. Sending resumes in about 41 minutes'):
+                with self.assertRaisesRegex(ValueError, r'10 messages sent in the last hour, this conversation\'s limit\. Sending resumes in about 41 minutes'):
                     messages.send('claude:0', 'claude:11', 'one more', root, now=1000 + 20 * 60)
+                # The panel learns of the refusal and each sender's count against its own limit.
+                summary = messages.summary(root, now=1000 + 20 * 60)
+                self.assertEqual([(r['sender'], r['recipient'], r['kind']) for r in summary['refusals']], [('claude:0', 'claude:11', 'hourly')])
+                self.assertEqual(summary['refusals'][0]['resumes_at'], 1060 + 3600)
+                self.assertEqual([(e['sender'], e['hourly'], e['limit'], e['resumes_at']) for e in summary['senders']],
+                                 [('claude:0', 10, 10, 1060 + 3600)])
+                # The user raises the limit for an hour: more sends go, up to the raised limit, until it ends.
+                raised = messages.raise_limit('claude:0', root, now=1000 + 21 * 60)
+                self.assertEqual((raised['limit'], raised['until']), (30, 1000 + 21 * 60 + 3600))
+                self.assertTrue(messages.send('claude:0', 'claude:11', 'one more', root, now=1000 + 22 * 60)['ok'])
+                entry = messages.summary(root, now=1000 + 22 * 60)['senders'][0]
+                self.assertEqual((entry['hourly'], entry['limit'], entry['raised_until']), (11, 30, 1000 + 21 * 60 + 3600))
+                self.assertEqual(messages.hourly_limit(messages.connect(root), 'claude:0', 1000 + 90 * 60), (10, None))
 
     def test_waiter_wakes_an_idle_claude_chat_once_per_new_message(self):
         from agent_bar import hook, messages
@@ -685,10 +698,11 @@ class TrackerTests(unittest.TestCase):
             (root / 'ledger.json').write_text(json.dumps({'conversations': {}}))
             with unittest.mock.patch.object(messages, 'SETTINGS', root / 'settings.json'):
                 with self.assertRaisesRegex(ValueError, 'Claude Code or Codex'): messages.send('claude:old', 'copilot:x', 'hi', root)
-        refused = subprocess.run([sys.executable, '-m', 'agent_bar', 'reset-limit', 'claude:a', 'claude:b'], capture_output=True, text=True,
-                                 env={**os.environ, 'CLAUDE_CODE_SESSION_ID': 'a', 'HOME': '/nonexistent'})
-        self.assertEqual(refused.returncode, 1)
-        self.assertIn('Only the user resets', refused.stdout)
+        for command in [['reset-limit', 'claude:a', 'claude:b'], ['raise-limit', 'claude:a']]:
+            refused = subprocess.run([sys.executable, '-m', 'agent_bar', *command], capture_output=True, text=True,
+                                     env={**os.environ, 'CLAUDE_CODE_SESSION_ID': 'a', 'HOME': '/nonexistent'})
+            self.assertEqual(refused.returncode, 1)
+            self.assertIn('Only the user lifts the loop guard', refused.stdout)
 
     def test_hook_install_keeps_other_hooks_replaces_stale_ones_and_removes_cleanly(self):
         from agent_bar import hooks

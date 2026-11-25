@@ -128,8 +128,10 @@ copy it made holds a `.installed-by-agent-bar` file, and only such copies are up
 
 `messages.py` keeps notes in `messages.sqlite`. The CLI writes and reads it directly, identifying the sender from
 `CLAUDE_CODE_SESSION_ID` or `CODEX_THREAD_ID`. Sending needs an open Claude Code or Codex recipient and passes a
-per-pair loop guard, reset by the sender's last human prompt or by the user, plus an hourly cap; refused sends are
-kept so the panel can show what was held back. Files under `wake/` hold each recipient's newest unread id, the
+per-pair loop guard, reset by the sender's last human prompt or by the user, plus a per-sender hourly cap, which the
+user can raise to `RAISED_HOURLY` for an hour (`raises` table, `agent-bar raise-limit`). Refused sends are kept with
+the limit they hit and when sending resumes; the summary lists them with each recent sender's count against its own
+limit, and the panel notifies once per new refusal. Files under `wake/` hold each recipient's newest unread id, the
 newest it was woken or told about, and its one live waiter's pid. A chat in a turn gets new messages mid-turn only
 as the user's setting allows. With waking on, `codex_wake.py` uses the Codex app-server queue API on send for VS Code
 recipients. It adds one inbox notification, then moves its ID ahead of existing drafts using their current order.

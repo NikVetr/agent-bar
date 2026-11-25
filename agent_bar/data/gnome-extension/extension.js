@@ -322,6 +322,21 @@ function reviewMarks(rows, reasons) {
     return marks;
 }
 
+// What a refused send means for the user, from the loop guard's refusal record: which chat, which limit, and when it
+// can send again, with the action that lifts it.
+function refusalNotice(refusal, titles, limits) {
+    const name = key => `${PROVIDERS[key.split(':')[0]]?.[0] || '•'} ${titles[key] || key}`;
+    const clock = at => new Date(at * 1000).toLocaleTimeString('en-US', {hour: 'numeric', minute: '2-digit'});
+    // The title carries when sending resumes, since a banner shows one line of each.
+    if (refusal.kind === 'peer')
+        return {title: 'Message held · until you write to it',
+            body: `${name(refusal.sender)} has sent ${name(refusal.recipient)} ${limits.per_chat} messages since you last wrote to it.`,
+            action: 'Allow another round'};
+    return {title: refusal.resumes_at ? `Message held · can send again at ${clock(refusal.resumes_at)}` : 'Message held',
+        body: `${name(refusal.sender)} reached its limit of ${limits.hourly} messages an hour.`,
+        action: `Allow ${limits.raised} an hour, for an hour`};
+}
+
 // Chats needing review by project, one shortcut each, in the order of each project's longest-waiting chat.
 function quickGroups(rows) {
     const groups = new Map();
@@ -3071,12 +3086,42 @@ class Tracker {
         }
     }
 
-    _notify(row, reasons) {
-        if (!this._source) {
-            this._source = new MessageTray.Source('Agent Bar', 'dialog-information-symbolic');
-            this._source.connect('destroy', () => { this._source = null; });
-            Main.messageTray.add(this._source);
+    // A notification for each send the loop guard refused since the last snapshot, naming the chat and when it can send
+    // again, with the action that lifts the limit. Refusals already recorded when the panel started notify nothing.
+    _notifyRefusals(snapshot) {
+        const refusals = snapshot.messages?.refusals || [];
+        const before = this._refusalsSeen;
+        this._refusalsSeen = new Set(refusals.map(/** @param {{id: number}} r */ r => r.id));
+        if (!before || !this._setting('notify')) return;
+        const titles = Object.fromEntries([...(snapshot.messages?.recent || []).flatMap(/** @param {any} m */ m => [[m.sender, m.sender_title], [m.recipient, m.recipient_title]]),
+            ...snapshot.rows.map(/** @param {any} r */ r => [r.key, r.title])].filter(([, title]) => title));
+        for (const refusal of refusals) {
+            if (before.has(refusal.id)) continue;
+            try {
+                const notice = refusalNotice(refusal, titles, snapshot.messages.limits);
+                this._ensureSource();
+                const notification = new MessageTray.Notification(this._source, notice.title, notice.body);
+                notification.addAction(notice.action, () => refusal.kind === 'peer'
+                    ? this._resetLimit([refusal.sender, refusal.recipient]) : this._raiseLimit(refusal.sender));
+                notification.connect('activated', () => {
+                    if (!this._enabled) return;
+                    this._button.menu.open();
+                    this._showTab('messages');
+                });
+                this._source.showNotification(notification);
+            } catch (error) { logError(error, 'Agent Bar refusal notification'); }
         }
+    }
+
+    _ensureSource() {
+        if (this._source) return;
+        this._source = new MessageTray.Source('Agent Bar', 'dialog-information-symbolic');
+        this._source.connect('destroy', () => { this._source = null; });
+        Main.messageTray.add(this._source);
+    }
+
+    _notify(row, reasons) {
+        this._ensureSource();
         const notification = new MessageTray.Notification(this._source, `${PROVIDERS[row.provider]?.[1] || row.provider} · ${row.project}`,
             `${reasons.join(' · ')}: ${row.title}`);
         notification.connect('activated', () => {
@@ -3162,6 +3207,7 @@ class Tracker {
                 restyle(this._labels.queues, c.done ? 'color: #f1f3f5; font-weight: bold;' : 'color: #9ca3ad;');
                 for (const label of [...Object.values(this._labels), this._mailCount, this._ticketCount]) if (label.visible) holdWidth(label);
                 this._notifyReviews(snapshot.rows);
+                this._notifyRefusals(snapshot);
                 this._renderQuick(snapshot.rows);
                 this._button.accessible_name = `${Object.entries(PROVIDERS).filter(([key]) => c[key])
                     .map(([key, [, name]]) => `${name} ${c[key]}`).join(', ') || 'No chats'}, ${c.working} working, ${c.waiting} waiting, ${c.review} need review, ${c.done} of ${c.queues} queues finished since the last turn`
@@ -4511,6 +4557,7 @@ class Tracker {
             .toLowerCase().includes(query)), this._messageFilter, this._messageValue);
         if (!threads.length) this._section.addMenuItem(this._item(all.length ? 'No matching messages'
             : 'No messages yet. Agents send them with `agent-bar send`.', 'tracker-empty'));
+        this._renderSendingLimits(snapshot);
         for (const items of threads) {
             const [first] = items;
             const unread = items.filter(m => !m.read_at).length;
@@ -4593,6 +4640,49 @@ class Tracker {
                 });
                 body.addMenuItem(item);
             }
+        }
+    }
+
+    // The loop guard's limits, which apply to each sending chat separately, and the chats that sent in the last hour with
+    // their count against their own hourly limit, when they can send again, and a button that raises it for an hour.
+    _renderSendingLimits(snapshot) {
+        const limits = snapshot.messages?.limits;
+        const senders = snapshot.messages?.senders || [];
+        if (!limits || !senders.length) return;
+        const titles = Object.fromEntries(snapshot.rows.map(/** @param {any} r */ r => [r.key, r.title]));
+        const clock = at => new Date(at * 1000).toLocaleTimeString('en-US', {hour: 'numeric', minute: '2-digit'});
+        const busiest = senders[0];
+        const body = this._projectSection('messages:limits', 'Sending limits', 'per chat',
+            `${busiest.hourly} of ${busiest.limit} this hour, the most`, senders.some(/** @param {any} e */ e => e.hourly >= e.limit));
+        const note = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
+        note._ornamentLabel?.hide();
+        const text = new St.Label({x_expand: true, style_class: 'tracker-detail', text: `Each chat can send ${limits.hourly} messages an hour, `
+            + `and ${limits.per_chat} to the same chat until you write to it. These limits count each sending chat on its own.`});
+        text.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+        text.clutter_text.line_wrap = true;
+        note.add_child(text);
+        body.addMenuItem(note);
+        for (const entry of senders) {
+            const item = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
+            item._ornamentLabel?.hide();
+            const symbol = PROVIDERS[entry.sender.split(':')[0]]?.[0] || '•';
+            const full = entry.hourly >= entry.limit;
+            const state = full && entry.resumes_at ? ` · can send again at ${clock(entry.resumes_at)}`
+                : entry.raised_until ? ` · raised to ${entry.limit} until ${clock(entry.raised_until)}` : '';
+            const label = new St.Label({x_expand: true, y_align: Clutter.ActorAlign.CENTER,
+                style_class: full ? 'tracker-detail tracker-attention' : 'tracker-detail',
+                text: `${entry.hourly} of ${entry.limit} this hour${state} · ${symbol} ${titles[entry.sender] || entry.title || entry.sender}`});
+            label.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+            item.add_child(label);
+            // Offered once a chat has used half its hourly limit.
+            if (!entry.raised_until && entry.hourly * 2 >= entry.limit) {
+                const raise = new St.Button({label: 'Allow more for an hour', can_focus: true, style_class: 'tracker-filter tracker-reset-limit',
+                    accessible_name: `Let this chat send ${limits.raised} messages an hour for the next hour`, y_align: Clutter.ActorAlign.CENTER});
+                this._tooltip(raise, `Let this chat send ${limits.raised} messages an hour for the next hour`);
+                raise.connect('clicked', () => this._raiseLimit(entry.sender));
+                item.add_child(raise);
+            }
+            body.addMenuItem(item);
         }
     }
 
@@ -5134,6 +5224,20 @@ class Tracker {
             await this._run(['clear-queues', project]);
             // The service writes a snapshot with the change before it answers.
             await this._snapshotAfter(asked);
+            if (this._enabled && this._button.menu.isOpen) {
+                this._menuSnapshot = this._snapshot;
+                this._buildMenu();
+            }
+        } catch (error) {
+            if (this._enabled) Main.notifyError('Agent Bar', error.message);
+        }
+    }
+
+    // Lets one chat send the raised number of messages an hour, for the next hour.
+    async _raiseLimit(sender) {
+        try {
+            await this._run(['raise-limit', sender]);
+            await this._snapshotAfter(Date.now() / 1000);
             if (this._enabled && this._button.menu.isOpen) {
                 this._menuSnapshot = this._snapshot;
                 this._buildMenu();

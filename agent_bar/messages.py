@@ -15,6 +15,8 @@ from .state import ROOT
 SETTINGS = Path.home() / '.config/agent-bar/settings.json'  # Written by the panel.
 PEER_LIMIT = 10  # Messages to one conversation between the sender's own user prompts or limit resets.
 HOURLY_LIMIT = 10  # Messages from one conversation in any hour.
+RAISED_HOURLY = 30  # The hourly limit while the user has raised it for that conversation.
+RAISE_SECONDS = 3600  # How long a raise lasts.
 LENGTH_LIMIT = 4000
 BUSY = {'working', 'input needed', 'approval needed'}  # Tracker states during a turn.
 KEEP = 30 * 86400  # Read messages are kept this long.
@@ -200,8 +202,27 @@ def connect(root=ROOT):
         connection.execute('ALTER TABLE messages ADD COLUMN urgent INTEGER NOT NULL DEFAULT 0')
     # Sends the loop guard refused, and the user's resets of it for one sender and recipient.
     connection.execute('CREATE TABLE IF NOT EXISTS refusals (at REAL NOT NULL, sender TEXT NOT NULL, recipient TEXT NOT NULL)')
+    # Which limit a refusal hit ('peer' or 'hourly'), and when sending resumes for the hourly one.
+    for column, kind in [('kind', 'TEXT'), ('resumes_at', 'REAL')]:
+        if column not in [c[1] for c in connection.execute('PRAGMA table_info(refusals)')]:
+            connection.execute(f'ALTER TABLE refusals ADD COLUMN {column} {kind}')
     connection.execute('CREATE TABLE IF NOT EXISTS resets (at REAL NOT NULL, sender TEXT NOT NULL, recipient TEXT NOT NULL)')
+    # The user's temporary raises of one conversation's hourly limit.
+    connection.execute('CREATE TABLE IF NOT EXISTS raises (at REAL NOT NULL, sender TEXT NOT NULL, until REAL NOT NULL)')
     return connection
+
+
+def hourly_limit(connection, sender, now):
+    """A conversation's hourly limit now, and until when the user raised it (None when not raised)."""
+    until = connection.execute('SELECT max(until) FROM raises WHERE sender=?', (sender,)).fetchone()[0]
+    return (RAISED_HOURLY, until) if until and until > now else (HOURLY_LIMIT, None)
+
+
+def resumes(connection, sender, limit, now):
+    """When a sender at its hourly limit can send again: once enough of the last hour's messages are an hour old."""
+    times = [row[0] for row in connection.execute('SELECT at FROM messages WHERE sender=? AND at>? ORDER BY at',
+                                                  (sender, now - 3600))]
+    return times[len(times) - limit] + 3600 if len(times) >= limit else now
 
 
 def snapshot(root=ROOT):
@@ -250,19 +271,22 @@ def send(sender, recipient, body, root=ROOT, now=None, urgent=False, scheduled=N
     human = ledger['conversations'].get(sender, {}).get('human_at', 0)
     with connect(root) as connection:
         peer, hourly, _ = guard(connection, sender, recipient, human, now) if sender != 'user' else (0, 0, 0)
-        if peer >= PEER_LIMIT or hourly >= HOURLY_LIMIT:
-            # Kept so the user can see what was held back; the refusal itself must not roll back.
-            connection.execute('INSERT INTO refusals VALUES (?,?,?)', (now, sender, recipient))
+        limit, _ = hourly_limit(connection, sender, now) if sender != 'user' else (HOURLY_LIMIT, None)
+        if peer >= PEER_LIMIT or hourly >= limit:
+            kind = 'peer' if peer >= PEER_LIMIT else 'hourly'
+            back = resumes(connection, sender, limit, now) if kind == 'hourly' else None
+            # Kept so the user can see what was held back, and is told; the refusal itself must not roll back.
+            connection.execute('INSERT INTO refusals (at, sender, recipient, kind, resumes_at) VALUES (?,?,?,?,?)',
+                               (now, sender, recipient, kind, back))
             connection.commit()
-            if peer >= PEER_LIMIT:
+            if kind == 'peer':
                 raise ValueError(f'Not sent. Loop guard: {peer} messages to this conversation since your user last wrote to you. '
-                                 'This does not lift with time: sending resumes once your user writes to you again or resets the '
-                                 'limit in Agent Bar\'s Messages tab. Tell your user.')
-            oldest = connection.execute('SELECT min(at) FROM messages WHERE sender=? AND at>?', (sender, now - 3600)).fetchone()[0] or now
-            wait = max(60, round(oldest + 3600 - now))
-            raise ValueError(f'Not sent. Loop guard: {hourly} messages sent in the last hour. Sending resumes in about '
-                             f'{-(-wait // 60)} minutes, at {time.strftime("%H:%M", time.localtime(now + wait))}, or sooner if your '
-                             'user resets the limit in Agent Bar\'s Messages tab. Tell your user.')
+                                 'This does not lift with time: sending resumes once your user writes to you again or allows another '
+                                 'round in Agent Bar. Your user has been notified.')
+            wait = max(60, round((back or now) - now))
+            raise ValueError(f'Not sent. Loop guard: {hourly} messages sent in the last hour, this conversation\'s limit. Sending '
+                             f'resumes in about {-(-wait // 60)} minutes, at {time.strftime("%H:%M", time.localtime(now + wait))}, or '
+                             'sooner if your user raises the limit in Agent Bar. Your user has been notified.')
         mine = open_rows.get(sender, {}) if sender != 'user' else {'title': f'You (ticket #{scheduled})'}
         # The newest row stays, so ids keep rising: wake marks compare them.
         connection.execute('DELETE FROM messages WHERE read_at IS NOT NULL AND at<? AND id<(SELECT max(id) FROM messages)',
@@ -287,6 +311,15 @@ def reset_limit(first, second, root=ROOT, now=None):
         connection.executemany('INSERT INTO resets VALUES (?,?,?)', [(now or time.time(), first, second),
                                                                      (now or time.time(), second, first)])
     return {'ok': True}
+
+
+def raise_limit(sender, root=ROOT, now=None):
+    """The user lets one conversation send RAISED_HOURLY messages an hour for the next RAISE_SECONDS."""
+    now = now or time.time()
+    with connect(root) as connection:
+        connection.execute('INSERT INTO raises VALUES (?,?,?)', (now, sender, now + RAISE_SECONDS))
+        connection.execute('DELETE FROM raises WHERE until<?', (now - KEEP,))
+    return {'ok': True, 'sender': sender, 'limit': RAISED_HOURLY, 'until': now + RAISE_SECONDS}
 
 
 def inbox(recipient, root=ROOT, peek=False, now=None):
@@ -338,7 +371,8 @@ def notice(recipient, root=ROOT):
 def summary(root=ROOT, human=None, now=None):
     """For the panel: unread counts per recipient, the most recent messages, and the sender/recipient pairs
     the loop guard now holds, with the sends it refused since their count began."""
-    if not (Path(root) / 'messages.sqlite').exists(): return {'unread': {}, 'recent': [], 'held': []}
+    limits = {'per_chat': PEER_LIMIT, 'hourly': HOURLY_LIMIT, 'raised': RAISED_HOURLY, 'raise_seconds': RAISE_SECONDS}
+    if not (Path(root) / 'messages.sqlite').exists(): return {'unread': {}, 'recent': [], 'held': [], 'senders': [], 'refusals': [], 'limits': limits}
     human, now = human or {}, now or time.time()
     with connect(root) as connection:
         unread = dict(connection.execute(
@@ -347,8 +381,23 @@ def summary(root=ROOT, human=None, now=None):
         held = []
         for sender, recipient in connection.execute('SELECT DISTINCT sender, recipient FROM messages WHERE at>?', (now - KEEP,)):
             peer, hourly, since = guard(connection, sender, recipient, human.get(sender, 0), now)
-            if peer >= PEER_LIMIT or hourly >= HOURLY_LIMIT:
+            if peer >= PEER_LIMIT or hourly >= hourly_limit(connection, sender, now)[0]:
                 refused = connection.execute('SELECT count(*) FROM refusals WHERE sender=? AND recipient=? AND at>?',
                                              (sender, recipient, since)).fetchone()[0]
                 held.append({'sender': sender, 'recipient': recipient, 'refused': refused})
-    return {'unread': unread, 'recent': recent, 'held': held}
+        # Each conversation that sent in the last hour, or whose limit is raised: its count against its own limit.
+        senders = []
+        active = connection.execute('SELECT sender FROM messages WHERE at>? AND sender<>? UNION SELECT sender FROM raises WHERE until>?',
+                                    (now - 3600, 'user', now)).fetchall()
+        for (sender,) in active:
+            _, hourly, _ = guard(connection, sender, '', 0, now)
+            limit, until = hourly_limit(connection, sender, now)
+            title = connection.execute('SELECT sender_title FROM messages WHERE sender=? ORDER BY at DESC LIMIT 1', (sender,)).fetchone()
+            senders.append({'sender': sender, 'title': title[0] if title else None, 'hourly': hourly, 'limit': limit,
+                            'raised_until': until, 'resumes_at': resumes(connection, sender, limit, now) if hourly >= limit else None})
+        senders.sort(key=lambda entry: -entry['hourly'])
+        # Refusals of the last hour, newest first, for the panel to tell the user about once each.
+        refusals = [dict(row) for row in connection.execute(
+            'SELECT rowid AS id, at, sender, recipient, kind, resumes_at FROM refusals WHERE at>? ORDER BY at DESC LIMIT 20',
+            (now - 3600,))]
+    return {'unread': unread, 'recent': recent, 'held': held, 'senders': senders, 'refusals': refusals, 'limits': limits}

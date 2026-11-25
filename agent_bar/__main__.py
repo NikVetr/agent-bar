@@ -68,6 +68,8 @@ def main():
     box.add_argument('--peek', action='store_true', help='leave them unread')
     reset = subs.add_parser('reset-limit', help='let two conversations exchange another round of messages')
     reset.add_argument('first'); reset.add_argument('second')
+    lift = subs.add_parser('raise-limit', help="let one conversation send more messages an hour, for the next hour")
+    lift.add_argument('sender')
     ticket = subs.add_parser('ticket', help='tasks to do later, each in a project, that can wait for a limit reset, queues, a time or another ticket')
     actions = ticket.add_subparsers(dest='action', required=True)
     new = actions.add_parser('add', help='write a ticket; text from the argument or stdin')
@@ -96,18 +98,19 @@ def main():
         except (OSError, ValueError, KeyError, TypeError) as error: result = {'ok': False, 'error': str(error)}
         print(json.dumps(result, ensure_ascii=False))
         sys.exit(0 if result['ok'] else 1)
-    if name in ['agents', 'send', 'inbox', 'reset-limit']:
+    if name in ['agents', 'send', 'inbox', 'reset-limit', 'raise-limit']:
         from . import messages
         try:
             if name == 'agents': result = {'ok': True, 'agents': messages.agents()}
             elif name == 'send':
                 result = messages.send(messages.caller(args['sender']), args['to'],
                                        args['text'] if args['text'] is not None else sys.stdin.read(), urgent=args['urgent'])
-            elif name == 'reset-limit':
+            elif name in ['reset-limit', 'raise-limit']:
                 # The loop guard is the user's to lift. Agents' tools name their session; the panel's command does not.
                 if os.environ.get('CLAUDE_CODE_SESSION_ID') or os.environ.get('CODEX_THREAD_ID') or agent_ancestor():
-                    raise ValueError("Only the user resets the loop guard, from Agent Bar's Messages tab")
-                result = messages.reset_limit(args['first'], args['second'])
+                    raise ValueError("Only the user lifts the loop guard, from Agent Bar's Messages tab")
+                result = (messages.reset_limit(args['first'], args['second']) if name == 'reset-limit'
+                          else messages.raise_limit(args['sender']))
             else: result = messages.inbox(messages.caller(args['sender']), peek=args['peek'])
         except (OSError, ValueError, KeyError, sqlite3.Error) as error: result = {'ok': False, 'error': str(error)}
         print(json.dumps(result, ensure_ascii=False))

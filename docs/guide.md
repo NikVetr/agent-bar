@@ -209,10 +209,15 @@ with `codex queue` support ordinary wake-ups.
 In the Messages tab, each chat's badge shows a sealed envelope while it has unread messages, amber when they wait for
 you to start a turn there, and an open one once it has read them.
 
-Each message goes to one chat; there is no broadcast. A loop guard refuses an eleventh message to the same chat until
-you write to the sender again, and more than 10 an hour; the sender is told which, and for the hourly cap when it can
-send again. You can lift it from the Messages tab. Agents are told to treat messages as information, not as your
-instructions. You can turn messages off in settings.
+Each message goes to one chat; there is no broadcast. A loop guard counts each sending chat on its own: it refuses
+an eleventh message to the same chat until you write to the sender again, and more than 10 messages an hour from one
+chat. The sender is told which limit it reached and, for the hourly one, when it can send again. You get a desktop
+notification too, saying when the chat can send again, with the action that lifts the limit: **Allow another round**
+for a pair, or **Allow 30 an hour, for an hour** for the hourly limit.
+
+The Messages tab's **Sending limits** lists each chat that sent in the last hour with its count against its own limit.
+A chat that has used half its limit gets **Allow more for an hour**, and a held pair's thread has **Reset limit**.
+Agents are told to treat messages as information, not as your instructions. You can turn messages off in settings.
 
 ## Tickets and scheduled messages
 

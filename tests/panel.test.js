@@ -28,9 +28,15 @@ function fixture() {
             ui: {main: {layoutManager: {primaryIndex: 0,
                 monitors: [{x: 0, y: 0, width: 1280, height: 800}, {x: 1280, y: 0, width: 1280, height: 800}]},
                 activateWindow: () => calls.push(['focus']), notifyError: (_title, error) => errors.push(error)},
-                panelMenu: {}, popupMenu: {}, checkBox: {}},
+                panelMenu: {}, popupMenu: {}, checkBox: {},
+                messageTray: {Notification: class {
+                    constructor(_source, title, body) { Object.assign(this, {title, body, actions: []}); }
+                    addAction(label) { this.actions.push(label); }
+                    connect() {}
+                }}},
             byteArray: {toString: value => value},
         },
+        logError: () => {},
         global: {get_window_actors: () => [{meta_window: win}], display: {focus_window: null},
             workspace_manager: {get_active_workspace: () => ({}), get_active_workspace_index: () => 0}},
     });
@@ -956,4 +962,29 @@ test('queue rows show what the scheduler reports: GPU reservations, memory limit
     assert.deepEqual([...schedulerExtras(cluster, 'host', 'gpu-1', now).facts], ['GPU 2 slots']);
     assert.equal(schedulerExtras(cluster, 'host', 'mac-1', now).warning, 'Unavailable: its owner is active');
     assert.equal(schedulerExtras(cluster, 'host', 'mac-1', now + 600).warning, null);
+});
+
+test('a refused send tells the user which chat, which limit, when it resumes, and what lifts it', () => {
+    const f = fixture();
+    const limits = {per_chat: 10, hourly: 10, raised: 30, raise_seconds: 3600};
+    const titles = {'codex:a': 'Migrate the pool', 'claude:b': 'Update the panel'};
+    const hourly = f.context.refusalNotice({kind: 'hourly', sender: 'codex:a', recipient: 'claude:b', resumes_at: null}, titles, limits);
+    assert.equal(hourly.title, 'Message held');
+    assert.equal(hourly.body, '⌘ Migrate the pool reached its limit of 10 messages an hour.');
+    assert.equal(hourly.action, 'Allow 30 an hour, for an hour');
+    const peer = f.context.refusalNotice({kind: 'peer', sender: 'codex:a', recipient: 'claude:b'}, titles, limits);
+    assert.equal(peer.title, 'Message held · until you write to it');
+    assert.equal(peer.body, '⌘ Migrate the pool has sent ✳ Update the panel 10 messages since you last wrote to it.');
+    assert.equal(peer.action, 'Allow another round');
+});
+
+test('refusals notify once each, and none from before the panel started', () => {
+    const f = fixture();
+    const shown = [];
+    Object.assign(f.tracker, {_ensureSource() { this._source = {showNotification: n => shown.push(n)}; }});
+    const snap = refusals => ({rows: [], messages: {refusals, recent: [], limits: {per_chat: 10, hourly: 10, raised: 30}}});
+    f.tracker._notifyRefusals(snap([{id: 1, kind: 'hourly', sender: 'codex:a', recipient: 'claude:b'}]));
+    assert.equal(shown.length, 0);
+    f.tracker._notifyRefusals(snap([{id: 2, kind: 'peer', sender: 'codex:a', recipient: 'claude:b'}, {id: 1, kind: 'hourly', sender: 'codex:a', recipient: 'claude:b'}]));
+    assert.deepEqual(shown.map(n => [n.body, [...n.actions]]), [['⌘ codex:a has sent ✳ claude:b 10 messages since you last wrote to it.', ['Allow another round']]]);
 });
