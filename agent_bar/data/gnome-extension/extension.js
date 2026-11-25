@@ -73,6 +73,8 @@ const SETTINGS = [
         [['completion', 'Completion since last turn'], ['activity', 'Recent activity'], ['name', 'Name']]],
     ['Dropdown', 'gitOrder', 'Git order', 'Also set from Sort in Git', 'changes',
         [['changes', 'Changes first'], ['recent', 'Last commit'], ['name', 'Name']]],
+    ['Dropdown', 'exportFormat', 'Export format', 'What the export button on a Claude or Codex chat writes to Downloads and opens', 'html',
+        [['html', 'HTML'], ['markdown', 'Markdown']]],
     ['Dropdown', 'quietMinutes', 'Waiting after', 'An open turn with no activity this long shows as waiting', 5,
         [[2, '2 min'], [5, '5 min'], [10, '10 min'], [0, 'Never']]],
     ['Integrations', 'scheduler', 'Job scheduler', 'parallel-workers: Queues tab, Q count, cluster indicator, queues-finished reviews', true,
@@ -5872,8 +5874,28 @@ class Tracker {
             button.connect('clicked', () => this._openSchedule(row));
             actions.add_child(button);
         }
+        if (['claude', 'codex'].includes(row.provider)) {
+            const name = `Export this chat's messages as ${this._setting('exportFormat') === 'html' ? 'HTML' : 'Markdown'} to Downloads and open it`;
+            const button = new St.Button({child: new St.Icon({icon_name: 'document-save-symbolic', icon_size: 14}), can_focus: true,
+                accessible_name: name, style_class: 'tracker-copy tracker-copy-compact', y_align: Clutter.ActorAlign.CENTER});
+            this._tooltip(button, name);
+            button.connect('clicked', () => this._export(row));
+            actions.add_child(button);
+        }
         actions.add_child(this._copyButton(() => chatIdentity(row), 'Copy the chat\'s name, id and folder', true));
         return {item, box, actions};
+    }
+
+    // Writes a saved chat's messages to Downloads with `agent-bar export` and opens the file.
+    async _export(row) {
+        try {
+            const result = await this._run(['export', row.key, '--format', this._setting('exportFormat')]);
+            if (!this._enabled) return;
+            Gio.AppInfo.launch_default_for_uri(Gio.File.new_for_path(result.path).get_uri(), null);
+            Main.notify('Agent Bar', `Exported ${result.messages} messages to ${result.path}`);
+        } catch (error) {
+            if (this._enabled) Main.notifyError('Agent Bar', error.message);
+        }
     }
 
     /** @param {HistoryLookup} lookup */

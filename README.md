@@ -29,7 +29,7 @@ ends. Nothing leaves your computer unless you turn on reading Claude's usage lim
   chats can be woken to read them. Tickets hold work for later, until a usage limit resets, job queues finish, a time
   comes, or another ticket closes. Messages can be scheduled to a chat, once or on repeat.
 - **Your history, searchable.** Full-text search over saved Claude and Codex conversations, by project or across all
-  of them, with context around each hit and one-click resume.
+  of them, with context around each hit, one-click resume, and export to HTML or Markdown.
 - **Local and inspectable.** Everything runs on your computer from files the agent tools already write. Every view is
   also available as JSON from the `agent-bar` command line.
 
@@ -68,7 +68,7 @@ The [user guide](docs/guide.md) describes every part in detail.
 | Status and review | yes | yes | yes | yes |
 | Usage limits and cost | yes | yes | | |
 | Messages and scheduled messages | yes; wakes idle chats | yes; wakes chats open in VS Code | | |
-| History search and resume | yes | yes | | |
+| History search, resume and export | yes | yes | | |
 
 ## Platforms
 

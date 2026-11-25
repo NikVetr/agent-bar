@@ -51,6 +51,10 @@ def main():
     info.add_argument('--project', help='inspect hooks for this folder (default: user scope)')
     subs.add_parser('usage', help='usage limits Claude Code and Codex recorded, with pace, run-out time and use by day (JSON)')
     subs.add_parser('cost', help='what recorded use would cost at API prices: by day, by model, and per chat (JSON)')
+    export = subs.add_parser('export', help="write a saved conversation's messages to Markdown or HTML (JSON result)")
+    export.add_argument('key', help='conversation key, e.g. claude:<id> or codex:<id>')
+    export.add_argument('--format', choices=['markdown', 'html'], default='markdown')
+    export.add_argument('--output', help='a .md or .html file to write, or a folder for a generated name (default: your Downloads folder)')
     resume = subs.add_parser('resume', help='reopen an inventoried conversation in VS Code')
     resume.add_argument('key')
     subs.add_parser('agents', help='open conversations a message can go to')
@@ -153,6 +157,12 @@ def main():
     if name in ['inventory', 'resume']:
         from . import inventory
         try: result = inventory.refresh() if name == 'inventory' else inventory.resume(args['key'])
+        except (OSError, ValueError, sqlite3.Error) as error: result = {'ok': False, 'error': str(error)}
+        print(json.dumps(result, ensure_ascii=False))
+        sys.exit(0 if result['ok'] else 1)
+    if name == 'export':
+        from .export import export
+        try: result = export(args['key'], args['format'], args['output'])
         except (OSError, ValueError, sqlite3.Error) as error: result = {'ok': False, 'error': str(error)}
         print(json.dumps(result, ensure_ascii=False))
         sys.exit(0 if result['ok'] else 1)

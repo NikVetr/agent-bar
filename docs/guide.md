@@ -63,7 +63,8 @@ were on; the gear opens settings, including a color-blind-safe palette.
 Open chats grouped by project and window, with sort and filter. Each row shows the chat's whole name and a copy button
 for its name, id, folder and resume command. A list button, when the project has
 [task checklists](#task-checklists), shows them. On Claude and Codex rows, a clock button schedules a message to that
-chat (see [Scheduled messages](#scheduled-messages)).
+chat (see [Scheduled messages](#scheduled-messages)), and an export button writes the chat's messages to your
+Downloads folder and opens the file (see [History](#history)).
 
 - **Bringing a chat forward.** Clicking a chat selects it and shows its window maximized on your main display, with the
   chat's tab or sidebar revealed. Clicking again sends the window back. When several Codex chats share a window and the
@@ -142,6 +143,11 @@ Search saved Claude and Codex chats by title, folder, or words in your messages 
   maximize button brings its window to the main display with the current tab selected.
 
 The index updates nightly and with **⟳**.
+
+The export button on a Claude or Codex row, here or in Chats, writes that conversation's messages to your Downloads
+folder as HTML (or Markdown, under **Settings › Dropdown › Export format**) and opens it. The export holds what History
+indexes: your messages and the agent's replies with their times, without tool calls, tool results or reasoning. An
+existing file is never replaced; `agent-bar export` does the same from the command line.
 
 ### Quota
 
@@ -327,6 +333,7 @@ agent-bar ticket list   # tickets and what each waits for
 agent-bar inventory     # rescan saved chats
 agent-bar search-history --repo agent-bar "memory share"  # matching messages as JSON; omit --repo for all folders
 agent-bar search-history --conversation <key> --message 2 --hit 1 "memory share"  # context for one occurrence
+agent-bar export <key> --format html  # a saved chat's messages as HTML or Markdown, in Downloads by default
 agent-bar resume <key>  # reopen a saved chat in VS Code
 agent-bar doctor        # check each part and say how to fix anything missing
 ```

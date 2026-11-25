@@ -65,6 +65,10 @@ state and unread reasons stay separate in the data.
   its entries. Chats and History share a query and hit cache. Message searches run through the CLI after a short typing delay
   and return one excerpt per matching conversation. Expanding a hit queries that conversation for a bounded passage around the selected occurrence
   and nearby dialogue. The panel loads one passage at a time and keeps its position while the search is open.
+- **Export** (`export.py`): `agent-bar export` reads a conversation's transcript files directly (a Codex thread and
+  its continuation files, oldest first) with the same message filter as the History index, keeping each message's
+  time, and writes Markdown or self-contained HTML. Output goes to the XDG Downloads folder unless `--output` names a
+  file or folder, and never replaces an existing file.
 - **Git** (`git.py`): every 20 s, off the collection loop, the `git status` of each repository holding an open folder,
   with `GIT_OPTIONAL_LOCKS=0` so it never takes the index lock an agent's own git command needs. It never fetches.
   A repository with staged or modified files also gets `git diff HEAD --numstat`. With the panel's Pull requests
