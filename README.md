@@ -39,24 +39,37 @@ what each offers, and where Agent Bar fits.
 
 ## A tour
 
-<!-- Placeholders: one screenshot per item, 1000-1400 px wide, taken in the disposable test shell
-     (tmp/scripts/session-shot.sh) with fixture data rather than real projects. -->
+The screenshots show made-up projects.
 
-- **The top bar.** Chats needing review / open per provider, weekly limit left, working and waiting counts, agent
-  mail, ready tickets, queue progress, and a button for each chat that needs you.
-  *(screenshot: top bar)*
-- **Chats.** Every open chat by project and window, with its state, why it needs review, and a copy button for its
-  name, id and resume command. *(screenshot: Chats tab)*
-- **Messages and tickets.** Agents in different chats leave each other notes, or tickets for work to do later,
-  waiting for a usage limit to reset, queues to finish, or a time. *(screenshots: Messages tab, Tickets tab)*
-- **Quota.** Each provider's 5-hour, weekly and per-model limits, the pace, and when you would run out compared with
-  the reset. *(screenshot: Quota tab)*
-- **Git and History.** Uncommitted and unpushed work in every open repository, with a diff summary and, optionally,
-  each branch's pull request and checks; every saved chat, searchable and resumable in its folder.
-  *(screenshots: Git tab, History tab)*
-- **Info.** Each project's active hooks, skills and instruction files. *(screenshot: Info tab)*
-- **Queues and Cluster** (with parallel-workers). Job queues per project, adjustable from the bar, and each host's
-  CPU, memory and disk. *(screenshots: Queues tab, Cluster tab)*
+**The top bar.** Chats needing review / open per provider, weekly limit left, working and waiting counts, agent mail,
+tickets that came due, queue progress, and a button for each chat that needs you. A notification announces each chat
+as it comes to need you.
+
+<p><img src="docs/images/topbar.webp" alt="The top bar: counts per provider, limits left, working and waiting, mail, tickets, queues, and review buttons" width="100%"></p>
+<p><img src="docs/images/notification.webp" alt="A desktop notification: Codex · sampler-study, Reply finished" width="420"></p>
+
+**Chats and History.** Every open chat by project and window, with its state, why it needs review, and its cost at API
+prices. History searches every saved Claude Code and Codex conversation, with context around each hit, resume and
+export.
+
+<p><img src="docs/images/chats.webp" alt="The Chats tab" width="49%"> <img src="docs/images/history.webp" alt="History search with context" width="49%"></p>
+
+**Messages and tickets.** Agents in different chats leave each other notes, or tickets for work to do later, waiting
+for a usage limit to reset, queues to finish, or a time. Messages can also be scheduled to a chat.
+
+<p><img src="docs/images/messages.webp" alt="The Messages tab" width="49%"> <img src="docs/images/tickets.webp" alt="The Tickets tab" width="49%"></p>
+
+**Quota, Git and Info.** Each provider's 5-hour, weekly and per-model limits, the pace, and when you would run out
+compared with the reset, plus cost at API prices. Uncommitted and unpushed work in every open repository, with a
+diff summary and, optionally, each branch's pull request and checks. Each project's hooks, skills and instruction
+files.
+
+<p><img src="docs/images/quota.webp" alt="The Quota tab" width="32%"> <img src="docs/images/git.webp" alt="The Git tab" width="32%"> <img src="docs/images/info.webp" alt="The Info tab" width="32%"></p>
+
+**Queues and Cluster** (with parallel-workers). Job queues per project, adjustable from the bar, and each host's CPU,
+memory and disk.
+
+<p><img src="docs/images/queues.webp" alt="The Queues tab" width="49%"></p>
 
 The [user guide](docs/guide.md) describes every part in detail.
 
