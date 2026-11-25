@@ -3706,7 +3706,7 @@ class Tracker {
                     const tone = failed ? 'failed' : uncertain || ref.state === 'error' ? 'attention' :
                         ['complete', 'finished'].includes(ref.state) ? 'finished' : '';
                     const text = String(ref.number ?? '?') + (row.project !== ref.project ? '*' : '') +
-                        (failed ? '!' : uncertain ? '?' : '') + (i < refs.length - 1 ? ',' : '');
+                        (uncertain ? '?' : '') + (i < refs.length - 1 ? ',' : '');
                     const tip = heading + ' · ' + ref.tip;
                     const actor = new St.Label({text, style_class: tone ? `tracker-detail tracker-${tone}` : 'tracker-detail',
                         can_focus: true, accessible_name: tip, y_align: Clutter.ActorAlign.CENTER});
