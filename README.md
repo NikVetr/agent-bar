@@ -10,8 +10,7 @@ other notes and tickets for later, and can follow job queues from the optional R
 It reads only local files that the agent tools already write, plus small hooks that record when a turn starts and
 ends. Nothing leaves your computer unless you turn on reading Claude's usage limits (see [Privacy](#privacy)).
 
-<!-- Placeholder: a short screen recording (GIF or MP4, under 10 MB) of the top bar: a reply finishes, its review
-     button appears, a click brings the chat forward. -->
+<p align="center"><img src="docs/images/click-to-chat.gif" alt="Clicking a chat's review button brings its VS Code window forward, maximized, with that chat showing; clicking again sends it back" width="820"></p>
 
 ## Highlights
 
@@ -53,10 +52,12 @@ prices. History searches every saved Claude Code and Codex conversation, with co
 export.
 
 <p><img src="docs/images/chats.webp" alt="The Chats tab" width="49%"> <img src="docs/images/history.webp" alt="History search with context" width="49%"></p>
+<p><img src="docs/images/history-search.gif" alt="Searching History for words in saved conversations, then showing a hit's context" width="820"></p>
 
 **Messages and tickets.** Agents in different chats leave each other notes, or tickets for work to do later, waiting
 for a usage limit to reset, queues to finish, or a time. Messages can also be scheduled to a chat.
 
+<p><img src="docs/images/agent-messages.gif" alt="A Codex chat sends a Claude Code chat a message with agent-bar send; the Claude chat sees it at its next turn" width="820"></p>
 <p><img src="docs/images/messages.webp" alt="The Messages tab" width="49%"> <img src="docs/images/tickets.webp" alt="The Tickets tab" width="49%"></p>
 
 **Quota, Git and Info.** Each provider's 5-hour, weekly and per-model limits, the pace, and when you would run out
@@ -69,7 +70,7 @@ files.
 **Queues and Cluster** (with Rota). Job queues per project, adjustable from the bar, and each host's CPU,
 memory and disk.
 
-<p><img src="docs/images/queues.webp" alt="The Queues tab" width="49%"></p>
+<p><img src="docs/images/queues.webp" alt="The Queues tab" width="49%"> <img src="docs/images/cluster.webp" alt="The Cluster tab" width="49%"></p>
 
 The [user guide](docs/guide.md) describes every part in detail.
 
