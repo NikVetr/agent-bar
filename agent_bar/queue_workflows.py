@@ -84,8 +84,13 @@ def read(snapshot_path, tracked, cached, selected):
     # Keep retired queues' declarations as long as Agent Bar still lists the queue.
     declarations = {tag: record for tag, record in cached.items() if tag in tracked}
     errors = {}
-    registered = {q['tag']: q for q in scheduler.get('queues', []) if q.get('tag') in selected}
-    for tag, path in archived_registrations(root, tracked, selected - declarations.keys() - registered.keys()):
+    if not selected: return declarations, {'links': {}, 'dependents': {}, 'errors': {}}
+    # A hidden queue can depend on a visible one. Index the immutable declarations for all tracked queues,
+    # but read mutable prerequisite status only for the requested rows.
+    indexed = {tag for tag, record in declarations.items() if 'batch_dir' in record}
+    pool = (scheduler.get('pool') or {}).get('id')
+    registered = {q['tag']: {'pool_id': pool, **q} for q in scheduler.get('queues', []) if q.get('tag') in tracked}
+    for tag, path in archived_registrations(root, tracked, tracked.keys() - indexed - registered.keys()):
         try:
             reg = env_file(path)
             if reg['tag_clean'] != tag or reg['queue_id'] != path.stem: raise ValueError('Registration identity changed')
@@ -93,9 +98,13 @@ def read(snapshot_path, tracked, cached, selected):
         except (OSError, ValueError, KeyError) as error: errors[tag] = str(error)
     for tag, queue in registered.items():
         token = queue['queue_id']
-        if declarations.get(tag, {}).get('id') == token: continue
         try:
             batch = batch_path(queue['batch_dir'], root)
+            identity = {'id': token, 'pool': queue.get('pool_id'), 'batch_dir': str(batch)}
+            existing = declarations.get(tag)
+            if existing and existing['id'] == token and all(existing.get(k, v) == v for k, v in identity.items()):
+                declarations[tag] = {**existing, **identity}
+                continue
             resources = env_file(batch / 'adaptive/resources.env')
             if resources['queue_id'] != token: raise ValueError('Queue resource identity changed')
             if resources['schema_version'] == '1':
@@ -106,15 +115,19 @@ def read(snapshot_path, tracked, cached, selected):
                         all(isinstance(ref.get(k), str) for k in ('pool_id', 'queue_id', 'batch_dir')) for ref in refs):
                     raise ValueError('Invalid prerequisite list')
             else: raise ValueError('Unsupported queue resource schema')
-            declarations[tag] = {'id': token, 'refs': refs}
+            declarations[tag] = {**identity, 'refs': refs}
         except (OSError, KeyError, ValueError) as error:
             declarations.pop(tag, None)
             errors[tag] = str(error)
-    outcomes, links = {}, {}
+    targets = {(record['pool'], record['id'], record['batch_dir']): tag for tag, record in declarations.items()
+               if tag in selected and record.get('pool') and record.get('batch_dir')}
+    outcomes, links, dependents = {}, {}, {}
     for tag, record in declarations.items():
-        if tag not in selected: continue
         for ref in record['refs']:
             key = (ref['pool_id'], ref['queue_id'], ref['batch_dir'])
-            if key not in outcomes: outcomes[key] = prerequisite(ref, root)
-            links.setdefault(tag, []).append(outcomes[key])
-    return declarations, {'links': links, 'errors': errors}
+            target = targets.get(key)
+            if target: dependents.setdefault(target, []).append(tag)
+            if tag in selected:
+                if key not in outcomes: outcomes[key] = prerequisite(ref, root)
+                links.setdefault(tag, []).append(outcomes[key])
+    return declarations, {'links': links, 'dependents': dependents, 'errors': errors}

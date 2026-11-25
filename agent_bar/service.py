@@ -453,6 +453,7 @@ class Tracker:
             # Cache outcomes by identity. Their display numbers belong to the requesting snapshot.
             return {'links': {tag: [{**d, 'number': active.get(d.get('tag'))} for d in deps]
                               for tag, deps in self.workflow_result['links'].items() if tag in tags},
+                    'dependents': {tag: deps for tag, deps in self.workflow_result['dependents'].items() if tag in tags},
                     'errors': {tag: error for tag, error in self.workflow_result['errors'].items() if tag in tags}}
 
     async def dispatch(self, command):

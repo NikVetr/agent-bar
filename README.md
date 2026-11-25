@@ -129,13 +129,15 @@ Clicking the counts opens the dropdown, with these tabs:
   Weekly limits, depleted workspace credits, and stops with an unknown reset still have the manual **Continue** action.
 - **Queues**: job queues from parallel-workers, by project, with progress, ETA and failed jobs. A project's finished
   queues count until a chat there starts a turn, or until you press Clear beside the project. **Adjust** on a queue,
-  and under **Pool and hosts**, changes what the scheduler offers there (see below). Each project numbers its active queues from `#1` in
-  launch order. The numbers close up as queues finish. Search for `#2` to see the second active queue in each project.
-  Below the status badge, the right end of the progress line shows prerequisite numbers and the default priority.
-  Active prerequisites use their queue numbers. Other prerequisites share the next available numbers in their project
+  and under **Pool and hosts**, changes what the scheduler offers there (see below). Each project numbers its active queues from `1` in
+  launch order. The numbers close up as queues finish. Search for `2` to see the second active queue in each project.
+  Below the status badge, the right end of the progress line shows related queues and the default priority.
+  On queue 4, **→ 1, 2** means queue 4 depends on 1 and 2. **← 7, 8** means queues 7 and 8 depend on 4.
+  Active queues use their project numbers. Other referenced queues share the next available numbers in their project
   for this menu visit. A number with ↗ refers to another project.
   Failed or incomplete prerequisites appear in red with **!**, and **?** marks unknown or unverified outcomes.
-  Hover over a number for its queue name, project, and status, the arrow for the full list, or the priority for host overrides.
+  Hover over a queue number for its name, project, status, and available progress details, including ETA.
+  Hover over either arrow for the full list in that direction, or over the priority for host overrides.
 - **Git**: each repository holding an open project, with its branch, uncommitted files, and commits ahead of or
   behind its upstream (as of the last fetch; Agent Bar never fetches or takes git's lock). Clicking one opens VS
   Code's Source Control for it.

@@ -91,7 +91,8 @@ state and unread reasons stay separate in the data.
   executes a registered handler.
 
 The Queues tab reads prerequisite outcomes through `agent-bar queue-dependencies`. The service uses the collector’s
-adaptive registrations and the scheduler’s retained registration index to find immutable batch declarations. For
+adaptive registrations and the scheduler’s retained registration index to find immutable batch declarations. It indexes the dependencies of all tracked queues by pool, queue ID,
+and batch directory so a filtered queue can still show which other queues depend on it. For
 queues in the selected list, it reads each prerequisite’s status and verification markers on the mounted share.
 Reads run outside the collection loop, only on request, with a 30-second result cache.
 The ledger retains declarations for tracked queues after scheduler retirement. Each snapshot numbers active queues
