@@ -3660,37 +3660,52 @@ class Tracker {
             if (!row) continue;
             rowNumber.accessible_name = queueTooltip(row);
             /** @type {{number:number|null, project:string, state:string, tip:string}[]} */
-            const outgoing = (this._dependencies?.links?.[id] || []).map(/** @param {QueuePrerequisite} dep */ dep => {
+            const prerequisites = (this._dependencies?.links?.[id] || []).map(/** @param {QueuePrerequisite} dep */ dep => {
                 const {number, project} = index.references.get(prerequisiteKey(dep));
                 return {number, project, state: dep.state, tip: queueTooltip(dep.tag ? rows.get(dep.tag) : undefined, dep.name, project, dep.detail)};
             });
-            /** @type {typeof outgoing} */
-            const incoming = [];
+            /** @type {typeof prerequisites} */
+            const dependents = [];
             for (const tag of this._dependencies?.dependents?.[id] || []) {
                 const parent = rows.get(tag);
-                if (parent) incoming.push({number: index.numbers.get(tag), project: parent.project,
+                if (parent) dependents.push({number: index.numbers.get(tag), project: parent.project,
                     state: stateStyle(parent.state), tip: queueTooltip(parent)});
             }
             const error = this._dependencies?.errors?.[id];
-            if (error) outgoing.push({number: null, project: row.project, state: 'error', tip: error});
-            const groups = [{heading: 'Needs', refs: outgoing},
-                {heading: 'Needed by', refs: incoming}].filter(group => group.refs.length);
-            box.visible = !!groups.length;
+            if (error) prerequisites.push({number: null, project: row.project, state: 'error', tip: error});
+            const groups = [{heading: 'Needs', refs: prerequisites}, {heading: 'Needed by', refs: dependents}];
+            box.visible = !!(prerequisites.length || dependents.length);
             const signature = JSON.stringify([row.project, groups]);
             if (box._signature === signature) continue;
             box._signature = signature;
             box.destroy_all_children();
-            for (const {heading, refs} of groups) {
+            if (!box.visible) continue;
+            const summaries = groups.map(({heading, refs}) => {
                 refs.sort((a, b) => Number(b.state === 'failed') - Number(a.state === 'failed') || Number(a.number) - Number(b.number));
-                const summary = heading + '\n' + refs.map(ref => (ref.number ?? '?') + ' · ' + ref.tip.split('\n')[0]).join('\n');
-                const label = new St.Label({text: box.get_n_children() ? `·  ${heading}` : heading,
-                    style_class: 'tracker-detail', can_focus: true, accessible_name: summary, y_align: Clutter.ActorAlign.CENTER});
-                box.add_child(this._tooltip(label, summary));
+                return heading + '\n' + (refs.map(ref => (ref.number ?? '?') + ' · ' + ref.tip.split('\n')[0]).join('\n') || 'None');
+            });
+            for (const [side, {heading, refs}] of groups.entries()) {
+                if (side === 1) {
+                    const help = 'Left · ' + summaries[0] + '\n\nRight · ' + summaries[1];
+                    const arrow = this._drawing(/** @param {any} cr @param {number} w @param {number} h */ (cr, w, h) => {
+                        const y = h / 2;
+                        cr.setSourceRGBA(0.65, 0.69, 0.74, 1);
+                        cr.setLineWidth(1.4);
+                        cr.moveTo(1, y);
+                        cr.lineTo(w - 1, y);
+                        cr.moveTo(w - 4, y - 3);
+                        cr.lineTo(w - 1, y);
+                        cr.lineTo(w - 4, y + 3);
+                        cr.stroke();
+                    }, {width: 12, height: 12, can_focus: true, accessible_name: help});
+                    box.add_child(this._tooltip(arrow, help));
+                }
+                if (!refs.length) box.add_child(new St.Label({text: '–', style_class: 'tracker-detail', y_align: Clutter.ActorAlign.CENTER}));
                 for (const [i, ref] of refs.slice(0, 3).entries()) {
                     const failed = ref.state === 'failed', uncertain = ['unknown', 'verify'].includes(ref.state);
                     const tone = failed ? 'failed' : uncertain || ref.state === 'error' ? 'attention' :
                         ['complete', 'finished'].includes(ref.state) ? 'finished' : '';
-                    const text = String(ref.number ?? '?') + (row.project !== ref.project ? '↗' : '') +
+                    const text = String(ref.number ?? '?') + (row.project !== ref.project ? '*' : '') +
                         (failed ? '!' : uncertain ? '?' : '') + (i < refs.length - 1 ? ',' : '');
                     const tip = heading + ' · ' + ref.tip;
                     const actor = new St.Label({text, style_class: tone ? `tracker-detail tracker-${tone}` : 'tracker-detail',
@@ -3699,8 +3714,8 @@ class Tracker {
                 }
                 if (refs.length > 3) {
                     const more = new St.Label({text: '+' + (refs.length - 3), style_class: 'tracker-detail',
-                        can_focus: true, accessible_name: summary, y_align: Clutter.ActorAlign.CENTER});
-                    box.add_child(this._tooltip(more, summary));
+                        can_focus: true, accessible_name: summaries[side], y_align: Clutter.ActorAlign.CENTER});
+                    box.add_child(this._tooltip(more, summaries[side]));
                 }
             }
         }

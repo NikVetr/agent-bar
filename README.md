@@ -132,12 +132,12 @@ Clicking the counts opens the dropdown, with these tabs:
   and under **Pool and hosts**, changes what the scheduler offers there (see below). Each project numbers its active queues from `1` in
   launch order. The numbers close up as queues finish. Search for `2` to see the second active queue in each project.
   Below the status badge, the right end of the progress line shows related queues and the default priority.
-  On queue 2, **Needs 4 · Needed by 3** means queue 4 must finish before queue 2 can run, and queue 3 waits for queue 2.
+  In `5 → 4, 2`, the current queue needs queue 5, and queues 4 and 2 need the current queue. A dash means that side is empty.
   Active queues use their project numbers. Other referenced queues share the next available numbers in their project
-  for this menu visit. A number with ↗ refers to another project.
+  for this menu visit. An asterisk beside a queue number marks another project.
   Failed or incomplete prerequisites appear in red with **!**, and **?** marks unknown or unverified outcomes.
   Hover over a queue number for its name, project, status, and available progress details, including ETA.
-  Hover over **Needs** or **Needed by** for its full list, or over the priority for host overrides.
+  Hover over the arrow for both full lists, or over the priority for host overrides.
 - **Git**: each repository holding an open project, with its branch, uncommitted files, and commits ahead of or
   behind its upstream (as of the last fetch; Agent Bar never fetches or takes git's lock). Clicking one opens VS
   Code's Source Control for it.
