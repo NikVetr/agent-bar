@@ -2,9 +2,10 @@
 
 # Agent Bar
 
-Agent Bar shows which coding agents are working, waiting or ready for review in the GNOME top bar. Click a chat to
-bring its window, editor tab or sidebar forward. It tracks the chats you already use in VS Code, terminals and
-desktop apps. Optional integrations add GitHub pull requests, Claude quota checks and ROTA job queues.
+If you have a Claude chat open in one VS Code window and Codex working in another, which one just finished?
+Agent Bar puts the answer in the GNOME top bar. Click the project to go straight to the chat, even when it shares a
+window with several others. It also follows agents in terminals and desktop apps. You can add GitHub pull requests,
+Claude quota checks and ROTA job queues to the same bar.
 
 <p align="center"><picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/click-to-chat-dark.webp">
@@ -15,28 +16,28 @@ desktop apps. Optional integrations add GitHub pull requests, Claude quota check
 
 The screenshots show made-up projects.
 
-**The top bar.** See how many chats need review, how many are open, and how much weekly quota remains for each provider.
-Project buttons take you to chats needing attention. Other indicators show working and waiting chats, unread messages,
-ready tickets and queue progress.
+**The top bar.** Read each provider’s count as *chats needing review / chats open*. Beside it you can see how much
+weekly quota remains. You can also see how many chats are working, waiting or need a prompt to read their mail,
+how many tickets are ready, and how many queues have finished. Project buttons take you to chats that need review.
 
 <p><img src="docs/images/topbar.webp" alt="The top bar: counts per provider, limits left, working and waiting, mail, tickets, queues, and review buttons" width="100%"></p>
 <p><img src="docs/images/notification.webp" alt="A desktop notification: Codex · sampler-study, Reply finished" width="420"></p>
 
-**Chats and History.** Every open chat by project and window, with its state, why it needs review, and its cost at API
-prices. History searches every saved Claude Code and Codex conversation, with context around each hit, resume and
-export.
+**Chats and History.** Chats groups open conversations by project and window. Each row tells you what the agent
+is doing, why it needs review, and its estimated cost at API prices where available. History also includes saved
+Claude Code and Codex chats you’ve closed. You can resume one or export its messages.
 
 <p><img src="docs/images/chats.webp" alt="The Chats tab" width="49%"> <img src="docs/images/history.webp" alt="History search with context" width="49%"></p>
-Search finds the words you or an agent wrote in any saved chat. **Show context** opens a hit in place, and the arrows
-step through every match.
+Remember what you discussed but not which chat it was in? Search for words you or the agent wrote.
+**Show context** opens the conversation around a match. Use the arrows to read the next one.
 
 <p align="center"><picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/history-search-dark.webp">
   <img src="docs/images/history-search-light.webp" alt="Searching History for words in saved conversations, then showing a hit's context" width="820">
 </picture></p>
 
-**Messages and tickets.** Send notes between chats or schedule a message for later. Create a project ticket for work that
-can start at a given time, after a usage limit resets or when the project’s queues finish.
+**Messages and tickets.** A Codex chat can leave a note for a Claude chat in another project. You can also schedule
+a message yourself, or write a ticket for work that has to wait for a quota reset, a project’s queues, or a particular time.
 
 <p align="center"><picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/agent-messages-dark.webp">
@@ -44,15 +45,15 @@ can start at a given time, after a usage limit resets or when the project’s qu
 </picture></p>
 <p><img src="docs/images/messages.webp" alt="The Messages tab" width="49%"> <img src="docs/images/tickets.webp" alt="The Tickets tab" width="49%"></p>
 
-**Quota, Git and Info.** Each provider's 5-hour, weekly and per-model limits, the pace, and when you would run out
-compared with the reset, plus cost at API prices. Uncommitted and unpushed work in every open repository, with a
-diff summary and, optionally, each branch's pull request and checks. Each project's hooks, skills and instruction
-files.
+**Quota, Git and Info.** Quota shows the five-hour, weekly and model-specific limits each provider reports.
+The forecast tells you whether you’re on course to run out before the reset. You can also see what your usage would
+cost at API prices. Git shows what you’ve changed locally, what you still need to push, and (if you enable it) the
+branch’s pull request and checks. Info lists the hooks, skills and instruction files for each project.
 
 <p><img src="docs/images/quota.webp" alt="The Quota tab" width="32%"> <img src="docs/images/git.webp" alt="The Git tab" width="32%"> <img src="docs/images/info.webp" alt="The Info tab" width="32%"></p>
 
-**Queues and Cluster** (with ROTA). Job queues per project, adjustable from the bar, and each host's CPU,
-memory and disk.
+**Queues and Cluster.** If you run jobs with ROTA, you can check or adjust a project’s queues from the top bar.
+Open Cluster to see how busy each host is and how much memory and disk space it has left.
 
 <p><img src="docs/images/queues.webp" alt="The Queues tab" width="49%"> <img src="docs/images/cluster.webp" alt="The Cluster tab" width="49%"></p>
 
@@ -98,30 +99,29 @@ flowchart TD
 
 ## Install
 
-You need Python 3.10 or later and [pipx](https://pipx.pypa.io) or [uv](https://docs.astral.sh/uv/). VS Code is needed
-only for chats in VS Code.
+You’ll need Python 3.10 or later and either [pipx](https://pipx.pypa.io) or [uv](https://docs.astral.sh/uv/).
+If your agents run in terminals, you can leave VS Code out of the installation.
 
 ```
 pipx install git+https://github.com/NikVetr/agent-bar
 agent-bar install
 ```
 
-`agent-bar install` sets up, for your user only:
+The installer sets these up for your user account:
 
-- a background service (`agent-bar.service`) and a daily inventory scan of saved chats;
-- hooks in Claude Code's and Codex's settings, if you use them (your existing hooks are kept, and the old settings
-  file is backed up first);
-- the `agent-messages` skill, which tells Claude Code and Codex agents how to use messages and tickets, unless you
-  already have a skill of that name;
-- the VS Code bridge, a small extension that tells Agent Bar which chats each window has open;
-- the menu-bar front end: on Linux, the GNOME Shell extension. The first time, log out and back in (or on X11 press
-  Alt+F2, type `r`, press Enter) so GNOME finds it, then run `agent-bar install` again to enable it.
+- A background service (`agent-bar.service`) and a daily scan of saved chats.
+- Hooks for Claude Code and Codex, if you use them. The installer backs up the settings file and keeps your existing hooks.
+- The `agent-messages` skill, which teaches agents to use messages and tickets. An existing skill of the same name takes precedence.
+- A small VS Code extension (the bridge) that reports which chats each window has open.
+- The GNOME Shell extension that draws the top bar and dropdown.
 
-Open VS Code windows start the bridge on their own; after an update, reload each one (Developer: Reload Window) to
-run the new version. Codex asks you to review new hooks once with `/hooks`.
+On the first install, log out and back in so GNOME finds the extension (on X11 you can also press Alt+F2, type `r`
+and press Enter). Run `agent-bar install` again to enable it. Open VS Code windows start the bridge on their own.
+After an update, use **Developer: Reload Window** in each one to pick up the new bridge. Codex asks you to review
+new hooks once with `/hooks`.
 
-`agent-bar doctor` checks each part and says how to fix anything missing. `agent-bar uninstall` takes it all out
-again, leaving your history and settings (`--purge` deletes those too).
+If something is missing, `agent-bar doctor` will tell you which part and suggest a fix. To remove Agent Bar, run
+`agent-bar uninstall`. This keeps your settings and history unless you add `--purge`.
 
 ## Documentation
 
@@ -132,16 +132,15 @@ again, leaving your history and settings (`--purge` deletes those too).
 
 ## Privacy
 
-Agent Bar stores state in `~/.local/state/agent-bar`, settings in `~/.config/agent-bar`, and a build of its VS Code
-bridge in `~/.cache/agent-bar`. The local History index
-contains user and agent messages. It excludes tool calls, tool results, reasoning and client context. Hooks record
-turn events without message text.
+The History index contains the words you and the agents wrote. It leaves out tool calls and results, reasoning
+and client context. Hooks record when a turn starts or stops without recording what you said. State lives in
+`~/.local/state/agent-bar`, settings in `~/.config/agent-bar`, and the VS Code bridge build in `~/.cache/agent-bar`.
 
-Two settings enable network requests:
+Two optional settings contact a service outside your machine:
 
-- **Read Claude limits** checks the usage endpoint on `api.anthropic.com` every 10 minutes using Claude Code’s token from
+- **Read Claude limits** checks `api.anthropic.com` every 10 minutes, using Claude Code’s token from
   `~/.claude/.credentials.json`. Claude Code handles token renewal.
-- **Pull requests** uses your signed-in `gh` command to read GitHub reviews and checks at most once every five
+- **Pull requests** uses your signed-in `gh` command to read pull request reviews and check results at most once every five
   minutes per branch.
 
 ## Development

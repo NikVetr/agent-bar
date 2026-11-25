@@ -1,7 +1,8 @@
 # Architecture
 
-The Python service and CLI, provider hooks, VS Code bridge and GNOME Shell panel share owner-only state in
-`~/.local/state/agent-bar`. Linux process discovery and X11 window lookup are platform-specific.
+The service turns evidence from hooks, open windows and session files into a snapshot the GNOME panel can read.
+The Python service and CLI, provider hooks, VS Code bridge and panel share owner-only state in
+`~/.local/state/agent-bar`. Process discovery depends on Linux, and native window lookup depends on X11.
 
 ```mermaid
 flowchart LR
@@ -23,9 +24,10 @@ flowchart LR
 
 ## Service and CLI
 
-`agent-bar serve` (the `agent-bar.service` user unit) collects every 3 s and writes `snapshot.json` when it changes (or every 10 s), which the panel
-reads asynchronously. It also answers a Unix-socket JSON API that the CLI uses. Provider identity, turn state, queue
-state and unread reasons stay separate in the data.
+The `agent-bar.service` user unit runs `agent-bar serve`. It collects state every three seconds and writes
+`snapshot.json` when something changes, or every ten seconds if nothing has. The panel reads the snapshot
+asynchronously. The CLI talks to the service over a Unix socket using JSON. A chat’s provider, turn state and
+reasons for review are separate fields, as is the state of its project’s queues.
 
 - **VS Code:** each window's bridge publishes its folders, open tabs, provider versions and a heartbeat. Codex's
   per-window view-activity log establishes open sidebar conversations, and its custom-editor URIs identify editor
@@ -34,29 +36,36 @@ state and unread reasons stay separate in the data.
   For a recovered ID, or when several Codex IDs have no matching tab in one window, the bridge opens the requested ID in a Codex
   editor and verifies the active tab's URI. Claude's saved panel-session IDs are matched against live tab labels,
   with ambiguous matches rejected.
-- **Terminals and apps** (`providers.py`): Claude Code CLI sessions from `~/.claude/sessions/<pid>.json`, checked
-  against the process start time; Codex CLI and desktop-app threads from the rollout files a non-VS Code `codex`
-  process holds open; Copilot CLI sessions from the `process-<ms>-<pid>.log` that names a live process's foreground
-  session, then that session's `workspace.yaml` and `events.jsonl`; Antigravity conversations from the
-  `presence/<id>.lock` files their IDE, App or CLI holds, with `conversation_summaries.db` for titles, folders and run
-  status. Each gets a stand-in window naming the processes whose native window shows it.
-- **Turns:** provider hooks write one small event file per lifecycle event; the collector also tails open Codex
-  rollouts and Copilot event logs with bounded reads. For open Claude chats it tails the transcript for unfinished
-  background work, a scheduled wake-up, and whether the latest prompt came from a person, so a reply to an automatic
-  wake-up with work still pending holds as waiting instead of needing review, unless its turn read agent messages.
-- **Ledger** (`state.py`): per chat, its state, unread reasons and the acknowledgment cutoff; per folder name, the
-  latest turn start; per queue, when it was first seen finished. A project's queue count includes all unfinished queues and
-  those that ended after its last turn (the monitor's end time, or when the tracker saw the end if sooner); when all
-  of them have finished, its most recently active open chat gets a "Queues finished" reason. A finished queue the
-  monitor reports active again with no new jobs done stays finished. Each hour the service forgets finished queues
-  a week after they finished once no count includes them and the monitor no longer lists them, closed chats idle for
-  30 days, and files left by closed windows. A turn a usage limit stopped (Claude's StopFailure with `rate_limit`, with the reset time
-  from the transcript's closing API error; Codex's `task_complete` with `usage_limit_exceeded`) marks the chat
-  `limited` until its next turn starts. For Codex, the collector pairs the stop with that thread's quota readings
-  from the same turn. When only its five-hour window is exhausted, it saves the reset time. With automatic
-  continuation enabled, the service queues a continuation by thread ID once the reset passes and the thread is
-  open in VS Code. Manual and scheduled continuations share a durable delivery record. If delivery was interrupted
-  with an unknown outcome, the manual Continue action can retry it.
+- **Terminals and apps** (`providers.py`). The collector associates each session with the process whose native
+  window can bring it forward. The evidence differs by provider:
+  - Claude Code CLI records a PID in `~/.claude/sessions/<pid>.json`. The collector checks the process start time.
+  - For Codex CLI and the desktop app, it looks for rollout files held open by a `codex` process outside VS Code.
+  - For Copilot CLI, it finds the live process’s foreground session in `process-<ms>-<pid>.log`, then reads that
+    session’s `workspace.yaml` and `events.jsonl`.
+  - An Antigravity IDE, App or CLI process holds a `presence/<id>.lock` file for its conversation.
+    `conversation_summaries.db` supplies the title, folder and run status.
+- **Turns.** Each provider hook writes a small file per lifecycle event. The collector also reads bounded tails
+  of open Codex rollouts and Copilot event logs. For an open Claude chat it checks the transcript for background
+  work, scheduled wake-ups and the source of the last prompt. If an automatic wake-up produces a reply while work
+  is still pending, the chat stays in Waiting. A turn that read agent messages can still bring it up for review.
+- **Ledger** (`state.py`). For each chat the ledger keeps its state, unread reasons and acknowledgment cutoff. For
+  each folder name it keeps the last turn start, and for each queue, when the tracker first saw it finish.
+  A project counts every unfinished queue plus those that finished since its last turn, using the earlier of
+  the monitor’s end time and the tracker’s observation. When the last queue finishes, the most recently active
+  open chat in that project gets a “Queues finished” review. If the monitor reports a finished queue as active
+  again, it takes another completed job to change the tracker’s record.
+
+  Hourly cleanup drops a finished queue after a week if it has fallen out of both the counts and the monitor.
+  It also removes closed chats idle for 30 days and files left by closed windows.
+
+  A usage-limit stop marks a chat `limited` until its next turn. Claude reports `StopFailure` with `rate_limit`
+  and gives the reset time in the transcript’s closing API error. Codex reports `task_complete` with
+  `usage_limit_exceeded`. The collector pairs that event with quota readings from the same thread and turn.
+  If only the five-hour window is exhausted, it saves the reset time. With automatic continuation on, the service
+  can then queue a continuation by thread ID once the reset has passed and the chat is open in VS Code. Manual
+  and scheduled continuations share a durable delivery record. If delivery stops with its outcome unknown, the
+  user can retry with **Continue**.
+
 - **Inventory** (`inventory.py`): every saved Claude and Codex chat, rescanned daily at idle priority, reading only
   appended transcript data. The same pass indexes direct message text in `history-search.sqlite` using SQLite FTS5.
   The search index and inventory track the file identity and byte offset. Replacing or truncating a transcript rebuilds
@@ -67,23 +76,27 @@ state and unread reasons stay separate in the data.
   its continuation files, oldest first) with the same message filter as the History index, keeping each message's
   time, and writes Markdown or self-contained HTML. Output goes to the XDG Downloads folder unless `--output` names a
   file or folder, and never replaces an existing file.
-- **Git** (`git.py`): reads `git status` for each open repository off the collection loop, every 20 s while the Git tab is active and every five minutes otherwise,
-  with `GIT_OPTIONAL_LOCKS=0` so it never takes the index lock an agent's own git command needs. It never fetches.
-  A repository with staged or modified files also gets `git diff HEAD --numstat`. With the panel's Pull requests
-  setting on, each GitHub branch's pull request comes from `gh pr view <branch> --json …`, cached per repository and
-  branch for 5 minutes; a missing `gh`, or its error, is reported on the repository instead.
-- **Usage** (`usage.py`): once a minute, off the collection loop, the usage limits Claude Code caches in
-  `~/.claude.json` (its `limits`, including weekly limits scoped to a model, and those models' shares of the weekly
-  limit) and the `rate_limits` Codex writes into its rollouts. Rollouts are read from a saved offset per file, so after
-  the first read (a few seconds, the last 15 days) each pass reads only new lines. Readings go to
-  `usage-history.json` when they change (a reset time drifting by seconds is the same window), kept 15 days. The
-  summary in the snapshot gives each limit's pace (since the reading in force a day earlier, or since its window began
-  empty), when that pace would use the rest, the share used by its reset, and for weekly limits the points used each
-  local day, split into scoped models and the rest. `agent-bar usage` prints the same summary. With the panel's Read
-  Claude limits setting on (off by default), each pass also reads `GET https://api.anthropic.com/api/oauth/usage`, the
-  undocumented endpoint Claude Code's `/usage` reads, with Claude Code's OAuth access token, every 10 minutes, waiting
-  up to an hour after failures. It never renews the token; an expired one waits for Claude Code. The answer has the
-  same shape as Claude Code's cache, and the newer of the two readings is current.
+- **Git** (`git.py`). Outside the collection loop, Agent Bar reads `git status` for each open repository every
+  20 seconds while the Git tab is active and every five minutes otherwise. It sets `GIT_OPTIONAL_LOCKS=0` so
+  an agent working in the repository can take the index lock. It never fetches. For staged or modified files it
+  also runs `git diff HEAD --numstat`. With **Pull requests** enabled, it runs `gh pr view <branch> --json …`
+  and caches the result for five minutes per repository and branch. If `gh` is missing or fails, the repository
+  row shows the error.
+- **Usage** (`usage.py`). Once a minute, outside the collection loop, the service reads Claude Code’s cached
+  `limits` in `~/.claude.json` (including model-specific weekly limits and shares) and the `rate_limits` in
+  Codex rollouts. The first rollout scan covers 15 days. Each later scan reads from a saved byte offset.
+  `usage-history.json` retains changed readings for 15 days. A reset time drifting by a few seconds still belongs
+  to the same quota window.
+
+  The forecast uses the reading in effect a day ago, or starts from zero at the beginning of the quota window.
+  It estimates when the quota would run out and how much would be used by the reset. Weekly totals also show
+  points used each local day, split by model where reported. The snapshot and `agent-bar usage` carry the same summary.
+
+  With **Read Claude limits** enabled (off by default), the service also checks `GET https://api.anthropic.com/api/oauth/usage`
+  every ten minutes, backing off for up to an hour after failures. This is the undocumented endpoint Claude Code’s
+  `/usage` reads. Agent Bar uses Claude Code’s OAuth access token and leaves renewal to Claude Code. The response
+  has the same shape as the local cache, so the service can use whichever reading is newer.
+
 - **Costs** (`costs.py`): with each usage pass, the token counts in Claude transcripts (every `.jsonl` under
   `~/.claude/projects`, subagents included) and Codex `token_count` events, read from saved offsets like the usage
   pass, priced with `data/prices.json` merged with `~/.config/agent-bar/prices.json`. A Claude reply written once per
@@ -109,25 +122,35 @@ the collection loop, with a 30-second cache. Display numbers follow launch order
 
 ## Hooks
 
-`python -m agent_bar.hook` is the metadata-only observer Claude Code and Codex run on lifecycle events. It records the
-event kind, session, time and folder, never prompt or tool text, and never blocks a turn. Its only output is a note
-about unread agent messages (`additionalContext` on `UserPromptSubmit`). For Claude, a second Stop hook,
-`python -m agent_bar.hook wait`, runs in the background (`asyncRewake`, one-week timeout); with waking on, it exits 2
-once per new message, which Claude Code turns into a wake. `agent-bar install` installs both hooks. It also copies the skill in `agent_bar/data/skills` (how agents use
-messages and tickets) into `~/.claude/skills` and `~/.agents/skills`, only where no skill of that name exists; a
-copy it made holds a `.installed-by-agent-bar` file, and only such copies are updated or removed.
+Claude Code and Codex run `python -m agent_bar.hook` on lifecycle events. It records the event kind, session,
+time and folder, omits prompt and tool text, and never blocks a turn. Its only output is the unread-message note
+(`additionalContext` on `UserPromptSubmit`).
+
+Claude also runs `python -m agent_bar.hook wait` as a background Stop hook (`asyncRewake`, one-week timeout).
+With waking enabled, it exits with status 2 once per new message, which tells Claude Code to wake the chat.
+
+`agent-bar install` sets up both hooks. It copies the messaging skill from `agent_bar/data/skills` into
+`~/.claude/skills` and `~/.agents/skills` where the name is available. The installer marks its own copies with
+`.installed-by-agent-bar` so it knows which ones it can update or remove.
 
 ## Messages
 
-`messages.py` keeps notes in `messages.sqlite`. The CLI writes and reads it directly, identifying the sender from
-`CLAUDE_CODE_SESSION_ID` or `CODEX_THREAD_ID`. Sending needs an open Claude Code or Codex recipient and passes a
-per-pair loop guard, reset by the sender's last human prompt or by the user, plus a per-sender hourly cap, which the
-user can raise to `RAISED_HOURLY` for an hour (`raises` table, `agent-bar raise-limit`). Refused sends are kept with
-the limit they hit and when sending resumes; the summary lists them with each recent sender's count against its own
-limit, and the panel notifies once per new refusal. Files under `wake/` hold each recipient's newest unread id, its
-newest unread urgent id (`<key>.urgent`), the newest it was woken or told about, and its one live waiter's pid. A chat in a turn gets new messages mid-turn only
-as the user's setting allows. With waking on, `codex_wake.py` uses the Codex app-server queue API on send for VS Code
-recipients. It adds one inbox notification, then moves its ID ahead of existing drafts using their current order.
+The CLI reads and writes notes directly in `messages.sqlite` through `messages.py`. The sender’s identity comes
+from `CLAUDE_CODE_SESSION_ID` or `CODEX_THREAD_ID`. The recipient must be an open Claude Code or Codex chat. The
+loop guard counts messages from a sender to a recipient between human prompts to the sender. The user can reset
+that limit. A separate cap counts all the sender’s messages in the past hour. `agent-bar raise-limit` raises that
+cap to `RAISED_HOURLY` for one hour and records the change in the `raises` table.
+
+A refused send records which limit it hit and when the sender can try again. The snapshot lists refusals and each
+recent sender’s count against its own cap. The panel notifies once per new refusal.
+
+Files under `wake/` keep track of which message a recipient still needs to hear about. They record its latest
+unread ID, its latest unread urgent ID (`<key>.urgent`), the last ID that prompted a wake or notification, and the
+PID of its live waiter. The user controls whether a busy Claude chat can receive a message mid-turn.
+
+With waking enabled, `codex_wake.py` uses the local app-server queue API for recipients open in VS Code. It queues
+one inbox notification and moves that ID ahead of any drafts, preserving their order.
+
 If the queue changes during the reorder, it reads the IDs again and retries once. A per-chat lock serializes sends
 and a `.queued` marker coalesces notifications until a turn starts. A busy chat with an empty queue receives a
 `.deferred` marker so the service can queue its notification after the turn if messages are still unread.
@@ -139,22 +162,30 @@ wake (waking off, or idle with no live waiter left).
 
 ## Tickets
 
-`tickets.py` keeps tickets in `tickets.sqlite`, written and read by the CLI directly; the panel runs the same CLI. The
-author comes from `CLAUDE_CODE_SESSION_ID` or `CODEX_THREAD_ID` when set (so an agent cannot write as the user), else
-the user. Each wait is resolved when the ticket is written and stored as data: a reset time from the snapshot's usage
-summary, the ids of the project's outstanding queues from the ledger (by `project_names` of the ticket's folder), a
-time, or another ticket's number. Readiness is computed on listing: times against now, queues against the ledger
-(a forgotten queue finished long ago), tickets against those still open. The service puts the listing in the
-snapshot, rereading it when the database or the queues change, and every 30 s for waits on time. Numbers are never
-reused, so prompts and `ticket:` waits keep pointing at the same ticket; closed tickets are pruned after 30 days.
-A ticket with `deliver_to` is sent rather than kept: the service's loop checks the listing each pass and, off the
-loop, `tickets.deliver_due` sends each ready one with `messages.send` from its author, then closes it, or for a
-`repeat` moves its date wait to the next occurrence counted from the first (`anchor`); after a gap, one overdue send goes out and the other missed ones are skipped. A
-failure is stored on the ticket (`delivery_error`, `tried_at`) and retried after 10 minutes. Only this path sends
-as `user`: `send` refuses that sender otherwise, the user's messages skip the loop guard, and the turn-start note and
-`inbox` call them the user's requests rather than information. Commands reserved for the user (writing a ticket as the
-user, resetting the loop guard) also refuse when a `claude` or `codex` process is among their ancestors
-(`state.agent_ancestor`), since an agent can unset its session variables but not its ancestry.
+The panel calls the same CLI an agent uses. The CLI reads and writes `tickets.sqlite` through `tickets.py`.
+`CLAUDE_CODE_SESSION_ID` or `CODEX_THREAD_ID`, when set, identifies the author. Otherwise it defaults to the user,
+subject to the process check below.
+
+Wait conditions are resolved when the ticket is written. For a quota reset, the service snapshot supplies the
+time. For a project’s queues, the ledger supplies the outstanding IDs using the ticket folder’s `project_names`.
+A wait can also name a time directly or refer to another ticket by number.
+
+Readiness is calculated when tickets are listed. Dates are compared with the clock, queues with the ledger
+(a queue pruned from the ledger finished long ago), and ticket numbers with the open tickets. The service refreshes
+the listing in the snapshot when the database or queues change and every 30 seconds for time-based waits.
+Closed tickets are pruned after 30 days. Their numbers stay retired so a prompt or `ticket:` wait can’t refer to a
+different task later.
+
+A ticket with `deliver_to` names a chat to receive its text. On each pass the service checks which tickets are
+ready. Outside the collection loop, `tickets.deliver_due` sends them with `messages.send` under the author’s
+identity. A successful send closes a one-off ticket. For a `repeat`, the next date is counted from the original
+`anchor`. After a gap, one overdue copy goes out and the schedule advances past the other missed deliveries.
+Failures stay on the ticket (`delivery_error`, `tried_at`) for a retry after ten minutes.
+
+Only scheduled delivery can send as `user`. Those messages bypass the loop guard, and both the turn-start note
+and `inbox` identify them as the user’s requests. Commands reserved for the user, including writing tickets as the
+user and resetting the loop guard, also check process ancestry (`state.agent_ancestor`). An agent can unset a
+session variable. It still has a `claude` or `codex` ancestor.
 
 `ticket start` and `resume` share `bridge.in_folder`: it leaves a request under `resume/` and runs `code <folder>`,
 which focuses the window open there or opens one; the first bridge on that folder takes the request and either
@@ -182,12 +213,12 @@ Each top-bar indicator opens a tab in the same dropdown. GNOME grabs input while
 handles tab switches before the menu manager handles outside clicks. Side panels for checklists, scheduling and
 cluster nodes sit inside the same menu actor so they receive input without closing the dropdown.
 
-Continue, for chats a usage limit stopped, runs `agent-bar continue <key>`: the service queues the note for a Codex chat
-with `codex queue`, or returns it for a Claude chat. The panel then brings the Claude chat forward with
-`navigate --input`, and pastes the note at the end of the input box through a virtual keyboard: copy the draft and put
-the cursor back at its end, then paste the note after a blank line. The keys reach whichever window has focus, so they
-go only while the chat's window has it and no other input has come since. Otherwise the note stays on the clipboard;
-the clipboard's earlier text is restored.
+**Continue** runs `agent-bar continue <key>` for a chat stopped by a usage limit. For Codex the service queues
+the continuation with `codex queue`. For Claude the service returns the text to the panel, which opens the chat
+with `navigate --input`. A virtual keyboard copies any draft, puts the cursor at its end and pastes the continuation
+after a blank line. The panel sends those keys only while the chat’s window has focus and no other input
+has arrived. After a successful paste the panel restores the previous clipboard text. If it can’t safely paste,
+it leaves the continuation on the clipboard for the user.
 
 The Queues tab also reads the collector's `cluster-status.json`, which the panel already loads for the Cluster tab. A
 queue row joins `scheduler.queues[]` by batch tag (GPU units per job, `running_by_host`, `memory_limit_mib`,
@@ -212,8 +243,10 @@ the running code if the new one fails to load or start.
 
 ## VS Code bridge
 
-`agent_bar/data/vscode-bridge` is a dependency-free extension running once per window. It publishes the window's
-state, answers navigation and Source Control requests through per-window request and response files (a navigation
-with `input` also runs Claude's Focus Input, but only when no other Claude chat is on show, since that command focuses
-every one on show), and claims `agent-bar resume` requests for its folder, opening the session through Claude's `claude-vscode.editor.open` command or
-Codex's `openai-codex://route/local/<id>` editor.
+Each VS Code window runs its own copy of the dependency-free extension in `agent_bar/data/vscode-bridge`. It
+publishes the window’s state and handles navigation and Source Control through per-window request and response files.
+For a navigation with `input`, it also runs Claude’s Focus Input command if no other Claude chat is visible.
+That command focuses *every* visible Claude chat, hence the check.
+
+The bridge claims `agent-bar resume` requests for its folder. It reopens Claude sessions through
+`claude-vscode.editor.open` and Codex threads in the `openai-codex://route/local/<id>` editor.

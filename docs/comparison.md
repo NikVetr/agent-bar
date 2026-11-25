@@ -1,12 +1,15 @@
 # How Agent Bar compares
 
-Agent Bar follows chats opened in VS Code, terminals and desktop apps across providers. This comparison focuses
-on session discovery, opening an existing chat, and coordination across chats. The survey reflects project
-documentation reviewed on November 24, 2026.
+Suppose Claude is working in one VS Code window and Codex in another. Can a tool find both chats where you opened
+them? When one finishes, can it take you back to that particular tab? Some tools get you back to a chat only if you
+launched it inside their workspace. The table distinguishes finding a chat from focusing it.
+
+The comparison follows the projects’ documentation as of November 24, 2026.
 
 ## At a glance
 
-✓ has it · ◐ partly · blank: not found in the project's documentation, or not applicable.
+✓ means the project documents the feature. ◐ marks partial support. A blank means the feature doesn’t apply or
+the project’s documentation didn’t establish it.
 
 | | Watches chats opened elsewhere | Live status | Focus the exact chat | Usage limits | Agent messages | Deferred tasks | Scheduled prompts | History search | Linux |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -29,28 +32,33 @@ documentation reviewed on November 24, 2026.
 
 ## Choosing a tool
 
-The README's [Where it fits](../README.md#where-it-fits) chart sums these up.
+If you already have agents open across windows on a GNOME desktop, Agent Bar can take you back to a specific
+VS Code chat, show how much quota remains, and let Claude and Codex exchange notes. If the next piece of work has
+to wait for a quota reset or a project’s queues to finish, you can leave it on a ticket.
 
-- **Monitor existing chats on Linux GNOME.** Agent Bar focuses a specific VS Code chat, tracks quotas and job
-  queues, and lets Claude and Codex exchange messages. Tickets can wait for a quota reset or a project’s queues.
-- **Launch isolated workspaces.** Claude Squad, Agent Deck, Conductor and Orca start agents in their own sessions
-  or worktrees. Several include diff review and merge tools.
-- **Monitor quotas across more providers.** CodexBar and other usage meters focus on limits and spending.
-- **Search or coordinate across machines.** See cass for semantic history search, Beads for shared task graphs,
-  and MCP Agent Mail for file reservations and messaging.
+Other tools suit different ways of working:
 
-The [project list](#projects-surveyed) links to the sources, including tools for other desktops and vendor-specific features.
+- To **launch isolated workspaces**, look at Claude Squad, Agent Deck, Conductor or Orca. They start agents in
+  their own sessions or worktrees, and several include diff review and merge tools.
+- To **track spending or quotas across more providers**, see CodexBar and the other usage meters.
+- To **search or coordinate across machines**, see cass for semantic history search, Beads for shared task graphs,
+  and MCP Agent Mail for file reservations and messages.
+
+The README has a [diagram of these choices](../README.md#where-it-fits). The [project list](#projects-surveyed)
+links to the sources for the comparison.
 
 ## Using Agent Bar with other tools
 
-- **Status lines, usage reports and notifiers** (ccstatusline, Claude HUD, ccusage, peon-ping) read the same local
-  files or run as separate hooks. They work alongside Agent Bar, which keeps existing hooks when it installs its own.
-- **First-party features** stay available. Claude Code's cross-session messaging and Agent Bar's messages are separate
-  channels; Agent Bar's also reaches Codex chats.
-- **Orchestrators** start agents that still write their usual transcripts and run their configured hooks. Agent Bar
-  has not been tested with them. It focuses native windows, so it cannot select a pane or tab inside an
-  orchestrator.
-- **History tools** read the same saved conversations and can run side by side.
+Status lines, usage reports and notifiers such as ccstatusline, Claude HUD, ccusage and peon-ping read the same
+local files or run their own hooks. You can keep using them. Agent Bar preserves existing hooks when it installs
+its own. History tools can likewise read the same saved conversations.
+
+Claude Code’s built-in cross-session messages stay in their own channel. To leave a note for a Codex chat, use
+Agent Bar’s channel.
+
+Agents launched by an orchestrator still write transcripts and run their configured hooks. Integration with those
+tools is untested. Agent Bar can focus a native window, but selecting a pane inside that window requires the
+orchestrator’s own navigation.
 
 ## Projects surveyed
 
