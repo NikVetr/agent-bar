@@ -79,6 +79,13 @@ state and unread reasons stay separate in the data.
   undocumented endpoint Claude Code's `/usage` reads, with Claude Code's OAuth access token, every 10 minutes, waiting
   up to an hour after failures. It never renews the token; an expired one waits for Claude Code. The answer has the
   same shape as Claude Code's cache, and the newer of the two readings is current.
+- **Costs** (`costs.py`): with each usage pass, the token counts in Claude transcripts (every `.jsonl` under
+  `~/.claude/projects`, subagents included) and Codex `token_count` events, read from saved offsets like the usage
+  pass, priced with `data/prices.json` merged with `~/.config/agent-bar/prices.json`. A Claude reply written once per
+  content block counts once (message and request ID). A Codex response counts when its thread's running total moves,
+  using that response's own tokens, so repeated readings and continuation files add nothing. Totals go to
+  `costs.json` per local day, provider and model (15 days) and per chat; a change to the effective prices counts
+  everything again. The snapshot carries the summary and the open chats' totals.
 - **Checklists** (`checklists.py`): every 30 s, the task checklists in the open projects' `tmp/agent/checklists/`,
   parsed only when a file's size or modification time changes, with the open chats seen editing each (`Background`
   notes Claude's Edit/Write/writing Bash calls, `Providers.events` Codex's apply_patch and shell calls, both from the

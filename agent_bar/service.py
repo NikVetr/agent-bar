@@ -10,7 +10,7 @@ import time
 import uuid
 from pathlib import Path
 
-from . import checklists, messages, queue_workflows, tickets, usage
+from . import checklists, costs, messages, queue_workflows, tickets, usage
 from .git import Repositories
 from .providers import Providers, queue_snapshot
 from .state import ROOT, Ledger, atomic_json, project_names
@@ -54,6 +54,8 @@ class Tracker:
         self.tickets, self.tickets_read = None, None
         # The usage limits summary (usage.py), refreshed off the collection loop, and why it last failed.
         self.usage, self.usage_error = None, None
+        # Cost at API prices (costs.py), counted with the usage reads unless turned off in settings.
+        self.costs_enabled, self.costs, self.costs_error, self.cost_reader = True, None, None, costs.Costs()
         # Whether the user turned on Agent Bar's own reads of Claude's limits (off unless chosen).
         self.claude_reads = False
         self.resume_codex = False
@@ -86,10 +88,11 @@ class Tracker:
                 self.messages_enabled = saved.get('messages', True) is not False
                 self.claude_reads = saved.get('claudeUsage', False) is True
                 self.resume_codex = saved.get('resumeCodex', False) is True
+                self.costs_enabled = saved.get('costs', True) is not False
                 self.settings_stamp = stamp
         except FileNotFoundError:
             self.quiet, self.settings_stamp = QUIET, None
-            self.scheduler = self.git_enabled = self.messages_enabled = True
+            self.scheduler = self.git_enabled = self.messages_enabled = self.costs_enabled = True
             self.claude_reads = self.resume_codex = False
         except (OSError, ValueError, TypeError) as error:
             warnings.append(f'Panel settings unreadable: {error}')
@@ -305,6 +308,10 @@ class Tracker:
                 'git': self.git if self.git_enabled else None,
                 'messages': self.message_summary(rows) if self.messages_enabled else None,
                 'usage': self.usage, 'usage_error': self.usage_error,
+                # Each open chat's cost; the full list stays in costs.json.
+                'costs': {**self.costs, 'chats': {key: value for key, value in self.costs['chats'].items() if key in unique}}
+                         if self.costs and self.costs_enabled else None,
+                'costs_error': self.costs_error,
                 'tickets': self.ticket_summary(now),
                 'checklists': self.checklist_counts,
                 'returns': self.ledger.data.get('returns', {}),
@@ -537,6 +544,13 @@ class Tracker:
             except Exception as error:
                 print(f'Usage limits failed: {type(error).__name__}: {error}', flush=True)
                 self.usage_error = f'{type(error).__name__}: {error}'
+            if self.costs_enabled:
+                try:
+                    self.costs = await asyncio.to_thread(self.cost_reader.refresh, Path.home(), self.root)
+                    self.costs_error = None
+                except Exception as error:
+                    print(f'Cost count failed: {type(error).__name__}: {error}', flush=True)
+                    self.costs_error = f'{type(error).__name__}: {error}'
             await asyncio.sleep(USAGE_EVERY)
 
     async def run(self):

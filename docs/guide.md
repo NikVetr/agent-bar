@@ -148,6 +148,14 @@ Claude Code refreshes its figures only when it fetches them, as `/usage` does, s
 [Privacy](../README.md#privacy)). Codex records its own as it works. Copilot and Antigravity record none on this
 computer.
 
+**Cost at API prices** shows what the use Claude Code and Codex recorded on this computer would cost through the API:
+today, the last 7 days, each day's cost by provider, and each model's share. Each chat row also shows its own total.
+Agent Bar counts the token figures the agents already write, including cache reads and writes, with the dated price
+table in `agent_bar/data/prices.json`. Subscription plans are billed differently, so for them the figures are a
+reference, not a bill. Tokens from a model without a price are listed as such; add or correct a price in
+`~/.config/agent-bar/prices.json` with the same shape as the bundled table, and Agent Bar counts again with it.
+**Settings › Integrations › Cost at API prices** turns this off.
+
 ### Info
 
 Choose a project to inspect its hooks or start a chat with a skill. Expand a hook to see when it runs, which action it
@@ -307,6 +315,7 @@ agent-bar host-projects HOST  # projects, jobs, reserved CPU slots and sampled m
 agent-bar git           # git status of repositories holding open projects
 agent-bar info --project .  # project hooks, skills, tracker health, instruction files
 agent-bar usage         # usage limits, with pace, run-out time and use by day
+agent-bar cost          # cost at API prices by day, by model and per chat
 agent-bar ticket list   # tickets and what each waits for
 agent-bar inventory     # rescan saved chats
 agent-bar search-history --repo agent-bar "memory share"  # matching messages as JSON; omit --repo for all folders

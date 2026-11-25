@@ -19,4 +19,4 @@ agent-bar = "agent_bar.__main__:main"
 packages = ["agent_bar"]
 
 [tool.setuptools.package-data]
-agent_bar = ["data/gnome-extension/*", "data/vscode-bridge/*", "data/skills/*/*"]
+agent_bar = ["data/gnome-extension/*", "data/vscode-bridge/*", "data/skills/*/*", "data/prices.json"]

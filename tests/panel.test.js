@@ -905,3 +905,15 @@ test('a chat whose window has focus is not announced', () => {
     f.tracker._notifyReviews([row(5)]);
     assert.deepEqual(shown, []);
 });
+
+test('costs read as dollars and token counts', () => {
+    const f = fixture();
+    const {dollars, tokenCount} = f.context;
+    assert.equal(dollars(0), '$0');
+    assert.equal(dollars(0.004), '<$0.01');
+    assert.equal(dollars(37.2), '$37.20');
+    assert.equal(dollars(2249.74), '$2,250');
+    assert.equal(tokenCount(2_964_089_923), '3.0B');
+    assert.equal(tokenCount(408_013_714), '408.0M');
+    assert.equal(tokenCount(260_774), '261k');
+});

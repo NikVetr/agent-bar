@@ -85,6 +85,9 @@ const SETTINGS = [
         [[true, 'On'], [false, 'Off']]],
     ['Integrations', 'resumeCodex', 'Resume Codex after reset', 'Continue open VS Code threads after their five-hour usage limit resets', false,
         [[true, 'On'], [false, 'Off']]],
+    ['Integrations', 'costs', 'Cost at API prices', 'What the use Claude Code and Codex record here would cost at API prices, from their '
+        + 'local token counts: in Quota and on each chat. Subscription plans are billed differently', true,
+        [[true, 'On'], [false, 'Off']]],
     ['Integrations', 'claudeUsage', 'Read Claude limits', 'Every 10 minutes, ask Claude for your usage limits with Claude Code\'s sign-in, '
         + 'as /usage does (an undocumented endpoint); otherwise they update only when Claude Code fetches them', false,
         [[true, 'On'], [false, 'Off']]],
@@ -1026,6 +1029,17 @@ function failureReport(project, queues, cluster) {
 // dimmed: Claude Code refreshes its figures only when it fetches them, as /usage does.
 const QUOTA_STALE = 6 * 3600;
 // Stacked day bars: the first part (a scoped model, such as Fable) violet, the rest blue.
+// Dollars at API prices, to the cent, or under a cent.
+function dollars(value) {
+    if (!(value > 0)) return '$0';
+    return value < 0.01 ? '<$0.01' : `$${value >= 1000 ? Math.round(value).toLocaleString('en-US') : value.toFixed(2)}`;
+}
+
+// Token counts in millions or billions.
+function tokenCount(value) {
+    return value >= 1e9 ? `${(value / 1e9).toFixed(1)}B` : value >= 1e6 ? `${(value / 1e6).toFixed(1)}M` : `${Math.round(value / 1e3)}k`;
+}
+
 const QUOTA_COLORS = [[0.77, 0.65, 0.95, 0.95], [0.51, 0.73, 0.98, 0.95]];
 
 // A provider's weekly limit for the top bar: what is left, and whether the reading is old or past its reset.
@@ -1074,9 +1088,9 @@ function quotaProjection(limit, asOf, now = Date.now() / 1000) {
 
 // Bars of a weekly limit's use by day, each stacked by its parts, scaled to the busiest day (or 20 points), with
 // room under them for day names drawn by the caller.
-function paintDays(cr, width, height, days) {
+function paintDays(cr, width, height, days, floor = 20) {
     if (!days.length) return;
-    const most = Math.max(20, ...days.map(day => day.used));
+    const most = Math.max(floor, ...days.map(day => day.used));
     const slot = width / days.length, bar = Math.min(28, slot * 0.6);
     days.forEach((day, index) => {
         let top = height;
@@ -5033,10 +5047,10 @@ class Tracker {
         const usage = snapshot.usage || {};
         if (snapshot.usage_error) this._section.addMenuItem(this._item(`Usage limits unreadable: ${snapshot.usage_error}`, 'tracker-warning'));
         const providers = Object.keys(PROVIDERS).filter(provider => usage[provider]?.limits?.length);
-        if (!providers.length) {
+        if (!providers.length)
             this._section.addMenuItem(this._item('Neither Claude Code nor Codex has recorded its limits on this computer yet', 'tracker-empty'));
-            return;
-        }
+        this._renderCosts(snapshot);
+        if (!providers.length) return;
         const now = Date.now() / 1000;
         const order = limit => limit.key === 'weekly' ? 0 : limit.key.startsWith('weekly:') ? 1 : limit.key === 'session' ? 2 : 3;
         for (const provider of providers) {
@@ -5056,6 +5070,61 @@ class Tracker {
             }
             for (const limit of [...value.limits].sort((a, b) => order(a) - order(b))) body.addMenuItem(this._quotaLimit(limit, value.as_of, now));
         }
+    }
+
+    // What recorded use would cost at API prices: today and the last 7 days, each day's cost by provider, each model's
+    // share, and tokens from models without a price.
+    _renderCosts(snapshot) {
+        if (!this._setting('costs')) return;
+        if (snapshot.costs_error) this._section.addMenuItem(this._item(`Costs uncounted: ${snapshot.costs_error}`, 'tracker-warning'));
+        const costs = snapshot.costs;
+        if (!costs) return;
+        const body = this._projectSection('quota:cost', 'Cost at API prices', `prices of ${costs.checked}`,
+            `${dollars(costs.today)} today · ${dollars(costs.week)} in 7 days`, false);
+        body.addMenuItem(this._quotaNote('What the use Claude Code and Codex recorded on this computer would cost at API prices, from '
+            + 'their token counts, including cache reads and writes. Subscription plans are billed differently.'));
+        const item = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
+        item._ornamentLabel?.hide();
+        item.add_style_class_name('tracker-queue-row');
+        const box = new St.BoxLayout({vertical: true, x_expand: true, style_class: 'tracker-quota-limit'});
+        item.add_child(box);
+        const small = (text, style = 'tracker-quota-small', wrap = false) => {
+            const label = new St.Label({text, style_class: wrap ? `${style} tracker-quota-wrap` : style, y_align: Clutter.ActorAlign.CENTER});
+            label.clutter_text.ellipsize = wrap ? Pango.EllipsizeMode.NONE : Pango.EllipsizeMode.END;
+            label.clutter_text.line_wrap = wrap;
+            return label;
+        };
+        const recent = costs.days.slice(-7).map(day => {
+            const parts = [['Claude', day.claude || 0], ['Codex', day.codex || 0]];
+            const name = new Date(`${day.day}T12:00:00`).toLocaleDateString('en-US', {weekday: 'short'});
+            return {day: name, used: parts[0][1] + parts[1][1], parts};
+        });
+        if (recent.length) {
+            const width = 420, height = 64;
+            const chart = this._drawing((cr, w, h) => paintDays(cr, w, h, recent, 1),
+                {width, height, style_class: 'tracker-quota-chart', x_align: Clutter.ActorAlign.START});
+            this._tooltip(chart, recent.map(day => `${day.day}: ${dollars(day.used)} (Claude ${dollars(day.parts[0][1])}, Codex ${dollars(day.parts[1][1])})`).join('\n'));
+            box.add_child(chart);
+            const names = new St.BoxLayout({style_class: 'tracker-quota-days', x_align: Clutter.ActorAlign.START});
+            for (const day of recent) names.add_child(new St.Label({text: day.day, style_class: 'tracker-quota-day',
+                style: `width: ${Math.floor(width / recent.length)}px;`}));
+            box.add_child(names);
+            const legend = new St.BoxLayout({style_class: 'tracker-quota-legend'});
+            legend.add_child(small('Each day\'s cost', 'tracker-muted tracker-quota-small'));
+            ['Claude', 'Codex'].forEach((name, index) => {
+                const [r, g, b] = QUOTA_COLORS[index].map(c => Math.round(c * 255));
+                legend.add_child(new St.Label({text: '■', style: `color: rgb(${r}, ${g}, ${b});`, y_align: Clutter.ActorAlign.CENTER}));
+                legend.add_child(small(name));
+            });
+            box.add_child(legend);
+        }
+        for (const model of costs.models)
+            box.add_child(small(`${model.model}: ${dollars(model.cost)} for ${tokenCount(model.tokens)} tokens in 7 days`, 'tracker-detail'));
+        const unpriced = Object.entries(costs.unpriced || {});
+        if (unpriced.length)
+            box.add_child(small(`Without a price: ${unpriced.map(([name, tokens]) => `${name.split(':').pop()} (${tokenCount(tokens)} tokens)`).join(', ')}. `
+                + 'Add one in ~/.config/agent-bar/prices.json.', 'tracker-detail tracker-attention', true));
+        body.addMenuItem(item);
     }
 
     _quotaNote(text, style = 'tracker-detail') {
@@ -5774,7 +5843,9 @@ class Tracker {
         const state = row.state.charAt(0).toUpperCase() + row.state.slice(1);
         const surface = row.surface ? ` · ${row.surface === 'terminal' ? 'terminal' : row.surface_label}` : '';
         const letters = snapshot.messages?.unread[row.key];
-        const detail = new St.Label({text: `${state} · ${age(row.state_at)}${surface}${letters ? ` · ✉ ${letters} unread` : ''}${action}`,
+        const cost = this._setting('costs') ? snapshot.costs?.chats?.[row.key] : undefined;
+        const spent = cost === undefined ? '' : ` · ${dollars(cost)} at API prices`;
+        const detail = new St.Label({text: `${state} · ${age(row.state_at)}${surface}${letters ? ` · ✉ ${letters} unread` : ''}${spent}${action}`,
             style_class: `tracker-detail tracker-${stateStyle(row.state)}`});
         detail.clutter_text.ellipsize = Pango.EllipsizeMode.END;
         box.add_child(detail);

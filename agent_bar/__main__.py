@@ -50,6 +50,7 @@ def main():
     info = subs.add_parser('info', help='skills, hooks, Agent Bar health and instruction files (JSON)')
     info.add_argument('--project', help='inspect hooks for this folder (default: user scope)')
     subs.add_parser('usage', help='usage limits Claude Code and Codex recorded, with pace, run-out time and use by day (JSON)')
+    subs.add_parser('cost', help='what recorded use would cost at API prices: by day, by model, and per chat (JSON)')
     resume = subs.add_parser('resume', help='reopen an inventoried conversation in VS Code')
     resume.add_argument('key')
     subs.add_parser('agents', help='open conversations a message can go to')
@@ -143,6 +144,12 @@ def main():
         from . import usage
         print(json.dumps(usage.report(), ensure_ascii=False))
         return
+    if name == 'cost':
+        from . import costs
+        try: result = costs.report()
+        except ValueError as error: result = {'ok': False, 'error': str(error)}
+        print(json.dumps(result, ensure_ascii=False))
+        sys.exit(0 if result['ok'] else 1)
     if name in ['inventory', 'resume']:
         from . import inventory
         try: result = inventory.refresh() if name == 'inventory' else inventory.resume(args['key'])

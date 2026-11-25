@@ -21,8 +21,9 @@ ends. Nothing leaves your computer unless you turn on reading Claude's usage lim
 - **One glance, one click.** Counts per provider of chats needing review, working and waiting, a button for each chat
   that needs you, and a desktop notification as each one comes to need you. A click brings the exact VS Code tab or
   sidebar chat forward, maximized, and a second click sends it back.
-- **Usage limits with a forecast.** Claude and Codex 5-hour, weekly and per-model limits, the pace of use, and when
-  that pace would run out compared with the reset. A setting lets Codex chats in VS Code that a five-hour limit
+- **Usage limits and cost.** Claude and Codex 5-hour, weekly and per-model limits, the pace of use, and when that
+  pace would run out compared with the reset. What your use would cost at API prices, per day, per model and per
+  chat, counted from the agents' own token records. A setting lets Codex chats in VS Code that a five-hour limit
   stopped continue on their own when it resets.
 - **Agents that coordinate.** Agents in different chats, projects and providers can message each other, and idle
   chats can be woken to read them. Tickets hold work for later, until a usage limit resets, job queues finish, a time
@@ -64,7 +65,7 @@ The [user guide](docs/guide.md) describes every part in detail.
 | --- | --- | --- | --- | --- |
 | Where | VS Code, terminal | VS Code (tabs and sidebar), terminal, ChatGPT desktop app | terminal | IDE, App, CLI (`agy`) |
 | Status and review | yes | yes | yes | yes |
-| Usage limits | yes | yes | | |
+| Usage limits and cost | yes | yes | | |
 | Messages and scheduled messages | yes; wakes idle chats | yes; wakes chats open in VS Code | | |
 | History search and resume | yes | yes | | |
 
