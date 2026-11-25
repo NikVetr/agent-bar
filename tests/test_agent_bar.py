@@ -27,7 +27,7 @@ class TrackerTests(unittest.TestCase):
             report.parent.mkdir(parents=True)
             updated = int(time.time())
             header = 'record_type pool_id host_id resource_sample_epoch telemetry_state queue_id state cpu_units current_memory_mib'
-            lines = [header, f'agent pool node {updated} ok - - - -',
+            lines = [header, f'daemon pool node {updated} ok - - - -',
                      'reservation pool node - - a running 3 150', 'reservation pool node - - b running 1 50',
                      'reservation pool node - - c uncertain 2 0']
             report.write_text('\n'.join(line.replace(' ', '\t') for line in lines))
@@ -44,6 +44,10 @@ class TrackerTests(unittest.TestCase):
                 {'project': 'two', 'jobs': 1, 'cpu_slots': 2, 'memory_mib': None}])
             with unittest.mock.patch('time.time', return_value=updated + 300), self.assertRaisesRegex(ValueError, 'node report is stale'):
                 host_projects('node', {**snapshot, 'updated': updated + 300})
+            # The per-host process is the host daemon; a report naming it otherwise is not this pool's.
+            report.write_text('\n'.join(line.replace(' ', '\t') for line in [header, f'agent pool node {updated} ok - - - -']))
+            with self.assertRaisesRegex(ValueError, 'current pool'):
+                host_projects('node', snapshot)
             snapshot['scheduler']['pool']['id'] = 'new'
             with self.assertRaisesRegex(ValueError, 'current pool'):
                 host_projects('node', snapshot)

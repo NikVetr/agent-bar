@@ -62,10 +62,11 @@ def read_reservations(snapshot, host_id, pool, projects):
     table = Path(mount['root']) / '.parallel-workers/adaptive/last-known' / f'{host_id}.tsv'
     with table.open() as stream:
         rows = csv.DictReader(stream, delimiter='\t')
-        agent = next(rows, None)
-        if not agent or (agent.get('record_type'), agent.get('pool_id'), agent.get('host_id')) != ('agent', pool['id'], host_id):
+        # The host daemon's own row comes first, then one row per reservation.
+        daemon = next(rows, None)
+        if not daemon or (daemon.get('record_type'), daemon.get('pool_id'), daemon.get('host_id')) != ('daemon', pool['id'], host_id):
             raise ValueError('The node report does not match the current pool')
-        updated = int(agent.get('resource_sample_epoch') or 0)
+        updated = int(daemon.get('resource_sample_epoch') or 0)
         now = time.time()
         if not updated or abs(now - updated) > 60:
             raise ValueError('The node report is stale')
@@ -80,7 +81,7 @@ def read_reservations(snapshot, host_id, pool, projects):
             entry['jobs'] += 1
             entry['cpu_slots'] += int(row['cpu_units'])
             memory = row.get('current_memory_mib')
-            if agent.get('telemetry_state') != 'ok' or row['state'] != 'running' or not memory or int(memory) < 0:
+            if daemon.get('telemetry_state') != 'ok' or row['state'] != 'running' or not memory or int(memory) < 0:
                 entry['memory_mib'] = None
             elif entry['memory_mib'] is not None:
                 entry['memory_mib'] += int(memory)
