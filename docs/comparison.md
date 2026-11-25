@@ -29,6 +29,8 @@ documentation reviewed on November 24, 2026.
 
 ## Choosing a tool
 
+The README's [Where it fits](../README.md#where-it-fits) chart sums these up.
+
 - **Monitor existing chats on Linux GNOME.** Agent Bar focuses a specific VS Code chat, tracks quotas and job
   queues, and lets Claude and Codex exchange messages. Tickets can wait for a quota reset or a project’s queues.
 - **Launch isolated workspaces.** Claude Squad, Agent Deck, Conductor and Orca start agents in their own sessions

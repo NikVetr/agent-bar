@@ -6,7 +6,10 @@ Agent Bar shows which coding agents are working, waiting or ready for review in 
 bring its window, editor tab or sidebar forward. It tracks the chats you already use in VS Code, terminals and
 desktop apps. Optional integrations add GitHub pull requests, Claude quota checks and ROTA job queues.
 
-<p align="center"><img src="docs/images/click-to-chat.gif" alt="Clicking a chat's review button brings its VS Code window forward, maximized, with that chat showing; clicking again sends it back" width="820"></p>
+<p align="center"><picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/click-to-chat-dark.webp">
+  <img src="docs/images/click-to-chat-light.webp" alt="Clicking a chat's review button brings its VS Code window forward, maximized, with that chat showing; clicking the chat again in the dropdown sends the window back" width="820">
+</picture></p>
 
 ## A tour
 
@@ -24,12 +27,21 @@ prices. History searches every saved Claude Code and Codex conversation, with co
 export.
 
 <p><img src="docs/images/chats.webp" alt="The Chats tab" width="49%"> <img src="docs/images/history.webp" alt="History search with context" width="49%"></p>
-<p><img src="docs/images/history-search.gif" alt="Searching History for words in saved conversations, then showing a hit's context" width="820"></p>
+Search finds the words you or an agent wrote in any saved chat. **Show context** opens a hit in place, and the arrows
+step through every match.
+
+<p align="center"><picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/history-search-dark.webp">
+  <img src="docs/images/history-search-light.webp" alt="Searching History for words in saved conversations, then showing a hit's context" width="820">
+</picture></p>
 
 **Messages and tickets.** Send notes between chats or schedule a message for later. Create a project ticket for work that
 can start at a given time, after a usage limit resets or when the project’s queues finish.
 
-<p><img src="docs/images/agent-messages.gif" alt="A Codex chat sends a Claude Code chat a message with agent-bar send; the Claude chat sees it at its next turn" width="820"></p>
+<p align="center"><picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/agent-messages-dark.webp">
+  <img src="docs/images/agent-messages-light.webp" alt="A Codex chat sends a Claude Code chat a message with agent-bar send; the Claude chat sees it at its next turn" width="820">
+</picture></p>
 <p><img src="docs/images/messages.webp" alt="The Messages tab" width="49%"> <img src="docs/images/tickets.webp" alt="The Tickets tab" width="49%"></p>
 
 **Quota, Git and Info.** Each provider's 5-hour, weekly and per-model limits, the pace, and when you would run out
@@ -53,8 +65,27 @@ The [user guide](docs/guide.md) describes every part in detail.
 | Where | VS Code, terminal | VS Code (tabs and sidebar), terminal, ChatGPT desktop app | terminal | IDE, App, CLI (`agy`) |
 | Status and review | yes | yes | yes | yes |
 | Usage limits and cost | yes | yes | | |
-| Messages and scheduled messages | yes; wakes idle chats | yes; wakes chats open in VS Code | | |
+| Messages and scheduled messages | yes; can wake idle chats (opt-in) | yes; can wake chats open in VS Code (opt-in) | | |
 | History search, resume and export | yes | yes | | |
+
+## Where it fits
+
+```mermaid
+flowchart TD
+    start(["How do you run your coding agents?"])
+    start -->|"A tool starts and runs them"| orch["Orchestrators and session managers<br/>Agent Deck, Claude Squad, Conductor, Orca"]
+    start -->|"Inside one vendor's app"| first["First-party views<br/>Claude Code agent view, Codex app,<br/>VS Code Agents window"]
+    start -->|"In the VS Code windows, terminals<br/>and apps you already use"| need{"What do you need most?"}
+    need -->|"Limits and spending"| meters["Usage meters<br/>CodexBar, ccusage, Claude HUD"]
+    need -->|"Search saved chats"| search["History tools<br/>cass, Agent Sessions,<br/>Agent Bar's History tab"]
+    need -->|"Which chats need you, one click to each,<br/>and agents messaging each other"| desk{"Which desktop?"}
+    desk -->|"Linux, GNOME"| ab(["Agent Bar"])
+    desk -->|"macOS"| mac["Open Island, Vibe Island<br/>(Agent Bar's menu bar planned)"]
+    classDef ours fill:#1f6feb,stroke:#1f6feb,color:#ffffff
+    class ab ours
+```
+
+[How Agent Bar compares](docs/comparison.md) has the feature table and the projects behind each box.
 
 ## Platforms
 
@@ -101,7 +132,8 @@ again, leaving your history and settings (`--purge` deletes those too).
 
 ## Privacy
 
-Agent Bar stores state in `~/.local/state/agent-bar` and settings in `~/.config/agent-bar`. The local History index
+Agent Bar stores state in `~/.local/state/agent-bar`, settings in `~/.config/agent-bar`, and a build of its VS Code
+bridge in `~/.cache/agent-bar`. The local History index
 contains user and agent messages. It excludes tool calls, tool results, reasoning and client context. Hooks record
 turn events without message text.
 
