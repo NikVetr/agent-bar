@@ -71,7 +71,7 @@ with no account, remote server or telemetry.
   repeating messages into open Claude Code and Codex chats from one local list.
 - **One picture of the workspace.** Git status of every repository holding an open chat, each project's active hooks,
   skills and instruction files, and progress on the task checklists agents keep in the repository. Optionally, job
-  queues and cluster nodes from the Rota job scheduler.
+  queues and cluster nodes from the ROTA job scheduler.
 - **Linux desktop.** Session monitors in the menu bar are almost all for macOS, and the GNOME Shell extensions on
   extensions.gnome.org show usage only, for GNOME 45 and later.
 - **Cost tied to each chat.** Like ccusage and CodexBar, Agent Bar prices recorded token use at API rates, by day

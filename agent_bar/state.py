@@ -161,7 +161,7 @@ class Ledger:
         counts = lambda queue: [queue.get(name) for name in ['done', 'total', 'failed', 'rerun']]
         changed = 'done' in previous and counts(value) != counts(previous)
         if value['state'] not in TERMINAL:
-            # Rota flips some finished batches to DRAINING and back with no worker running and nothing
+            # ROTA flips some finished batches to DRAINING and back with no worker running and nothing
             # done, so such a report keeps the finish; running workers or new counts reopen the queue.
             idle = not sum(int(n) for n in (value.get('workers') or '').split(' ')[0].split('-') if n.isdigit())
             if finished is not None and previous['state'] != 'UNLISTED' and idle and not changed:

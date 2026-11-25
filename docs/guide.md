@@ -9,7 +9,7 @@ how the parts work internally, see [architecture.md](architecture.md).
 - [Messages between agents](#messages-between-agents)
 - [Tickets and scheduled messages](#tickets-and-scheduled-messages)
 - [Task checklists](#task-checklists)
-- [The Rota job scheduler (optional)](#the-rota-job-scheduler-optional)
+- [The ROTA job scheduler (optional)](#the-rota-job-scheduler-optional)
 - [Command line](#command-line)
 - [Troubleshooting](#troubleshooting)
 
@@ -84,7 +84,7 @@ Downloads folder and opens the file (see [History](#history)).
 
 ### Queues
 
-Job queues from Rota, by project, with progress, ETA and failed jobs (see
+Job queues from ROTA, by project, with progress, ETA and failed jobs (see
 [the scheduler integration](#the-rota-job-scheduler-optional)). A project's finished queues count until a
 chat there starts a turn, or until you press Clear beside the project. **Adjust** on a queue, and under **Pool and
 hosts**, changes what the scheduler offers there.
@@ -289,9 +289,9 @@ What Agent Bar reads, and how:
 The service scans the open projects every 30 seconds and writes the result to `checklists.json`, which the panel reads
 when the column opens; files are reread only when they change.
 
-## The Rota job scheduler (optional)
+## The ROTA job scheduler (optional)
 
-The Queues tab, the Q count and the cluster indicator read the files the Rota job scheduler writes in
+The Queues tab, the Q count and the cluster indicator read the files the ROTA job scheduler writes in
 `~/.local/state/rota`. Without it they stay out of the way; **Settings › Integrations** turns them off
 entirely.
 
@@ -305,7 +305,7 @@ thresholds; with only warnings picked, it appears just when one fires.
 
 Clicking it opens the **Cluster** tab, headed by the cluster's CPU, busy cores and memory, which names each warning's
 host. **Snooze** keeps a warning off the top bar until it clears, or for at most a time you type (such as 5d or 120h);
-Rota keeps checking the host meanwhile. The tab also lists:
+ROTA keeps checking the host meanwhile. The tab also lists:
 
 - each host's cores, memory and disks. Hover a node name for a second to list the projects using its job slots.
   Click it to open a side dropdown for the node:
@@ -317,7 +317,7 @@ Rota keeps checking the host meanwhile. The tab also lists:
   - the node's state: why it is unavailable, its owner's activity, its budget (against its base when lowered), load,
     swap and the shared-drive mount.
   - its last day: job failures, holds (with a button that copies the command that lifts one, to run once the cause
-    is fixed) and times out of reach, from Rota's `events.jsonl`, and the latest memory-pressure sample of the last
+    is fixed) and times out of reach, from ROTA's `events.jsonl`, and the latest memory-pressure sample of the last
     hour with the processes holding the most memory, from `memory-events.jsonl`.
 
   The dropdown refreshes about every 15 seconds while open.
@@ -328,7 +328,7 @@ Rota keeps checking the host meanwhile. The tab also lists:
 
 ### Scheduler controls
 
-When Rota's `rota` command is installed (on `PATH` or in `~/.local/bin`), the Queues tab also changes
+When ROTA's `rota` command is installed (on `PATH` or in `~/.local/bin`), the Queues tab also changes
 the scheduler. **Adjust** opens what `rota control describe` offers for a queue, the pool or a host: actions such as
 pausing a queue or draining the pool as buttons, and settings such as priority, worker cap, memory and a host's budget
 one to a row. Hovering a setting's ⓘ or a button says what it does, or why it is unavailable now. Edited settings go

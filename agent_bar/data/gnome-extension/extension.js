@@ -18,12 +18,12 @@ const INTERFACE = `<node><interface name="io.github.nikvetr.AgentBar">
 const UUID = 'agent-bar@nikvetr.github.io';
 const EMPTY = 'Empty window';  // The bridge's workspace name for a window without a folder.
 const CONFIG = GLib.build_filenamev([GLib.get_home_dir(), '.config/agent-bar/settings.json']);
-// Written by the Rota collector; the panel never contacts cluster hosts itself.
+// Written by the ROTA collector; the panel never contacts cluster hosts itself.
 const CLUSTER = GLib.build_filenamev([GLib.get_home_dir(), '.local/state/rota/cluster-status.json']);
 const CLUSTER_STALE = 30;
 // Seconds of shared-drive readings the panel keeps for its sparklines.
 const SHARED_WINDOW = 600;
-// Where the Queues tab sends someone without Rota; it has no public home yet.
+// Where the Queues tab sends someone without ROTA; it has no public home yet.
 const SCHEDULER_URL = null;
 // [section, key, label, description, default, [[value, caption]...]]; a list default makes the setting
 // multiple-choice. The service reads quietMinutes.
@@ -77,7 +77,7 @@ const SETTINGS = [
         [['html', 'HTML'], ['markdown', 'Markdown']]],
     ['Dropdown', 'quietMinutes', 'Waiting after', 'An open turn with no activity this long shows as waiting', 5,
         [[2, '2 min'], [5, '5 min'], [10, '10 min'], [0, 'Never']]],
-    ['Integrations', 'scheduler', 'Job scheduler', 'Rota: Queues tab, Q count, cluster indicator, queues-finished reviews', true,
+    ['Integrations', 'scheduler', 'Job scheduler', 'ROTA: Queues tab, Q count, cluster indicator, queues-finished reviews', true,
         [[true, 'On'], [false, 'Off']]],
     ['Integrations', 'git', 'Git status', 'Git tab: branch, uncommitted changes and unpushed commits of open projects', true,
         [[true, 'On'], [false, 'Off']]],
@@ -808,7 +808,7 @@ function bytes(value) {
 }
 
 // Busy allotted cores over allotted cores, and memory used over total, for reachable hosts in scope. A host's
-// allotted cores are the job slots Rota allows it (its cores when the snapshot gives none); the rest are
+// allotted cores are the job slots ROTA allows it (its cores when the snapshot gives none); the rest are
 // reserved, and take the host's load first, so only load beyond them keeps allotted cores busy, up to all of them.
 // `slotted` says every counted host had slots; `down` names every host that is unreachable or has lost the shared
 // mount.
@@ -1229,7 +1229,7 @@ function failureReport(project, queues, cluster) {
     const down = clusterTotals(cluster).down;
     if (down.length) lines.push(`Hosts unreachable or without the shared mount now: ${down.join(', ')}.`);
     lines.push('Please review those jobs, then submit the remaining work with reconcile_queue_batch.sh as the '
-        + 'Rota documentation describes, without resubmitting overlapping work.');
+        + 'ROTA documentation describes, without resubmitting overlapping work.');
     return lines.join('\n');
 }
 
@@ -1812,7 +1812,7 @@ class Tracker {
         this._ticketCount.text = `${count}`;
     }
 
-    // Whether queue counts show: the scheduler integration is on and Rota is set up here.
+    // Whether queue counts show: the scheduler integration is on and ROTA is set up here.
     _queuesShown(snapshot) {
         return this._setting('queueBar') && this._setting('scheduler') && (snapshot?.scheduler ?? 'on') === 'on';
     }
@@ -1929,7 +1929,7 @@ class Tracker {
         row(top, [text('2 / 14', 'tracker-help-bright'), text('0 / 3', 'tracker-quiet')],
             `Bright and bold when something needs you: a reply to review${scheduler ? ', or a queue that finished' : ''}. Gray when nothing has.`);
         row(top, [text(scheduler ? 'Q 3 / 9 ?' : '? / ?', 'tracker-help-bright')], scheduler
-            ? 'A ? means its source stopped updating: the Rota queue snapshot (start its monitor), or the agent-bar service when every count shows ?.'
+            ? 'A ? means its source stopped updating: the ROTA queue snapshot (start its monitor), or the agent-bar service when every count shows ?.'
             : 'A ? means the agent-bar service stopped updating.');
         row(top, [text('✳', 'tracker-claude'), text('12%', 'tracker-quota-attention'), text('⌘', 'tracker-codex'), text('64%', 'tracker-quota-muted')],
             'What is left of each provider\'s weekly usage limit: amber under 25%, red under 10%, dimmed when the reading is over '
@@ -1952,7 +1952,7 @@ class Tracker {
             'Cluster CPU: busy cores over the cores allotted to jobs (each host\'s job slots). A host\'s other cores are '
             + 'reserved and take its load first; only load beyond them counts, up to full. '
             + 'Gray under 50%, blue from 50%, amber from 90%. Settings › Cluster adds memory and the fullest disk.'
-            + (this._cluster ? '' : ' Shown once the Rota collector runs.'));
+            + (this._cluster ? '' : ' Shown once the ROTA collector runs.'));
         if (scheduler) row(top, [this._glyph('disk', 0.92), this._glyph('memory'), this._glyph('down', null, 'failed'),
             this._glyph('unmounted', null, 'failed'), text('+1', 'tracker-failed')],
             'A cluster warning, by kind: a drive nearly full (filled as far as it is), memory pressure, a host unreachable, '
@@ -2958,7 +2958,7 @@ class Tracker {
             stat.graph?.queue_repaint();
         }
         view.sharedFigures.visible = figures.some(row => row.text);
-        view.footer.label.text = `From the Rota collector · CPU over ${totals.slotted ? 'job slots'
+        view.footer.label.text = `From the ROTA collector · CPU over ${totals.slotted ? 'job slots'
             : 'job slots, or cores where none are set'}, ${this._setting('clusterHosts') === 'all' ? 'all hosts' : 'without this desktop'}`;
     }
 
@@ -3515,7 +3515,7 @@ class Tracker {
             tabs.add_child(button);
         }
         control(tabs);
-        // Quota and Cluster have nothing to search, sort or filter, nor the Queues tab without Rota.
+        // Quota and Cluster have nothing to search, sort or filter, nor the Queues tab without ROTA.
         const bare = ['quota', 'cluster'].includes(this._view) || this._view === 'queues' && snapshot?.scheduler === 'missing';
         control(this._search).visible = !page && !bare;
         // Sort and filter each open a list under their button, over the rows.
@@ -3757,13 +3757,13 @@ class Tracker {
         if (!snapshot) return;
         const query = this._search.text.toLowerCase();
         this._footer.label.text = {
-            queues: `From Rota · updated ${age(snapshot.queue_updated)} · counts reset at each turn in the project`,
+            queues: `From ROTA · updated ${age(snapshot.queue_updated)} · counts reset at each turn in the project`,
             history: 'Saved conversations, rescanned daily · click one to resume it in its folder',
             messages: 'A chat sees its unread count at its next turn start · at most 10 to one chat between your prompts',
             tickets: 'Agents write them with `agent-bar ticket add` · ready once what each waits for has passed',
             info: 'Read from local files when this tab opens, and again after 30 s · nothing polls in the background',
             cluster: '',
-            cluster: 'From the Rota collector',
+            cluster: 'From the ROTA collector',
             quota: `As Claude Code and Codex record them here, read each minute${this._setting('claudeUsage') ? ', and from Claude every 10 min' : ''} · Copilot and Antigravity record none here`,
             git: `Read-only git status of open projects${snapshot.git ? `, ${age(snapshot.git.updated)}` : ''} · ↑↓ as of the last fetch · click for Source Control`,
         }[this._view] || `Top bar: needs review / open chats${this._queuesShown(snapshot) ? '   ·   Q finished / outstanding since last turn' : ''}`;
@@ -3928,7 +3928,7 @@ class Tracker {
         this._keysAt = GLib.get_monotonic_time();
     }
 
-    // The tab without Rota: how to get it, or remove the tab (Settings › Integrations restores it).
+    // The tab without ROTA: how to get it, or remove the tab (Settings › Integrations restores it).
     _renderSchedulerMissing() {
         this._footer.label.text = 'Settings › Integrations › Job scheduler turns this tab on or off';
         const item = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false, style_class: 'tracker-placeholder'});
@@ -3936,7 +3936,7 @@ class Tracker {
         const box = new St.BoxLayout({vertical: true, x_expand: true});
         box.add_child(new St.Label({text: 'Job scheduler not installed', style_class: 'tracker-title'}));
         const text = new St.Label({style_class: 'tracker-help-text',
-            text: 'Queues, the Q count and the cluster indicator come from the Rota job scheduler, '
+            text: 'Queues, the Q count and the cluster indicator come from the ROTA job scheduler, '
                 + 'which is not set up on this computer (no ~/.local/state/rota). Everything else works without it.'});
         text.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
         text.clutter_text.line_wrap = true;
@@ -4095,7 +4095,7 @@ class Tracker {
             `${q.project} ${q.label}`.toLowerCase().includes(query));
         const groups = queueGroups(queues, snapshot.queue_counts, this._setting('queueOrder'), this._queueFilter);
         if (Date.now() / 1000 - snapshot.queue_updated > 120)
-            this._section.addMenuItem(this._item('Snapshot stale · start the Rota monitor to refresh queue progress', 'tracker-warning'));
+            this._section.addMenuItem(this._item('Snapshot stale · start the ROTA monitor to refresh queue progress', 'tracker-warning'));
         if (Date.now() - this._controlsAt > 10000) this._loadControls();
         /** @type {string[]} */
         this._dependencyIds = groups.flatMap(([, items]) => items.map(/** @param {{id:string}} q */ q => q.id));

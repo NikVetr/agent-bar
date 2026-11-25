@@ -10,7 +10,7 @@ flowchart LR
     V[VS Code bridge, one per window] --> S[agent-bar service]
     H[Claude and Codex hooks] --> S
     F[Session files: Claude records, Codex rollouts, Copilot logs, Antigravity locks] --> S
-    Q[Rota snapshots, optional] --> S
+    Q[ROTA snapshots, optional] --> S
     G -->|describe, apply| C[rota control, optional]
     R[Git repositories, read-only] --> S
     S --> L[(ledger.json)]
@@ -178,7 +178,7 @@ sample, and sums reserved CPU units and current sampled memory by queue. Queue I
 `scheduler.queues` for the project and batch tag, and the tag joins its `queues` for name, start, progress and ETA.
 When the node has no current report, the reply says why in `allocations_error` and keeps the rest. The node's state
 comes from the snapshot's host and scheduler host rows and the report's daemon row. Its events are the last day's
-records in Rota's `events.jsonl` that name it (failed jobs, holds, outages) and its latest entry of the last hour in
+records in ROTA's `events.jsonl` that name it (failed jobs, holds, outages) and its latest entry of the last hour in
 `memory-events.jsonl`; only the end of each append-only log is read.
 
 `agent_bar/data/gnome-extension` renders the snapshot in GNOME Shell 42 and runs the `agent-bar` CLI for actions.

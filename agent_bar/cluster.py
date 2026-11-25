@@ -1,5 +1,5 @@
 """One cluster node as the scheduler reports it: projects and queues holding its job slots, its state, and recent
-events there, from the Rota collector's snapshot, the scheduler's per-host reservation report and Rota's event logs."""
+events there, from the ROTA collector's snapshot, the scheduler's per-host reservation report and ROTA's event logs."""
 import csv
 import json
 import time

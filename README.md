@@ -5,7 +5,7 @@
 Agent Bar puts your open AI coding agent chats in your desktop's menu bar. You can see at a glance which ones have
 finished and need your review, which are still working, and which are waiting on you, and one click brings a chat's
 window forward. It also shows your projects' git status and usage limits, lets agents in different chats leave each
-other notes and tickets for later, and can follow job queues from the optional Rota job scheduler.
+other notes and tickets for later, and can follow job queues from the optional ROTA job scheduler.
 
 It reads only local files that the agent tools already write, plus small hooks that record when a turn starts and
 ends. Nothing leaves your computer unless you turn on reading Claude's usage limits (see [Privacy](#privacy)).
@@ -67,7 +67,7 @@ files.
 
 <p><img src="docs/images/quota.webp" alt="The Quota tab" width="32%"> <img src="docs/images/git.webp" alt="The Git tab" width="32%"> <img src="docs/images/info.webp" alt="The Info tab" width="32%"></p>
 
-**Queues and Cluster** (with Rota). Job queues per project, adjustable from the bar, and each host's CPU,
+**Queues and Cluster** (with ROTA). Job queues per project, adjustable from the bar, and each host's CPU,
 memory and disk.
 
 <p><img src="docs/images/queues.webp" alt="The Queues tab" width="49%"> <img src="docs/images/cluster.webp" alt="The Cluster tab" width="49%"></p>

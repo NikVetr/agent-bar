@@ -832,7 +832,7 @@ class TrackerTests(unittest.TestCase):
         queue('RUNNING', 101, done=5, workers='2-1-0 P50')
         queue('FINISHED_INCOMPLETE', 110)
         self.ledger.data['project_turns']['demo'] = 120  # Cleared, or a turn there.
-        # Rota flips it to DRAINING and back with nothing running or done: the same finish, still seen.
+        # ROTA flips it to DRAINING and back with nothing running or done: the same finish, still seen.
         for at in [130, 140, 150]: queue('DRAINING' if at == 140 else 'FINISHED_INCOMPLETE', at)
         record = self.ledger.data['queues']['q']
         self.assertEqual((record['state'], record['finished_at']), ('FINISHED_INCOMPLETE', 110))

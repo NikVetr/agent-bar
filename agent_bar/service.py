@@ -30,7 +30,7 @@ TICKET_EVERY = 30  # Seconds a ticket listing stands while nothing it reads chan
 PRUNE_EVERY = 3600  # Seconds between clean-ups of what closed chats, windows and old queues left behind.
 STALE_WINDOW = 86400  # A VS Code bridge silent this long has gone with its window.
 SETTINGS = Path.home() / '.config/agent-bar/settings.json'  # Written by the panel.
-# Replaced atomically by the Rota monitor on each of its refreshes.
+# Replaced atomically by the ROTA monitor on each of its refreshes.
 QUEUES = Path(os.environ.get('ROTA_QUEUE_SNAPSHOT')
               or Path.home() / '.local/state/rota/queue-progress.tsv')
 
@@ -63,7 +63,7 @@ class Tracker:
         self.continuing = set()
         self.workflow_lock = asyncio.Lock()
         self.workflow_result, self.workflow_at, self.workflow_tags = None, 0, set()
-        # 'on', 'off' (turned off in settings) or 'missing' (Rota is not set up here).
+        # 'on', 'off' (turned off in settings) or 'missing' (ROTA is not set up here).
         self.scheduler_status = 'on'
         self.queue_mtime = max((q.get('observed', 0) for q in self.ledger.data['queues'].values()), default=0)
         self.last_saved = None
@@ -177,7 +177,7 @@ class Tracker:
         except (OSError, ValueError) as error:
             warnings.append(f'Queue snapshot unavailable: {error}')
         if self.scheduler_status == 'on' and now - self.queue_mtime > 120:
-            warnings.append('Queue snapshot stale; start the Rota monitor to refresh it')
+            warnings.append('Queue snapshot stale; start the ROTA monitor to refresh it')
         self.windows, self.rows, self.warnings = windows, rows, warnings
         if now - self.pruned_at > PRUNE_EVERY: self.prune(now)
         if now - self.checklists_at > CHECKLIST_EVERY: self.read_checklists(now)
