@@ -5,6 +5,7 @@ import os
 import socket
 import sqlite3
 import sys
+from importlib import metadata
 
 from .state import ROOT, agent_ancestor
 
@@ -12,7 +13,11 @@ from .state import ROOT, agent_ancestor
 def main():
     os.umask(0o077)  # Messages and state are the user's alone.
     parser = argparse.ArgumentParser(prog='agent-bar', description='Tracks open AI agent chats for the desktop top bar (JSON output)')
-    subs = parser.add_subparsers(dest='command', required=True)
+    # With the folder this copy runs from, which `agent-bar doctor` compares between the command and the service.
+    try: version = metadata.version('agent-bar')
+    except metadata.PackageNotFoundError: version = 'not installed'
+    parser.add_argument('--version', action='version', version=f'agent-bar {version} ({os.path.dirname(os.path.realpath(__file__))})')
+    subs =parser.add_subparsers(dest='command', required=True)
     for name in ['serve', 'status', 'queues', 'git']:
         subs.add_parser(name)
     workflows = subs.add_parser('queue-dependencies', help='numbered prerequisite queues and their reported outcomes')

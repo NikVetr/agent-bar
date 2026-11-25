@@ -354,7 +354,8 @@ agent-bar doctor        # check each part and say how to fix anything missing
 ## Troubleshooting
 
 Start with `agent-bar doctor`. It checks the service, the Claude Code and Codex hooks, the agent skill, the VS Code
-bridge, the GNOME Shell version and extension, and that `agent-bar` is on your `PATH`, with a fix for anything
+bridge, the GNOME Shell version and extension, that `agent-bar` is on your `PATH`, and that this command runs the same
+copy of Agent Bar as the service (`agent-bar --version` names the folder a copy runs from), with a fix for anything
 missing.
 
 - **The extension does not appear after the first install.** GNOME Shell finds new extensions at login. Log out and

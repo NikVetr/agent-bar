@@ -1540,6 +1540,23 @@ class SkillInstallTests(unittest.TestCase):
         self.assertFalse(ours.exists())
         self.assertEqual((own / 'SKILL.md').read_text(), "the user's own")
 
+    def test_doctor_tells_when_the_command_runs_another_copy_than_the_service(self):
+        from agent_bar import install
+        folder = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, folder)
+        checkout = Path(install.__file__).resolve().parent.parent
+        python = folder / 'python'  # The service's interpreter, running this checkout.
+        python.write_text(f'#!/bin/sh\nPYTHONPATH={checkout} exec {sys.executable} "$@"\n')
+        command = folder / 'agent-bar'
+        python.chmod(0o755)
+        for body, differs in [(f'exec {python} -m agent_bar "$@"', False), ('exit 2', True)]:  # The same copy, then an older one.
+            command.write_text(f'#!/bin/sh\n{body}\n')
+            command.chmod(0o755)
+            with unittest.mock.patch.dict(os.environ, {'PATH': f'{folder}:/usr/bin:/bin'}):
+                differ = install.copies_differ(str(python))
+            self.assertEqual(bool(differ), differs, differ)
+        self.assertIn(f'{command} runs an older copy, but the service runs agent-bar', differ)
+
 
 class TicketTests(unittest.TestCase):
     def setUp(self):

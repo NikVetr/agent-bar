@@ -74,6 +74,26 @@ def run(command, check=True):
     return subprocess.run(command, check=check, capture_output=True, text=True)
 
 
+def runs_from(command):
+    """The `--version` line of an agent-bar command, which names the copy it runs; None when it fails, as a copy from
+    before that option does."""
+    if not shutil.which(command[0]): return None
+    # Run from / so a checkout in the current folder cannot stand in for the installed copy.
+    result = subprocess.run([*command, '--version'], capture_output=True, text=True, cwd='/')
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+def copies_differ(python):
+    """Why the agent-bar command the top bar runs is not the copy the service runs with `python`, or None. Two copies
+    drift apart: a regular (not editable) install keeps the code from when it was made."""
+    # The top bar runs the command on PATH, or ~/.local/bin's when a GNOME session's PATH lacks it.
+    command = shutil.which('agent-bar') or str(Path.home() / '.local/bin/agent-bar')
+    mine, service = runs_from([command]), runs_from([python, '-m', 'agent_bar'])
+    if mine and mine == service: return None
+    return (f'{command} runs {mine or "an older copy"}, but the service runs {service or "an older copy"}. Install agent-bar once, with pipx or '
+            'uv tool (--editable for a checkout), and run agent-bar install from that command')
+
+
 def providers():
     """The agent tools this user has: hooks go only where their settings live."""
     return [name for name, folder in [('claude', '.claude'), ('codex', '.codex')] if (Path.home() / folder).is_dir()]
@@ -116,6 +136,7 @@ def install():
     run(['systemctl', '--user', 'restart', SERVICE])
     run(['systemctl', '--user', 'start', '--no-block', f'{INVENTORY}.service'])
     print(f'Service: {SERVICE} running; inventory refreshed daily')
+    if differ := copies_differ(sys.executable): print(f'Warning: {differ}')
     for provider in providers(): hooks.install(provider)
     install_skills()
     if shutil.which('code'):
@@ -179,4 +200,10 @@ def doctor():
         state = run(['gnome-extensions', 'info', UUID], check=False).stdout
         check('GNOME extension enabled', 'State: ENABLED' in state, 'agent-bar install, then log out and in')
     check('agent-bar on PATH', shutil.which('agent-bar'), 'install with pipx (or uv tool) so ~/.local/bin/agent-bar exists')
+    unit = UNITS / SERVICE
+    service = next((line.split('=', 1)[1].split()[0] for line in unit.read_text().splitlines() if line.startswith('ExecStart=')),
+                   None) if unit.exists() else None
+    if service:
+        differ = copies_differ(service)
+        check('agent-bar command runs the service\'s copy', not differ, differ or '')
     return {'ok': all(c['ok'] for c in checks), 'checks': checks}
