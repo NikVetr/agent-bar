@@ -74,6 +74,8 @@ with no account, remote server or telemetry.
   queues and cluster nodes from the parallel-workers scheduler.
 - **Linux desktop.** Session monitors in the menu bar are almost all for macOS, and the GNOME Shell extensions on
   extensions.gnome.org show usage only, for GNOME 45 and later.
+- **Cost tied to each chat.** Like ccusage and CodexBar, Agent Bar prices recorded token use at API rates, by day
+  and by model, and it also shows each open chat's own total beside its state.
 - **Local by design.** No account, relay or telemetry. Many usage meters call provider endpoints with stored sign-in
   tokens or browser cookies. Agent Bar reads local files, plus one Claude endpoint if you turn that on.
 
@@ -82,17 +84,16 @@ with no account, remote server or telemetry.
 | Feature | Found in | Fit for Agent Bar |
 | --- | --- | --- |
 | macOS and Windows | nearly all of them | Planned. The service, CLI, hooks and VS Code bridge are shared; each platform needs a menu-bar front end and its own process and window lookup. |
-| Cost in dollars | ccusage, CodexBar, CodeBurn, Agent Deck, Conductor, opcode, Agent Sessions | Good fit. Token use is in the local transcripts Agent Bar already reads; it needs a price table. |
 | Quotas for more providers (Gemini, Cursor, Copilot and others) | CodexBar, Token Monitor, ClaudeBar | Partial fit. Many providers need browser cookies or API keys, which Agent Bar avoids; reading another tool's JSON output would avoid holding credentials. |
-| Desktop notifications, sounds, alerts on your phone | Claude Code and Codex, peon-ping, code-notify, ClaudeBar, the island apps | Desktop notifications and sounds fit easily. Phone alerts send data off the computer and would need to be opt-in. |
+| Alerts on your phone | peon-ping, ClaudeBar, Nimbalyst, code-notify (through Slack or Discord) | Agent Bar has desktop notifications and an optional sound. Phone alerts send data off the computer and would need to be opt-in. |
 | Approving permission requests or answering questions from the bar | Open Island, Vibe Island, Lunavect | Possible, but Agent Bar's hooks only record metadata and never block a turn; this would change that. |
 | Continuing Claude chats after a usage-limit reset | Claude Code itself (v2.1.234 and later, on by default), Conductor, Lunavect | Claude Code now does this on its own. Agent Bar can continue Codex chats automatically (a setting) and Claude chats on request. |
 | Launching agents in isolated worktrees or containers | Claude Squad, Conductor, Orca, Agent Deck, CCManager, Sculptor, Nimbalyst | Outside an observer's role. Starting a ticket in a fresh worktree would be an opt-in extension. |
-| Diff review, merge and pull requests | Conductor, Orca, Sculptor, Vibe Kanban, Claude Code desktop | Poor fit for a menu bar. A read-only summary of each chat's diff and pull request would extend the Git tab. |
+| Diff review, merge and pull requests | Conductor, Orca, Sculptor, Vibe Kanban, Claude Code desktop | Poor fit for a menu bar. Agent Bar's Git tab shows a read-only diff summary and, optionally, each branch's pull request and checks. |
 | Remote and mobile access | Herdr, Orca, T3 Code, cmux, Nimbalyst, the Claude and Codex apps | Conflicts with local-only, except within a local network or through a self-hosted service. |
 | Task graphs with claiming and sync across machines | Beads, Backlog.md | Tickets wait on other tickets; reading a tracker's ready list into the Tickets tab would be straightforward. |
 | File reservations between agents | MCP Agent Mail | Moderate. A hook could warn when an agent edits a path another chat has reserved. |
-| Semantic search, transcript export | cass, claude-history, claude-code-log, Agent Sessions | Export fits easily. Semantic search needs a local model and adds weight. |
+| Semantic search | cass, claude-history, claude-mem | Needs a local model and adds weight. Agent Bar's search matches words, and it exports conversations to HTML or Markdown. |
 | Runs while the computer is off | Claude Code cloud scheduled tasks, Codex on the web | Conflicts with local-only. |
 
 ## Using Agent Bar with other tools
