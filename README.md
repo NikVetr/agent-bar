@@ -135,7 +135,7 @@ Clicking the counts opens the dropdown, with these tabs:
   In `5 → 4, 2`, the current queue needs queue 5, and queues 4 and 2 need the current queue. A dash means that side is empty.
   Active queues use their project numbers. Other referenced queues share the next available numbers in their project
   for this menu visit. An asterisk beside a queue number marks another project.
-  Failed or incomplete prerequisites appear in red, and **?** marks unknown or unverified outcomes.
+  Failed or incomplete prerequisites appear in red, and unknown or unverified outcomes in amber.
   Hover over a queue number for its name, project, status, and available progress details, including ETA.
   Hover over the arrow for both full lists, or over the priority for host overrides.
 - **Git**: each repository holding an open project, with its branch, uncommitted files, and commits ahead of or

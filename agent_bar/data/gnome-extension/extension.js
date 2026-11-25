@@ -3702,11 +3702,11 @@ class Tracker {
                 }
                 if (!refs.length) box.add_child(new St.Label({text: '–', style_class: 'tracker-detail', y_align: Clutter.ActorAlign.CENTER}));
                 for (const [i, ref] of refs.slice(0, 3).entries()) {
-                    const failed = ref.state === 'failed', uncertain = ['unknown', 'verify'].includes(ref.state);
-                    const tone = failed ? 'failed' : uncertain || ref.state === 'error' ? 'attention' :
+                    const tone = ref.state === 'failed' ? 'failed' :
+                        ['unknown', 'verify', 'error'].includes(ref.state) ? 'attention' :
                         ['complete', 'finished'].includes(ref.state) ? 'finished' : '';
                     const text = String(ref.number ?? '?') + (row.project !== ref.project ? '*' : '') +
-                        (uncertain ? '?' : '') + (i < refs.length - 1 ? ',' : '');
+                        (i < refs.length - 1 ? ',' : '');
                     const tip = heading + ' · ' + ref.tip;
                     const actor = new St.Label({text, style_class: tone ? `tracker-detail tracker-${tone}` : 'tracker-detail',
                         can_focus: true, accessible_name: tip, y_align: Clutter.ActorAlign.CENTER});
