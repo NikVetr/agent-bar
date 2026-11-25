@@ -184,6 +184,69 @@ function queuePriority(workers, setting) {
     return {value, tip};
 }
 
+// Scheduler holds and host states that the Queues tab spells out, by the scheduler's own reason codes.
+const SHARE_HOLDS = {smb_high: 'the shared drive is busy', smb_stuck: 'the shared drive has stalled'};
+const UNAVAILABLE = {unreachable: 'unreachable', uncertain: 'status uncertain', owner_active: 'its owner is active',
+    owner_unknown: "its owner's activity is unknown", owner_suspended: 'jobs suspended for its owner',
+    telemetry_or_share: 'no telemetry or shared drive'};
+
+function hoursText(value) {
+    return value >= 100 ? `${Math.round(value)} h` : `${value.toFixed(1)} h`;
+}
+
+function mibText(value) {
+    return value >= 1024 ? `${Number((value / 1024).toFixed(1))} GiB` : `${value} MiB`;
+}
+
+// Whether the collector's cluster-status.json is current and its scheduler section was read.
+function clusterFresh(cluster, now = Date.now() / 1000) {
+    return !!cluster && now - (cluster.updated || 0) <= CLUSTER_STALE && !!cluster.scheduler?.ok;
+}
+
+// What the scheduler reports about a queue beyond its progress, from the collector's cluster-status.json: GPU slots per
+// job and those reserved on each host (reported reservations, not measured use), an enforced memory limit, the CPU time
+// its finished jobs used, and a shared-drive hold. Each part is left out when the queue does not use it or the snapshot
+// cannot say; a stale snapshot leaves only the queue's own settings.
+function queueResources(queue, cluster, now = Date.now() / 1000) {
+    /** @type {{facts: string[], hold: string|null}} */
+    const result = {facts: [], hold: null};
+    if (!cluster) return result;
+    const fresh = clusterFresh(cluster, now);
+    const scheduled = (cluster.scheduler?.queues || []).find(/** @param {any} q */ q => q.tag === queue.id);
+    const joined = (cluster.queues || []).find(/** @param {any} q */ q => q.id === queue.id);
+    const per = scheduled?.gpu_units_per_job;
+    if (Number.isInteger(per) && per > 0) {
+        const running = fresh && scheduled.running_by_host ? Object.entries(scheduled.running_by_host).filter(([, n]) => Number(n) > 0) : null;
+        result.facts.push(`GPU ${per} per job · ` + (running === null ? 'reserved unknown'
+            : running.length ? `reserved ${running.map(([host, n]) => `${host} ${Number(n) * per}`).join(', ')}` : 'none reserved'));
+    }
+    if (Number.isInteger(scheduled?.memory_limit_mib)) result.facts.push(`memory limit ${mibText(scheduled.memory_limit_mib)} per job`);
+    const usage = fresh ? joined?.usage : null;
+    if (usage?.state === 'ok' && usage.jobs > 0)
+        result.facts.push(`CPU ${hoursText(usage.cpu_hours_succeeded)} succeeded` + (usage.cpu_hours_failed > 0 ? `, ${hoursText(usage.cpu_hours_failed)} failed` : '')
+            + ` · ${usage.jobs} job${usage.jobs === 1 ? '' : 's'} measured`);
+    const reason = scheduled?.blocking_reason;
+    if (fresh && SHARE_HOLDS[reason]) result.hold = `Held: ${SHARE_HOLDS[reason]} (${reason})`;
+    return result;
+}
+
+// Facts the scheduler snapshot adds to the pool's row (backfill) or a host's (GPU slots, why it is unavailable), and a
+// warning for an unavailable host, from a current snapshot only.
+function schedulerExtras(cluster, kind, id, now = Date.now() / 1000) {
+    /** @type {{facts: string[], warning: string|null}} */
+    const result = {facts: [], warning: null};
+    if (!clusterFresh(cluster, now)) return result;
+    const pool = cluster.scheduler.pool || {};
+    if (kind === 'pool' && pool.backfill === true) result.facts.push('Backfill on');
+    if (kind === 'host') {
+        const host = (cluster.scheduler.hosts || []).find(/** @param {any} h */ h => h.id === id);
+        if (host?.gpu_units > 0) result.facts.push(`GPU ${host.gpu_units} slot${host.gpu_units === 1 ? '' : 's'}`);
+        const reason = (pool.unavailable_hosts || {})[id];
+        if (reason) result.warning = `Unavailable: ${UNAVAILABLE[reason] || reason}`;
+    }
+    return result;
+}
+
 function queueDetail(queue) {
     const parts = [`${queue.done} / ${queue.total} jobs · ${queue.pct.toFixed(1)}%`];
     // Records from before the monitor reported failures have no count.
@@ -3923,6 +3986,14 @@ class Tracker {
                     progress.add_child(this._tooltip(badge, priority.tip));
                 }
                 box.add_child(progress);
+                const resources = queueResources(queue, this._cluster);
+                if (resources.facts.length) {
+                    const text = resources.facts.join(' · ');
+                    const label = new St.Label({text, style_class: 'tracker-detail', x_align: Clutter.ActorAlign.START});
+                    label.clutter_text.ellipsize = Pango.EllipsizeMode.END;
+                    box.add_child(this._tooltip(label, `${text}\nAs the scheduler reports them: GPU slots are reservations, not measured GPU use.`));
+                }
+                if (resources.hold) box.add_child(new St.Label({text: resources.hold, style_class: 'tracker-detail tracker-attention'}));
                 item.add_child(box);
                 body.addMenuItem(item);
                 if (entity) body.addMenuItem(editor);
@@ -3948,10 +4019,12 @@ class Tracker {
         item.add_style_class_name('tracker-queue-row');
         const line = new St.BoxLayout({style_class: 'tracker-row-title', x_expand: true});
         line.add_child(new St.Label({text: title, style_class: 'tracker-title', y_align: Clutter.ActorAlign.CENTER}));
-        const facts = new St.Label({text: (entity.facts || []).filter(fact => fact.label !== 'Name').map(fact => `${fact.label} ${fact.value}`).join(' · '),
-            x_expand: true, style_class: 'tracker-detail', y_align: Clutter.ActorAlign.CENTER});
+        const extras = schedulerExtras(this._cluster, target.kind, target.id);
+        const facts = new St.Label({text: [...(entity.facts || []).filter(fact => fact.label !== 'Name').map(fact => `${fact.label} ${fact.value}`),
+            ...extras.facts].join(' · '), x_expand: true, style_class: 'tracker-detail', y_align: Clutter.ActorAlign.CENTER});
         facts.clutter_text.ellipsize = Pango.EllipsizeMode.END;
         line.add_child(facts);
+        if (extras.warning) line.add_child(new St.Label({text: extras.warning, style_class: 'tracker-detail tracker-attention', y_align: Clutter.ActorAlign.CENTER}));
         const editor = new PopupMenu.PopupMenuSection();
         if (entity.controls?.length)
             line.add_child(this._controlsToggle(`${target.kind}:${target.id}`, title, entity, editor, section => this._fillControls(section, target, entity, false)));

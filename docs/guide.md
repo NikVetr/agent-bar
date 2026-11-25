@@ -98,6 +98,12 @@ hosts**, changes what the scheduler offers there.
 - **Outcomes.** Failed or incomplete prerequisites appear in red, and unknown or unverified outcomes in amber.
 - **Details.** Hover over a queue number for its name, project, status, and available progress details, including
   ETA. Hover over the arrow for both full lists, or over the priority for host overrides.
+- **Resources.** A line under the progress shows what the scheduler reports for the queue, when it applies: GPU slots
+  per job and those reserved on each host (reservations, not measured GPU use), an enforced memory limit per job,
+  and the CPU time its finished jobs used, split into succeeded and failed. A queue the shared drive holds back says
+  so, with the scheduler's reason. Parts the queue doesn't use, or that a stale snapshot can't confirm, are left out.
+- **Pool and hosts.** The pool's row notes when backfill is on. A host's row shows its GPU slots, and why the
+  scheduler can't use it now, such as its owner being active.
 
 ### Git
 

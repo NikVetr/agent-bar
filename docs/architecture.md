@@ -195,6 +195,13 @@ the cursor back at its end, then paste the note after a blank line. The keys rea
 go only while the chat's window has it and no other input has come since. Otherwise the note stays on the clipboard;
 the clipboard's earlier text is restored.
 
+The Queues tab also reads the collector's `cluster-status.json`, which the panel already loads for the Cluster tab. A
+queue row joins `scheduler.queues[]` by batch tag (GPU units per job, `running_by_host`, `memory_limit_mib`,
+`blocking_reason`) and the collector's own `queues[]` row by id for `usage`. That row carries CPU time from the live
+entry, or from the retired one once the queue finishes. The pool and host rows add `scheduler.pool.backfill`,
+`scheduler.hosts[].gpu_units` and the reasons in `scheduler.pool.unavailable_hosts`. Reported counts, usage, holds
+and host reasons show only while the snapshot is current (`CLUSTER_STALE`); a queue's own settings show regardless.
+
 Scheduler controls in the Queues tab come from the scheduler's own control command (parallel-workers' `pw-control`,
 protocol 1), which the panel runs directly; the service is not involved. `describe` lists the pool, hosts and queues
 with their facts and typed control descriptors, read from the collector's `cluster-status.json`; it runs when the tab

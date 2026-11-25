@@ -929,3 +929,31 @@ test('git rows summarize the diff and a pull request', () => {
         'PR #7 · open · approved · checks passing: Fix it');
     assert.equal(gitPull({number: 8, state: 'open', draft: true, review: null, checks: null, title: 'WIP'}), 'PR #8 · draft: WIP');
 });
+
+test('queue rows show what the scheduler reports: GPU reservations, memory limits, CPU time and shared-drive holds', () => {
+    const f = fixture();
+    const {queueResources, schedulerExtras} = f.context;
+    const now = 1000;
+    const cluster = {updated: 995, scheduler: {ok: true,
+        pool: {backfill: true, unavailable_hosts: {'mac-1': 'owner_active'}},
+        hosts: [{id: 'gpu-1', gpu_units: 2}, {id: 'mac-1', gpu_units: 0}],
+        queues: [{tag: 'q1', gpu_units_per_job: 1, running_by_host: {'gpu-1': 2, 'mac-1': 0}, memory_limit_mib: 8192, blocking_reason: 'smb_high'},
+            {tag: 'q2', gpu_units_per_job: 0, running_by_host: null, memory_limit_mib: null, blocking_reason: 'none'}]},
+        queues: [{id: 'q1', usage: {state: 'ok', jobs: 120, cpu_hours_succeeded: 12.44, cpu_hours_failed: 0.6}},
+            {id: 'q2', usage: {state: 'unknown', jobs: 0, cpu_hours_succeeded: 0, cpu_hours_failed: 0}}]};
+    const q1 = queueResources({id: 'q1'}, cluster, now);
+    assert.deepEqual([...q1.facts], ['GPU 1 per job · reserved gpu-1 2', 'memory limit 8 GiB per job', 'CPU 12.4 h succeeded, 0.6 h failed · 120 jobs measured']);
+    assert.equal(q1.hold, 'Held: the shared drive is busy (smb_high)');
+    // Nothing for a queue that uses none of it, or whose usage is unknown.
+    const q2 = queueResources({id: 'q2'}, cluster, now);
+    assert.equal(q2.facts.length, 0);
+    assert.equal(q2.hold, null);
+    // A stale snapshot keeps the queue's own settings and drops what it reported.
+    const stale = queueResources({id: 'q1'}, cluster, now + 600);
+    assert.deepEqual([...stale.facts], ['GPU 1 per job · reserved unknown', 'memory limit 8 GiB per job']);
+    assert.equal(stale.hold, null);
+    assert.deepEqual([...schedulerExtras(cluster, 'pool', 'p', now).facts], ['Backfill on']);
+    assert.deepEqual([...schedulerExtras(cluster, 'host', 'gpu-1', now).facts], ['GPU 2 slots']);
+    assert.equal(schedulerExtras(cluster, 'host', 'mac-1', now).warning, 'Unavailable: its owner is active');
+    assert.equal(schedulerExtras(cluster, 'host', 'mac-1', now + 600).warning, null);
+});
