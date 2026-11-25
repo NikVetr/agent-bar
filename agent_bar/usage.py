@@ -166,13 +166,18 @@ def refresh(home=None, root=ROOT, now=None, fetch=False):
         name, offset = str(path), offsets.get(str(path), 0)
         seen[name] = offset
         if stat.st_size <= offset: continue
+        # One line at a time: a rollout can be larger than the service's memory.
+        readings, end = [], offset
         try:
             with path.open('rb') as stream:
                 stream.seek(offset)
-                readings, end = codex_readings(stream.read(), 0)
+                for line in stream:
+                    if not line.endswith(b'\n'): break
+                    if b'"rate_limits"' in line: readings += codex_readings(line)[0]
+                    end += len(line)
         except OSError:
             continue
-        seen[name] = offset + end
+        seen[name] = end
         for at, limits in readings:
             for limit in limits: record(series, f'codex:{limit["key"]}', at, limit)
             if not latest or at > latest[0]: latest = (at, limits)

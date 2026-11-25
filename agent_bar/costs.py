@@ -104,18 +104,19 @@ class Tally:
 
 
 def read_new(path, state):
-    """Complete lines appended since the saved offset; resets the file's state when it was replaced or truncated."""
+    """Each complete line appended since the saved offset, advancing it as the line is taken; resets the file's state
+    when it was replaced or truncated. One line at a time, since a transcript can be larger than the service's memory."""
     stat = path.stat()
     if state.get('inode') != stat.st_ino or stat.st_size < state.get('offset', 0):
         state.clear()
         state.update(inode=stat.st_ino, offset=0)
-    if stat.st_size == state['offset']: return []
+    if stat.st_size == state['offset']: return
     with path.open('rb') as stream:
         stream.seek(state['offset'])
-        data = stream.read()
-    end = data.rfind(b'\n') + 1
-    state['offset'] += end
-    return data[:end].split(b'\n')
+        for line in stream:
+            if not line.endswith(b'\n'): return
+            state['offset'] += len(line)
+            yield line
 
 
 def claude_lines(lines, tally, prices, seen):
@@ -187,20 +188,20 @@ class Costs:
             name = str(path)
             try:
                 if path.stat().st_mtime < now - KEEP and name not in files: continue
-                state = files.get(name, {})
+                # Kept even if reading stops partway: its offset covers exactly what was counted.
+                state = kept[name] = files.get(name, {})
                 claude_lines(read_new(path, state), tally, prices, self.seen)
             except OSError: continue
-            kept[name] = state
         sessions = home / '.codex/sessions'
         for path in sessions.glob('*/*/*/rollout-*.jsonl') if sessions.exists() else []:
             name, match = str(path), THREAD.search(path.name)
             if not match: continue
             try:
                 if path.stat().st_mtime < now - KEEP and name not in files: continue
-                state = files.get(name, {})
+                # Kept even if reading stops partway: its offset covers exactly what was counted.
+                state = kept[name] = files.get(name, {})
                 codex_lines(read_new(path, state), state, match[1], tally, prices)
             except OSError: continue
-            kept[name] = state
         data['files'] = {name: state for name, state in kept.items()}
         cutoff = datetime.fromtimestamp(now - KEEP).strftime('%Y-%m-%d')
         data['days'] = {day: value for day, value in data['days'].items() if day >= cutoff}
