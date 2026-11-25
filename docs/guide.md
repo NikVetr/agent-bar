@@ -1,6 +1,8 @@
 # User guide
 
-For setup, see [Install](../README.md#install). For implementation details, see [Architecture](architecture.md).
+Agent Bar runs in the GNOME Shell 42 top bar on Linux; a macOS menu bar version is planned (see
+[Platforms](../README.md#platforms)). For setup, see [Install](../README.md#install). For implementation details,
+see [Architecture](architecture.md).
 
 - [The top bar](#the-top-bar)
 - [The dropdown](#the-dropdown): [Chats](#chats), [Queues](#queues), [Cluster](#cluster), [Git](#git), [Messages](#messages),
@@ -195,7 +197,7 @@ In Messages, a sealed envelope means unread mail. Amber means delivery needs a p
 opens once the chat reads its mail.
 
 Each chat can send 10 messages an hour and up to 10 to the same recipient between your prompts to the **sender**.
-If a chat reaches a limit, the next send is held. Its desktop notification names the chat and the limit, with
+If a chat reaches a limit, its next send is refused; the agent is told to wait, and nothing is delivered later. Its desktop notification names the chat and the limit, with
 **Allow another round** or **Allow 30 an hour, for an hour** to lift it.
 
 Under **Sending limits**, each chat that sent a message in the past hour shows its count (for example, “6 of 10
@@ -244,7 +246,8 @@ agent-bar ticket add "Draft this week's update" --to codex:<id> --after "date:20
 
 `--repeat` accepts `day`, `week`, `month`, `<N>h`, `<N>d` or `<N>w`, with an interval of at least an hour. Give it
 one starting time. A monthly message scheduled for the 31st lands on the last day of a shorter month, then returns
-to the 31st when it can. If your computer was off for several deliveries, one overdue copy goes out when it comes back.
+to the 31st when it can. If your computer was off when deliveries were due, one overdue copy goes out when it comes back and the rest are
+skipped.
 
 A one-off ticket closes on delivery. A repeating one stays under **Scheduled** until you drop it. If the chat has
 closed, the ticket shows why delivery failed and retries every 10 minutes.

@@ -3,21 +3,19 @@
 # Agent Bar
 
 If you have a Claude chat open in one VS Code window and Codex working in another, which one just finished?
-Agent Bar puts the answer in the GNOME top bar. Click the project to go straight to the chat, even when it shares a
+Agent Bar puts the answer in the GNOME top bar, with a macOS menu bar version planned. Click the project to go straight to the chat, even when it shares a
 window with several others. It also follows agents in terminals and desktop apps. You can add GitHub pull requests,
-Claude quota checks and ROTA job queues to the same bar.
+Claude quota checks, and ROTA job queues to the same bar.
 
 <p align="center"><picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/click-to-chat-dark.webp">
   <img src="docs/images/click-to-chat-light.webp" alt="Clicking a chat's review button brings its VS Code window forward, maximized, with that chat showing; clicking the chat again in the dropdown sends the window back" width="820">
 </picture></p>
 
-## A tour
-
-The screenshots show made-up projects.
+## Overview
 
 **The top bar.** Read each provider’s count as *chats needing review / chats open*. Beside it you can see how much
-weekly quota remains. You can also see how many chats are working, waiting or need a prompt to read their mail,
+weekly quota remains. You can also see how many chats are working, waiting, or need a prompt to read their mail,
 how many tickets are ready, and how many queues have finished. Project buttons take you to chats that need review.
 
 <p><img src="docs/images/topbar.webp" alt="The top bar: counts per provider, limits left, working and waiting, mail, tickets, queues, and review buttons" width="100%"></p>
@@ -28,6 +26,7 @@ is doing, why it needs review, and its estimated cost at API prices where availa
 Claude Code and Codex chats you’ve closed. You can resume one or export its messages.
 
 <p><img src="docs/images/chats.webp" alt="The Chats tab" width="49%"> <img src="docs/images/history.webp" alt="History search with context" width="49%"></p>
+
 Remember what you discussed but not which chat it was in? Search for words you or the agent wrote.
 **Show context** opens the conversation around a match. Use the arrows to read the next one.
 
@@ -36,7 +35,7 @@ Remember what you discussed but not which chat it was in? Search for words you o
   <img src="docs/images/history-search-light.webp" alt="Searching History for words in saved conversations, then showing a hit's context" width="820">
 </picture></p>
 
-**Messages and tickets.** A Codex chat can leave a note for a Claude chat in another project. You can also schedule
+**Messages and tickets.** Claude and Codex chats can leave each other notes, even across projects. You can also schedule
 a message yourself, or write a ticket for work that has to wait for a quota reset, a project’s queues, or a particular time.
 
 <p align="center"><picture>
@@ -45,10 +44,10 @@ a message yourself, or write a ticket for work that has to wait for a quota rese
 </picture></p>
 <p><img src="docs/images/messages.webp" alt="The Messages tab" width="49%"> <img src="docs/images/tickets.webp" alt="The Tickets tab" width="49%"></p>
 
-**Quota, Git and Info.** Quota shows the five-hour, weekly and model-specific limits each provider reports.
+**Quota, Git, and Info.** Quota shows the five-hour, weekly, and model-specific limits each provider reports.
 The forecast tells you whether you’re on course to run out before the reset. You can also see what your usage would
 cost at API prices. Git shows what you’ve changed locally, what you still need to push, and (if you enable it) the
-branch’s pull request and checks. Info lists the hooks, skills and instruction files for each project.
+branch’s pull request and checks. Info lists the hooks, skills, and instruction files for each project.
 
 <p><img src="docs/images/quota.webp" alt="The Quota tab" width="32%"> <img src="docs/images/git.webp" alt="The Git tab" width="32%"> <img src="docs/images/info.webp" alt="The Info tab" width="32%"></p>
 
@@ -67,7 +66,7 @@ The [user guide](docs/guide.md) describes every part in detail.
 | Status and review | yes | yes | yes | yes |
 | Usage limits and cost | yes | yes | | |
 | Messages and scheduled messages | yes; can wake idle chats (opt-in) | yes; can wake chats open in VS Code (opt-in) | | |
-| History search, resume and export | yes | yes | | |
+| History search, resume, and export | yes | yes | | |
 
 ## Where it fits
 
@@ -115,7 +114,7 @@ The installer sets these up for your user account:
 - A small VS Code extension (the bridge) that reports which chats each window has open.
 - The GNOME Shell extension that draws the top bar and dropdown.
 
-On the first install, log out and back in so GNOME finds the extension (on X11 you can also press Alt+F2, type `r`
+On the first install, log out and back in so GNOME finds the extension (on X11 you can also press Alt+F2, type `r`,
 and press Enter). Run `agent-bar install` again to enable it. Open VS Code windows start the bridge on their own.
 After an update, use **Developer: Reload Window** in each one to pick up the new bridge. Codex asks you to review
 new hooks once with `/hooks`.
@@ -126,14 +125,15 @@ If something is missing, `agent-bar doctor` will tell you which part and suggest
 ## Documentation
 
 - [User guide](docs/guide.md): the top bar, every tab, messages, tickets, scheduled messages, task checklists, the
-  scheduler integration, the command line and troubleshooting.
+  scheduler integration, the command line, and troubleshooting.
 - [How Agent Bar compares](docs/comparison.md): related projects, what each offers, and where Agent Bar fits.
-- [Architecture](docs/architecture.md): how the service, hooks, VS Code bridge and menu-bar front end fit together.
+- [Architecture](docs/architecture.md): how the service, hooks, VS Code bridge, and menu-bar front end fit together.
 
 ## Privacy
 
-The History index contains the words you and the agents wrote. It leaves out tool calls and results, reasoning
-and client context. Hooks record when a turn starts or stops without recording what you said. State lives in
+The History index contains the words you and the agents wrote. It leaves out tool calls and results, reasoning,
+and client context. Hooks record turn events (starts, finishes, questions, approvals, failures) without what
+you or the agent wrote. State lives in
 `~/.local/state/agent-bar`, settings in `~/.config/agent-bar`, and the VS Code bridge build in `~/.cache/agent-bar`.
 
 Two optional settings contact a service outside your machine:

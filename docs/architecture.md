@@ -26,7 +26,8 @@ flowchart LR
 
 The `agent-bar.service` user unit runs `agent-bar serve`. It collects state every three seconds and writes
 `snapshot.json` when something changes, or every ten seconds if nothing has. The panel reads the snapshot
-asynchronously. The CLI talks to the service over a Unix socket using JSON. A chat’s provider, turn state and
+asynchronously. Commands that act on live chats talk to the service over a Unix socket using JSON; the rest read state files
+directly. A chat’s provider, turn state and
 reasons for review are separate fields, as is the state of its project’s queues.
 
 - **VS Code:** each window's bridge publishes its folders, open tabs, provider versions and a heartbeat. Codex's
@@ -53,15 +54,15 @@ reasons for review are separate fields, as is the state of its project’s queue
   A project counts every unfinished queue plus those that finished since its last turn, using the earlier of
   the monitor’s end time and the tracker’s observation. When the last queue finishes, the most recently active
   open chat in that project gets a “Queues finished” review. If the monitor reports a finished queue as active
-  again, it takes another completed job to change the tracker’s record.
+  again, it stays finished unless workers are running or its job counts change.
 
   Hourly cleanup drops a finished queue after a week if it has fallen out of both the counts and the monitor.
   It also removes closed chats idle for 30 days and files left by closed windows.
 
   A usage-limit stop marks a chat `limited` until its next turn. Claude reports `StopFailure` with `rate_limit`
   and gives the reset time in the transcript’s closing API error. Codex reports `task_complete` with
-  `usage_limit_exceeded`. The collector pairs that event with quota readings from the same thread and turn.
-  If only the five-hour window is exhausted, it saves the reset time. With automatic continuation on, the service
+  `usage_limit_exceeded`. For Codex, the collector pairs that event with quota readings from the same thread and turn.
+  If only the five-hour window is exhausted, it saves the reset time. With **Resume Codex after reset** on, the service
   can then queue a continuation by thread ID once the reset has passed and the chat is open in VS Code. Manual
   and scheduled continuations share a durable delivery record. If delivery stops with its outcome unknown, the
   user can retry with **Continue**.
@@ -184,7 +185,8 @@ Failures stay on the ticket (`delivery_error`, `tried_at`) for a retry after ten
 
 Only scheduled delivery can send as `user`. Those messages bypass the loop guard, and both the turn-start note
 and `inbox` identify them as the user’s requests. Commands reserved for the user, including writing tickets as the
-user and resetting the loop guard, also check process ancestry (`state.agent_ancestor`). An agent can unset a
+user and resetting the loop guard, also refuse when a `claude` or `codex` process is among their ancestors
+(`state.agent_ancestor`). An agent can unset a
 session variable. It still has a `claude` or `codex` ancestor.
 
 `ticket start` and `resume` share `bridge.in_folder`: it leaves a request under `resume/` and runs `code <folder>`,
