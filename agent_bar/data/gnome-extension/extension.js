@@ -3673,29 +3673,19 @@ class Tracker {
             }
             const error = this._dependencies?.errors?.[id];
             if (error) outgoing.push({number: null, project: row.project, state: 'error', tip: error});
-            const groups = [{heading: 'Depends on', refs: outgoing, right: true},
-                {heading: 'Required by', refs: incoming, right: false}].filter(group => group.refs.length);
+            const groups = [{heading: 'Needs', refs: outgoing},
+                {heading: 'Needed by', refs: incoming}].filter(group => group.refs.length);
             box.visible = !!groups.length;
             const signature = JSON.stringify([row.project, groups]);
             if (box._signature === signature) continue;
             box._signature = signature;
             box.destroy_all_children();
-            for (const {heading, refs, right} of groups) {
+            for (const {heading, refs} of groups) {
                 refs.sort((a, b) => Number(b.state === 'failed') - Number(a.state === 'failed') || Number(a.number) - Number(b.number));
                 const summary = heading + '\n' + refs.map(ref => (ref.number ?? '?') + ' · ' + ref.tip.split('\n')[0]).join('\n');
-                // A fixed-size arrow centers its shaft on the numerals independent of the font's arrow glyph.
-                const arrow = this._drawing(/** @param {any} cr @param {number} w @param {number} h */ (cr, w, h) => {
-                    const x = right ? w - 1 : 1, y = h / 2, dx = right ? -3 : 3;
-                    cr.setSourceRGBA(0.65, 0.69, 0.74, 1);
-                    cr.setLineWidth(1.4);
-                    cr.moveTo(w - x, y);
-                    cr.lineTo(x, y);
-                    cr.moveTo(x + dx, y - 3);
-                    cr.lineTo(x, y);
-                    cr.lineTo(x + dx, y + 3);
-                    cr.stroke();
-                }, {width: 12, height: 12, can_focus: true, accessible_name: summary});
-                box.add_child(this._tooltip(arrow, summary));
+                const label = new St.Label({text: box.get_n_children() ? `·  ${heading}` : heading,
+                    style_class: 'tracker-detail', can_focus: true, accessible_name: summary, y_align: Clutter.ActorAlign.CENTER});
+                box.add_child(this._tooltip(label, summary));
                 for (const [i, ref] of refs.slice(0, 3).entries()) {
                     const failed = ref.state === 'failed', uncertain = ['unknown', 'verify'].includes(ref.state);
                     const tone = failed ? 'failed' : uncertain || ref.state === 'error' ? 'attention' :
