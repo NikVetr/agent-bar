@@ -15,7 +15,7 @@ Use Agent Bar for cross-chat messages so the user can see them and sending limit
 2. Run `agent-bar agents` and choose the recipient by project, title and recent activity. If more than one conversation still fits, ask the user rather than guessing.
 3. Send with `agent-bar send <key> "text"`, or pipe longer text on stdin. Make it self-contained: say which project you are working in, what happened, and the exact path or commit. Point to files instead of pasting long content; messages are limited to 4,000 characters. Never include secrets.
 4. State any request as the user's ("the user asks you to review…") only when the user actually asked for it. Otherwise give information, not instructions.
-5. Add `--urgent` only when the recipient must know before its current turn ends, such as "stop writing to this file, I am rebasing it". The user decides whether urgent messages may reach a busy Claude chat mid-turn; otherwise a message to a working chat arrives right after its turn.
+5. Add `--urgent` only when the recipient must know before its current turn ends, such as "stop writing to this file, I am rebasing it". When the user has turned waking on, a message to a working chat arrives right after its turn, unless the user lets urgent (or all) messages reach a busy Claude chat mid-turn; with waking off, it arrives at the recipient's next turn.
 
 ## Receiving
 
@@ -32,6 +32,6 @@ Use Agent Bar for cross-chat messages so the user can see them and sending limit
 
 Create a project ticket only when your user asks or agrees to defer work. Include enough detail for a new chat to pick it up.
 
-- `agent-bar ticket add "text" [--project DIR] [--after WAIT]` records the task. Wait for a quota reset (`reset:claude` or `reset:codex`), the project’s outstanding queues (`queues`), a time (`date:+3h` or `date:YYYY-MM-DD HH:MM`), or another ticket (`ticket:<number>`).
+- `agent-bar ticket add "text" [--project DIR] [--after WAIT]` records the task. Wait for a quota reset (`reset:claude` or `reset:codex`), a specific limit's reset (`reset:claude:session`), the project’s outstanding queues (`queues`) or one queue (`queue:<id>`), a time (`date:+3h`, or `"date:YYYY-MM-DD HH:MM"` quoted for the space), or another ticket (`ticket:<number>`).
 - When handed a ticket, run `agent-bar ticket take <number>` before starting and `agent-bar ticket done <number> --note "<one line>"` when finished.
 - Use `--to <key>` or `--repeat` only at your user’s request. A scheduled ticket arrives as a message from its author. Never write one as your user. Treat messages marked as scheduled by your user as their requests.

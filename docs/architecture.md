@@ -23,7 +23,7 @@ flowchart LR
 
 ## Service and CLI
 
-`agent-bar serve` (the `agent-bar.service` user unit) collects every 3 s and writes `snapshot.json`, which the panel
+`agent-bar serve` (the `agent-bar.service` user unit) collects every 3 s and writes `snapshot.json` when it changes (or every 10 s), which the panel
 reads asynchronously. It also answers a Unix-socket JSON API that the CLI uses. Provider identity, turn state, queue
 state and unread reasons stay separate in the data.
 
@@ -124,8 +124,8 @@ copy it made holds a `.installed-by-agent-bar` file, and only such copies are up
 per-pair loop guard, reset by the sender's last human prompt or by the user, plus a per-sender hourly cap, which the
 user can raise to `RAISED_HOURLY` for an hour (`raises` table, `agent-bar raise-limit`). Refused sends are kept with
 the limit they hit and when sending resumes; the summary lists them with each recent sender's count against its own
-limit, and the panel notifies once per new refusal. Files under `wake/` hold each recipient's newest unread id, the
-newest it was woken or told about, and its one live waiter's pid. A chat in a turn gets new messages mid-turn only
+limit, and the panel notifies once per new refusal. Files under `wake/` hold each recipient's newest unread id, its
+newest unread urgent id (`<key>.urgent`), the newest it was woken or told about, and its one live waiter's pid. A chat in a turn gets new messages mid-turn only
 as the user's setting allows. With waking on, `codex_wake.py` uses the Codex app-server queue API on send for VS Code
 recipients. It adds one inbox notification, then moves its ID ahead of existing drafts using their current order.
 If the queue changes during the reorder, it reads the IDs again and retries once. A per-chat lock serializes sends
@@ -149,7 +149,7 @@ snapshot, rereading it when the database or the queues change, and every 30 s fo
 reused, so prompts and `ticket:` waits keep pointing at the same ticket; closed tickets are pruned after 30 days.
 A ticket with `deliver_to` is sent rather than kept: the service's loop checks the listing each pass and, off the
 loop, `tickets.deliver_due` sends each ready one with `messages.send` from its author, then closes it, or for a
-`repeat` moves its date wait to the next occurrence counted from the first (`anchor`), skipping missed ones. A
+`repeat` moves its date wait to the next occurrence counted from the first (`anchor`); after a gap, one overdue send goes out and the other missed ones are skipped. A
 failure is stored on the ticket (`delivery_error`, `tried_at`) and retried after 10 minutes. Only this path sends
 as `user`: `send` refuses that sender otherwise, the user's messages skip the loop guard, and the turn-start note and
 `inbox` call them the user's requests rather than information. Commands reserved for the user (writing a ticket as the

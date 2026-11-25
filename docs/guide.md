@@ -20,7 +20,8 @@ For setup, see [Install](../README.md#install). For implementation details, see 
   it a message clears that.
 - **✳ 12%  ⌘ 64%**: what is left of each provider's weekly usage limit, amber under 25% and red under 10%, dimmed when
   the reading is over 6 hours old. Hovering lists every limit; clicking opens the Quota tab.
-- **● 3** working, **◌ 1** waiting: a turn that has gone quiet, or ended with background work still pending.
+- **● 3** working, **◌ 1** waiting: a turn quiet for 5 minutes (**Settings › Dropdown › Mark inactive turns as
+  waiting**), or one that ended with background work still pending.
 - **✉ 2** means two chats have unread agent messages and need a prompt from you to read them.
 - **🎫 2** opens Tickets. By default it counts ready tickets that had a wait condition. **All ready** includes
   tickets ready from the start. Both include failed scheduled deliveries.
@@ -56,7 +57,8 @@ chat (see [Scheduled messages](#scheduled-messages)), and an export button write
 Downloads folder and opens the file (see [History](#history)).
 
 - **Bringing a chat forward.** Clicking a chat selects it and shows its window maximized on your main display, with the
-  chat's tab or sidebar revealed. Clicking again sends the window back. When several Codex chats share a window and the
+  chat's tab or sidebar revealed. Clicking the focused chat again sends the window back (**Settings › Windows › Click
+  a focused chat again** can keep it in place instead). When several Codex chats share a window and the
   sidebar could show any of them, the row and review shortcut open the selected chat by ID in an editor tab.
 - **Search.** Chats and History share a search box, including `repo:` scopes, highlighted message excerpts and
   **Show context** (see [History](#history)). Switching tabs keeps your search. Chats shows open conversations and
@@ -126,7 +128,7 @@ those scheduled to be sent to a chat, those waiting, started, and recently close
 Search saved Claude and Codex chats by title, folder, or words in your messages and the agents' replies.
 
 - Type `memory share` to search all projects or `repo:agent-bar memory share` to narrow the search. Use quotes around
-  folder names with spaces. Each keyword can match the start of a word in the same message.
+  folder names with spaces. Every keyword must match the start of a word in the same message.
 - A message match shows who wrote it and a wrapped excerpt with matching words in bold. A title, folder, or provider
   match is labeled when no indexed message matches.
 - **Show context** expands the selected hit in place. Use **‹** and **›** to visit occurrences within a message and
@@ -140,7 +142,8 @@ The index updates nightly and with **⟳**.
 The export button on a Claude or Codex row, here or in Chats, writes that conversation's messages to your Downloads
 folder as HTML (or Markdown, under **Settings › Dropdown › Export format**) and opens it. The export holds what History
 indexes: your messages and the agent's replies with their times, without tool calls, tool results or reasoning. An
-existing file is never replaced; `agent-bar export` does the same from the command line.
+existing file is never replaced. `agent-bar export <key> [--format html] [--output PATH]` writes the same file from the
+command line (Markdown by default) and prints its path without opening it.
 
 ### Quota
 
@@ -151,7 +154,7 @@ day’s rate, or the current quota window when less history is available. Weekly
 Run `/usage` in Claude Code for a fresh reading, or enable **Settings › Integrations › Read Claude limits** for
 automatic checks every 10 minutes. Codex records limits during turns. See [Privacy](../README.md#privacy).
 
-**Cost at API prices** estimates the cost of local token usage, including cache reads and writes. Quota shows daily,
+**Cost at API prices** (on by default; **Settings › Integrations**) estimates the cost of local token usage, including cache reads and writes. Quota shows daily,
 weekly and per-model totals. Each chat shows its own estimate. Subscription billing is separate. For an unpriced
 model or a price correction, use `~/.config/agent-bar/prices.json` with the format of `agent_bar/data/prices.json`.
 Agent Bar recalculates estimates when prices change.
@@ -172,17 +175,18 @@ An agent in one chat can leave a note for an agent in another, across projects a
 ```
 agent-bar agents                  # open chats a message can go to
 agent-bar send <key> "text"       # message one of them
-agent-bar inbox                   # read this chat's messages
+agent-bar inbox                   # read this chat's messages (--peek leaves them unread)
 ```
 
 The `agent-messages` skill that `agent-bar install` adds tells Claude Code and Codex agents how to use these.
 
-The recipient sees a one-line note with its unread count when its next turn starts. With **Wake idle chats** on in
-settings, a new message also starts a turn in an idle Claude Code chat (up to a week after its last turn) and in a
+The recipient sees a one-line note with its unread count when its next turn starts. With **Wake idle chats** on (off
+by default; **Settings › Integrations**), a new message also starts a turn in an idle Claude Code chat (up to a week after its last turn) and in a
 Codex chat open in VS Code. Other chats wait for their next turn. Copilot and Antigravity chats cannot receive
 messages, because they have no hook to show the note.
 
-If you already have prompts queued in a Codex chat, Agent Bar moves its inbox notification to the front. Your current
+With **Wake idle chats** on, if you already have prompts queued in a Codex chat, Agent Bar moves its inbox
+notification to the front. Your current
 turn finishes normally and your prompts keep their order. With an empty queue, a busy chat gets a wake-up after its
 turn if messages are still unread. Priority requires a local `codex` with the app-server queue API.
 
@@ -190,8 +194,15 @@ In the Messages tab, each chat's badge shows a sealed envelope while it has unre
 you to start a turn there, and an open one once it has read them.
 
 Each chat can send up to 10 messages per hour and up to 10 to the same recipient between your prompts to the
-**sender**. In Messages, **Reset limit** allows another round for that pair. **Allow more for an hour** raises the
-sender’s hourly limit to 30 for one hour. It appears once the sender has used half its hourly allowance.
+**sender**. A message over a limit is held, and a desktop notification says which chat and limit, with a button that
+lifts it: **Allow another round** or **Allow 30 an hour, for an hour**. The **Sending limits** section of Messages lists
+each chat that sent in the last hour as "N of 10 this hour", with when it can send again. **Reset limit** allows another
+round for that pair, both ways, and restarts their hourly counts. **Allow more for an hour** raises the sender’s hourly
+limit to 30 for one hour; it appears once the sender has used half its hourly allowance.
+
+Agents can mark a message `--urgent`. With waking on, **Settings › Integrations › Delivery to busy Claude chats** decides
+which messages reach a Claude chat in the middle of a turn: none (**After its turn**, the default), **Urgent only**, or
+**All messages**. **Settings › Integrations › Agent messages** turns messaging off.
 
 Agents treat messages from other agents as information. Your scheduled messages arrive as requests.
 
@@ -208,14 +219,14 @@ agent-bar ticket take 3                                                # this ch
 agent-bar ticket done 3 --note "findings in tmp/audit.md"              # or drop, or reopen
 ```
 
-`--after` can also be `date:2026-11-20 09:00`, `date:+3h`, `queue:<id>` or `ticket:<number>`; repeat it to wait for
+`--after` can also be `"date:2026-11-20 09:00"` (quoted, for the space), `date:+3h`, `queue:<id>` or `ticket:<number>`; repeat it to wait for
 several. A wait is fixed when the ticket is written: the reset then due (by default the limit binding now, else the
 weekly one; `reset:claude:session` picks the 5-hour one), or the queues outstanding then. A ticket is ready once all
 its waits have passed.
 
 Tickets use the agent’s current folder unless you pass `--project`. **Start** prepares the prompt in a new Claude
 Code chat. Use **Copy** to paste it into another chat. Agents use `take` to claim work and `done` to close it.
-Closed tickets remain visible for 30 days.
+Closed tickets remain visible for 30 days, the 20 most recent.
 
 ### Scheduled messages
 
@@ -228,7 +239,7 @@ agent-bar ticket add "Draft this week's update" --to codex:<id> --after "date:20
 
 `--repeat` takes `day`, `week`, `month`, or `<N>h`, `<N>d` or `<N>w` (at least hourly), and needs one time to start
 from. Repeats count from that first time (a monthly send on the 31st comes back to the 31st, or the month's last day);
-sends missed while the computer was off are skipped, not sent late. A one-off ticket closes once sent; a repeating one
+if the computer was off, one overdue send goes out when it is back on and the other missed ones are skipped. A one-off ticket closes once sent; a repeating one
 stays under **Scheduled** in Tickets until you drop it. If the chat has closed, the ticket shows the reason and tries
 again every 10 minutes.
 
@@ -262,8 +273,8 @@ when the column opens; files are reread only when they change.
 ## The ROTA job scheduler (optional)
 
 The Queues tab, the Q count and the cluster indicator read the files the ROTA job scheduler writes in
-`~/.local/state/rota`. Without it they stay out of the way; **Settings › Integrations** turns them off
-entirely.
+`~/.local/state/rota`. Without it they stay out of the way; **Settings › Integrations › Job scheduler** turns them
+off entirely.
 
 ### Cluster
 
@@ -327,8 +338,8 @@ agent-bar doctor        # check each part and say how to fix anything missing
 
 ## Troubleshooting
 
-Run `agent-bar doctor` first. It checks the installed components, hooks, service and executable paths and suggests
-fixes. Use `agent-bar --version` to locate the copy your shell runs.
+Run `agent-bar doctor` first. It checks the installed components, hooks and service, and that the `agent-bar` command on your
+PATH runs the same copy as the service, and suggests fixes. Use `agent-bar --version` to locate the copy your shell runs.
 
 - **The extension does not appear after the first install.** GNOME Shell finds new extensions at login. Log out and
   back in (or on X11 press Alt+F2, type `r`, press Enter), then run `agent-bar install` again to enable it.
