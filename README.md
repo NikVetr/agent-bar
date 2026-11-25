@@ -3,9 +3,9 @@
 # Agent Bar
 
 If you have a Claude chat open in one VS Code window and Codex working in another, which one just finished?
-Agent Bar puts the answer in the GNOME top bar, with a macOS menu bar version planned. Click the project to go straight to the chat, even when it shares a
+Agent Bar puts the answer in the GNOME top bar, with a macOS menu bar version planned. Click a project's button in the bar to go straight to the chat, even when it shares a
 window with several others. It also follows agents in terminals and desktop apps. You can add GitHub pull requests,
-Claude quota checks, and ROTA job queues to the same bar.
+Claude quota checks, and [ROTA](docs/guide.md#the-rota-job-scheduler-optional) job queues to the same bar.
 
 <p align="center"><picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/click-to-chat-dark.webp">
@@ -30,8 +30,8 @@ how many tickets are ready, and how many queues have finished. Project buttons t
 - **Git** shows what you've changed locally, what you still need to push, and (if you enable it) each branch's pull
   request and checks.
 - **Messages** and **Tickets** hold the notes chats leave each other and work saved for later.
-- **History** holds every saved Claude Code and Codex chat, closed ones included. You can resume one or export its
-  messages.
+- **History** holds every saved Claude Code and Codex chat, closed ones included. You can resume one in VS Code or export
+  its messages.
 - **Quota** shows the five-hour, weekly, and model-specific limits each provider reports, whether you're on course to
   run out before the reset, and what your usage would cost at API prices.
 - **Info** lists the hooks, skills, and instruction files for each project.
@@ -63,11 +63,11 @@ The [user guide](docs/guide.md) describes every part in detail.
 
 | | Claude Code | Codex | GitHub Copilot CLI | Antigravity |
 | --- | --- | --- | --- | --- |
-| Where | VS Code, terminal | VS Code (tabs and sidebar), terminal, ChatGPT desktop app | terminal | IDE, App, CLI (`agy`) |
+| Where | VS Code, terminal | VS Code (tabs and sidebar), terminal, ChatGPT desktop app | terminal | IDE, desktop app, CLI (`agy`) |
 | Status and review | yes | yes | yes | yes |
 | Usage limits and cost | yes | yes | | |
 | Messages and scheduled messages | yes; can wake idle chats (opt-in) | yes; can wake chats open in VS Code (opt-in) | | |
-| History search, resume, and export | yes | yes | | |
+| History search, resume in VS Code, and export | yes | yes | | |
 
 ## Where it fits
 
@@ -94,17 +94,18 @@ flowchart TD
 | Platform | Where it appears | Status |
 | --- | --- | --- |
 | Linux, GNOME Shell 42 (Ubuntu 22.04), X11 | the top bar | available |
-| Linux, GNOME Shell 45 and later | the top bar | planned |
+| Linux, GNOME Shell 43 and later | the top bar | planned |
 | macOS | the menu bar | planned |
 | Windows | the system tray | planned |
 
 ## Install
 
 You’ll need Python 3.10 or later and either [pipx](https://pipx.pypa.io) or [uv](https://docs.astral.sh/uv/).
-If your agents run in terminals, you can leave VS Code out of the installation.
+VS Code is optional: without it, the installer skips the bridge, and chats in terminals and desktop apps are still
+tracked.
 
 ```
-pipx install git+https://github.com/NikVetr/agent-bar
+pipx install git+https://github.com/NikVetr/agent-bar   # or: uv tool install git+https://github.com/NikVetr/agent-bar
 agent-bar install
 ```
 
@@ -119,7 +120,7 @@ The installer sets these up for your user account:
 On the first install, log out and back in so GNOME finds the extension (on X11 you can also press Alt+F2, type `r`,
 and press Enter). Run `agent-bar install` again to enable it. Open VS Code windows start the bridge on their own.
 After an update, use **Developer: Reload Window** in each one to pick up the new bridge. Codex asks you to review
-new hooks once with `/hooks`.
+new hooks once: run `/hooks` in Codex and accept Agent Bar's.
 
 If something is missing, `agent-bar doctor` will tell you which part and suggest a fix. To remove Agent Bar, run
 `agent-bar uninstall`. This keeps your settings and history unless you add `--purge`.
@@ -129,12 +130,12 @@ If something is missing, `agent-bar doctor` will tell you which part and suggest
 - [User guide](docs/guide.md): the top bar, every tab, messages, tickets, scheduled messages, task checklists, the
   scheduler integration, the command line, and troubleshooting.
 - [How Agent Bar compares](docs/comparison.md): related projects, what each offers, and where Agent Bar fits.
-- [Architecture](docs/architecture.md): how the service, hooks, VS Code bridge, and menu-bar front end fit together.
+- [Architecture](docs/architecture.md): how the service, hooks, VS Code bridge, and GNOME Shell extension fit together.
 
 ## Privacy
 
 The History index contains the words you and the agents wrote. It leaves out tool calls and results, reasoning,
-and client context. Hooks record turn events (starts, finishes, questions, approvals, failures) without what
+and client context. Hooks record turn events (starts, finishes, questions, approvals, and failures) without what
 you or the agent wrote. State lives in
 `~/.local/state/agent-bar`, settings in `~/.config/agent-bar`, and the VS Code bridge build in `~/.cache/agent-bar`.
 
@@ -142,7 +143,7 @@ Two optional settings contact a service outside your machine:
 
 - **Read Claude limits** checks `api.anthropic.com` every 10 minutes, using Claude Code’s token from
   `~/.claude/.credentials.json`. Claude Code handles token renewal.
-- **Pull requests** uses your signed-in `gh` command to read pull request reviews and check results at most once every five
+- **Pull requests** uses your signed-in `gh` command to read pull request reviews and check results at most once every 5
   minutes per branch.
 
 ## Development
