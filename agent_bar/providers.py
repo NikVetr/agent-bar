@@ -672,7 +672,7 @@ class Providers:
 
 
 def queue_snapshot(path):
-    """Read the parallel-workers monitor's queue TSV (21 columns plus an optional ETA warning). No cluster queries."""
+    """Read the Rota monitor's queue TSV (21 columns plus an optional ETA warning). No cluster queries."""
     lines = Path(path).read_text().splitlines()
     try:
         details = Path(str(path) + '.details').read_text().splitlines()

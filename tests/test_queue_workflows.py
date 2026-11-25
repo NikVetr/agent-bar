@@ -62,7 +62,7 @@ class QueueWorkflowTests(unittest.TestCase):
     def test_retired_queue_lookup_checks_full_identity(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            index = root / '.parallel-workers/adaptive/queue-index'
+            index = root / '.rota/adaptive/queue-index'
             index.mkdir(parents=True)
             token = 'batch_00005_2026-11-24_100_abc'
             tag = 'project/path__habc__b00005'

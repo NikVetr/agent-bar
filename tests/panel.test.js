@@ -575,7 +575,7 @@ test('message filters pick an agent or a project at either end of a message', ()
     assert.equal(ids('unread'), '');
 });
 
-test('scheduler control inputs give the values pw-control apply takes, or say what to fix', () => {
+test('scheduler control inputs give the values rota control apply takes, or say what to fix', () => {
     const f = fixture();
     const {controlTyped, controlValue, controlSummary, controlRequest} = f.context;
     const integer = (name, extra = {}) => ({name, label: name, kind: 'integer', min: 0, max: 50, value: 4, enabled: true, ...extra});
@@ -636,9 +636,9 @@ test('an applied control sends what was shown as expected, and a refusal comes b
     assert.equal(answer.error.code, 'conflict');
     assert.deepEqual(sent[0][0], ['apply']);
     assert.deepEqual(sent[0][1].expect, {pool_id: 'pool-1', value: 4});
-    f.tracker._control = async () => { throw new Error('pw-control is not installed'); };
+    f.tracker._control = async () => { throw new Error('The rota command is not installed'); };
     assert.deepEqual(JSON.parse(JSON.stringify(await f.tracker._applyControl({kind: 'pool', id: 'pool-1'}, control, null))),
-        {ok: false, error: {code: 'failed', message: 'pw-control is not installed'}});
+        {ok: false, error: {code: 'failed', message: 'The rota command is not installed'}});
 });
 
 test('scheduler controls lay out as actions or settings, and only a real change counts as one', () => {

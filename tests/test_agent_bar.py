@@ -23,7 +23,7 @@ class TrackerTests(unittest.TestCase):
     def test_host_projects_uses_reservations_and_sampled_memory(self):
         from agent_bar.cluster import host_projects
         with tempfile.TemporaryDirectory() as root:
-            report = Path(root) / '.parallel-workers/adaptive/last-known/node.tsv'
+            report = Path(root) / '.rota/adaptive/last-known/node.tsv'
             report.parent.mkdir(parents=True)
             updated = int(time.time())
             header = 'record_type pool_id host_id resource_sample_epoch telemetry_state queue_id state cpu_units current_memory_mib'
@@ -373,7 +373,7 @@ class TrackerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             root = Path(root)
             (root / 'proc').mkdir()
-            settings, queues = root / 'settings.json', root / 'parallel-workers/queue-progress.tsv'
+            settings, queues = root / 'settings.json', root / 'rota/queue-progress.tsv'
             with unittest.mock.patch.object(service, 'SETTINGS', settings), unittest.mock.patch.object(service, 'QUEUES', queues):
                 tracker = service.Tracker(root / 'state')
                 tracker.providers = Providers(root, str(root / 'proc'))
@@ -779,7 +779,7 @@ class TrackerTests(unittest.TestCase):
         queue('RUNNING', 101, done=5, workers='2-1-0 P50')
         queue('FINISHED_INCOMPLETE', 110)
         self.ledger.data['project_turns']['demo'] = 120  # Cleared, or a turn there.
-        # parallel-workers flips it to DRAINING and back with nothing running or done: the same finish, still seen.
+        # Rota flips it to DRAINING and back with nothing running or done: the same finish, still seen.
         for at in [130, 140, 150]: queue('DRAINING' if at == 140 else 'FINISHED_INCOMPLETE', at)
         record = self.ledger.data['queues']['q']
         self.assertEqual((record['state'], record['finished_at']), ('FINISHED_INCOMPLETE', 110))
@@ -841,7 +841,7 @@ class TrackerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             root = Path(root)
             (root / 'proc').mkdir()
-            settings, queues = root / 'settings.json', root / 'parallel-workers/queue-progress.tsv'
+            settings, queues = root / 'settings.json', root / 'rota/queue-progress.tsv'
             queues.parent.mkdir()
             with unittest.mock.patch.object(service, 'SETTINGS', settings), unittest.mock.patch.object(messages, 'SETTINGS', settings), \
                     unittest.mock.patch.object(service, 'QUEUES', queues):

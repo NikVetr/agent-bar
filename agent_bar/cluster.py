@@ -7,7 +7,7 @@ from pathlib import Path
 
 def host_projects(host_id, snapshot=None):
     if snapshot is None:
-        snapshot = json.loads((Path.home() / '.local/state/parallel-workers/cluster-status.json').read_text())
+        snapshot = json.loads((Path.home() / '.local/state/rota/cluster-status.json').read_text())
     hosts = {host['id']: host for host in snapshot['hosts']}
     if host_id not in hosts or Path(host_id).name != host_id or host_id in ('.', '..'):
         raise ValueError('Unknown cluster host')
@@ -59,7 +59,7 @@ def read_reservations(snapshot, host_id, pool, projects):
     mount = local.get('mount') or {}
     if not mount.get('ok') or not mount.get('root'):
         raise ValueError('The scheduler share is unavailable on this computer')
-    table = Path(mount['root']) / '.parallel-workers/adaptive/last-known' / f'{host_id}.tsv'
+    table = Path(mount['root']) / '.rota/adaptive/last-known' / f'{host_id}.tsv'
     with table.open() as stream:
         rows = csv.DictReader(stream, delimiter='\t')
         # The host daemon's own row comes first, then one row per reservation.

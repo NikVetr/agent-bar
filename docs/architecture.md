@@ -10,8 +10,8 @@ flowchart LR
     V[VS Code bridge, one per window] --> S[agent-bar service]
     H[Claude and Codex hooks] --> S
     F[Session files: Claude records, Codex rollouts, Copilot logs, Antigravity locks] --> S
-    Q[parallel-workers snapshots, optional] --> S
-    G -->|describe, apply| C[pw-control, optional]
+    Q[Rota snapshots, optional] --> S
+    G -->|describe, apply| C[rota control, optional]
     R[Git repositories, read-only] --> S
     S --> L[(ledger.json)]
     S --> P[snapshot.json]
@@ -202,7 +202,7 @@ entry, or from the retired one once the queue finishes. The pool and host rows a
 `scheduler.hosts[].gpu_units` and the reasons in `scheduler.pool.unavailable_hosts`. Reported counts, usage, holds
 and host reasons show only while the snapshot is current (`CLUSTER_STALE`); a queue's own settings show regardless.
 
-Scheduler controls in the Queues tab come from the scheduler's own control command (parallel-workers' `pw-control`,
+Scheduler controls in the Queues tab come from the scheduler's own control command (`rota control`,
 protocol 1), which the panel runs directly; the service is not involved. `describe` lists the pool, hosts and queues
 with their facts and typed control descriptors, read from the collector's `cluster-status.json`; it runs when the tab
 opens and every 10 s while it shows, and the tab redraws only when controls or reachability change, keeping what was

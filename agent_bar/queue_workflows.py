@@ -61,7 +61,7 @@ def archived_registrations(root, tracked, missing):
         match = re.search(r'__h([0-9a-f]+)__b(\d+)$', tag)
         if match: wanted[(match[2], str(tracked[tag]), match[1])] = tag
     if not wanted: return
-    index = root / '.parallel-workers/adaptive/queue-index'
+    index = root / '.rota/adaptive/queue-index'
     try: entries = os.scandir(index)
     except FileNotFoundError: return  # Older schedulers only published active registrations.
     with entries:
