@@ -28,77 +28,73 @@ const SCHEDULER_URL = null;
 // [section, key, label, description, default, [[value, caption]...]]; a list default makes the setting
 // multiple-choice. The service reads quietMinutes.
 const SETTINGS = [
-    ['Top bar', 'quickLimit', 'Review buttons', 'At most this many shortcuts, one per project, as room allows; +N more lists the rest', 6,
+    ['Top bar', 'quickLimit', 'Review buttons', 'Maximum number of project buttons. +N more lists the other chats.', 6,
         [[0, 'Off'], [3, '3'], [6, '6'], [10, '10']]],
-    ['Top bar', 'quickChars', 'Button name length', 'Characters of the folder name on each shortcut', 16,
+    ['Top bar', 'quickChars', 'Short button names', 'Number of characters to show when a project name needs shortening.', 16,
         [[12, '12'], [16, '16'], [24, '24']]],
-    ['Top bar', 'quickReasons', 'Review buttons for', 'What gives a chat a shortcut; the Chats tab shows every chat needing review either way',
+    ['Top bar', 'quickReasons', 'Review events', 'Choose which events trigger review buttons and desktop alerts. Chats lists all reviews.',
         ['Reply finished', 'Turn failed', 'Input needed', 'Approval needed', 'Queues finished'],
         [['Reply finished', 'Reply finished'], ['Turn failed', 'Turn failed'], ['Input needed', 'Question'], ['Approval needed', 'Approval'],
-            ['Queues finished', 'Queues finished'], ['Usage limit', 'Stopped at a usage limit']]],
-    ['Top bar', 'quotaBar', 'Limits left', 'Each provider\'s weekly usage limit left, after the chat counts', true,
+            ['Queues finished', 'Queues finished'], ['Usage limit', 'Usage limit reached']]],
+    ['Top bar', 'quotaBar', 'Weekly quota remaining', 'Show the percentage each provider has left this week.', true,
         [[true, 'Show'], [false, 'Hide']]],
-    ['Top bar', 'ticketBar', 'Ticket count', 'Tickets that came due (waited for something that has passed), or every ticket ready to start', 'due',
-        [['due', 'Came due'], ['ready', 'All ready'], ['off', 'Hide']]],
-    ['Top bar', 'queueBar', 'Queue count', 'Q finished / outstanding since each project\'s last turn', true,
+    ['Top bar', 'ticketBar', 'Ticket count', 'Count tickets whose conditions are met, or all tickets ready to start. Both include failed deliveries.', 'due',
+        [['due', 'After a wait'], ['ready', 'All ready'], ['off', 'Hide']]],
+    ['Top bar', 'queueBar', 'Queue count', 'Q 2 / 5 means 2 of 5 queues finished. A new chat turn clears that project’s finished queues.', true,
         [[true, 'Show'], [false, 'Hide']]],
-    ['Notifications', 'notify', 'Desktop notifications', 'A notification when a chat needs review, for the reasons Top bar › Review buttons for picks; '
-        + 'clicking it brings the chat forward. None while that chat\'s window has focus', true,
+    ['Notifications', 'notify', 'Desktop notifications', 'Alert for events selected under Top bar › Review events, except in the focused chat window. Also alert when a message hits a sending limit.', true,
         [[true, 'On'], [false, 'Off']]],
-    ['Notifications', 'notifySound', 'Sound', 'A short sound with each notification, except in Do Not Disturb', false,
+    ['Notifications', 'notifySound', 'Notification sound', 'Play a sound for review alerts unless Do Not Disturb is on.', false,
         [[true, 'On'], [false, 'Off']]],
-    ['Cluster', 'clusterBar', 'Top-bar indicator', 'What it shows; with only Warnings it appears just when one fires', ['cpu', 'warnings'],
+    ['Cluster', 'clusterBar', 'Cluster indicator', 'Choose what appears in the top bar. Select only Warnings to hide it when all is well.', ['cpu', 'warnings'],
         [['cpu', 'CPU'], ['memory', 'Memory'], ['disk', 'Disk'], ['warnings', 'Warnings']]],
-    ['Cluster', 'clusterMemoryWarn', 'Memory warning', 'The memory pressure a host must reach', 'warn',
+    ['Cluster', 'clusterMemoryWarn', 'Memory warning', 'Warn when a host reaches this level of memory pressure.', 'warn',
         [['warn', 'Elevated'], ['critical', 'Critical']]],
-    ['Cluster', 'clusterDiskWarn', 'Disk warning', 'How full a host\'s drive or the shared drive must be', 90,
+    ['Cluster', 'clusterDiskWarn', 'Disk warning', 'Warn when a host or shared drive is this full.', 90,
         [[90, '90%'], [95, '95%'], [98, '98%']]],
-    ['Cluster', 'clusterHosts', 'Top-bar total', 'Hosts counted in the top-bar percentage', 'all',
+    ['Cluster', 'clusterHosts', 'Hosts to include', 'Choose which hosts contribute to the top-bar statistics.', 'all',
         [['all', 'All hosts'], ['workers', 'Without this desktop']]],
-    ['Cluster', 'clusterLayout', 'Dropdown layout', 'Compare hosts within each measure, or one card per host', 'measure',
+    ['Cluster', 'clusterLayout', 'Cluster layout', 'Group readings by metric or by host.', 'measure',
         [['measure', 'By measure'], ['host', 'By host']]],
-    ['Windows', 'windowOrder', 'Window menu order', 'Order of the ▾ window menu', 'recent',
+    ['Windows', 'windowOrder', 'Window order', 'Sort windows in the ▾ menu.', 'recent',
         [['recent', 'Recent'], ['name', 'Name']]],
-    ['Windows', 'windowClick', 'Window menu click', 'What clicking a window in ▾ does', 'place',
+    ['Windows', 'windowClick', 'Open a window', 'Choose where a window appears when you select it from the ▾ menu.', 'place',
         [['place', 'Maximize on main'], ['raise', 'Raise in place']]],
-    ['Windows', 'focusedClick', 'Clicking a focused chat again', 'Whether it sends the window back to its display', 'return',
+    ['Windows', 'focusedClick', 'Click a focused chat again', 'Return its window to its previous position or leave it in place.', 'return',
         [['return', 'Send back'], ['stay', 'Keep']]],
-    ['Dropdown', 'openTab', 'Opens on', 'The tab last used, or always Chats', 'last',
+    ['Dropdown', 'openTab', 'Opening tab', 'Choose which tab opens with the dropdown.', 'last',
         [['last', 'Last tab'], ['conversations', 'Chats']]],
-    ['Dropdown', 'projectOrder', 'Project order', 'Also set from Sort in Chats', 'activity',
+    ['Dropdown', 'projectOrder', 'Chat project order', 'Sort projects in Chats. Total activity adds up time spent in their chats.', 'activity',
         [['activity', 'Activity'], ['total', 'Total activity'], ['review', 'Review first'], ['completion', 'Latest reply'], ['name', 'Name']]],
-    ['Dropdown', 'historyOrder', 'History order', 'Also set from Sort in History; total activity is from the last scan', 'activity',
+    ['Dropdown', 'historyOrder', 'History order', 'Sort saved projects. Total activity uses chat times from the last scan.', 'activity',
         [['activity', 'Activity'], ['total', 'Total activity'], ['name', 'Name']]],
-    ['Dropdown', 'queueOrder', 'Queue order', 'Also set from Sort in Queues', 'completion',
-        [['completion', 'Completion since last turn'], ['activity', 'Recent activity'], ['name', 'Name']]],
-    ['Dropdown', 'gitOrder', 'Git order', 'Also set from Sort in Git', 'changes',
+    ['Dropdown', 'queueOrder', 'Queue order', 'Sort projects in Queues. Completion puts the highest fraction finished first.', 'completion',
+        [['completion', 'Completion'], ['activity', 'Recent activity'], ['name', 'Name']]],
+    ['Dropdown', 'gitOrder', 'Repository order', 'Choose how to sort repositories in Git.', 'changes',
         [['changes', 'Changes first'], ['recent', 'Last commit'], ['name', 'Name']]],
-    ['Dropdown', 'exportFormat', 'Export format', 'What the export button on a Claude or Codex chat writes to Downloads and opens', 'html',
+    ['Dropdown', 'exportFormat', 'Export format', 'Save the chat to Downloads and open it in this format.', 'html',
         [['html', 'HTML'], ['markdown', 'Markdown']]],
-    ['Dropdown', 'quietMinutes', 'Waiting after', 'An open turn with no activity this long shows as waiting', 5,
+    ['Dropdown', 'quietMinutes', 'Mark inactive turns as waiting', 'How long an open turn can be quiet before its status changes to Waiting.', 5,
         [[2, '2 min'], [5, '5 min'], [10, '10 min'], [0, 'Never']]],
-    ['Integrations', 'scheduler', 'Job scheduler', 'ROTA: Queues tab, Q count, cluster indicator, queues-finished reviews', true,
+    ['Integrations', 'scheduler', 'Job scheduler', 'Show ROTA queues, cluster statistics and reviews when a project’s queues finish.', true,
         [[true, 'On'], [false, 'Off']]],
-    ['Integrations', 'git', 'Git status', 'Git tab: branch, uncommitted changes and unpushed commits of open projects', true,
+    ['Integrations', 'git', 'Git status', 'Show branches, uncommitted changes and unpushed commits for open projects.', true,
         [[true, 'On'], [false, 'Off']]],
-    ['Integrations', 'pullRequests', 'Pull requests', 'Git tab: each GitHub branch\'s pull request, its review and checks, asked of '
-        + 'GitHub with the gh command at most every 5 minutes. Off, Agent Bar does not contact GitHub', false,
+    ['Integrations', 'pullRequests', 'Pull requests', 'Use the gh command to check GitHub for reviews and checks, at most once every 5 minutes.', false,
         [[true, 'On'], [false, 'Off']]],
-    ['Integrations', 'messages', 'Agent messages', 'Chats can message one open chat; it sees an unread count at its next turn start', true,
+    ['Integrations', 'messages', 'Agent messages', 'Let agents message other open chats. Recipients see an unread count when their next turn starts.', true,
         [[true, 'On'], [false, 'Off']]],
-    ['Integrations', 'wake', 'Wake idle chats', 'A message starts a turn in an idle Claude Code chat (up to a week after its last turn), or in a Codex chat open in VS Code once any turn in progress ends', false,
+    ['Integrations', 'wake', 'Wake idle chats', 'Wake Claude Code chats active in the past week. Codex chats must be open in VS Code. Busy chats can wake after the current turn.', false,
         [[true, 'On'], [false, 'Off']]],
-    ['Integrations', 'resumeCodex', 'Resume Codex after reset', 'Continue open VS Code threads after their five-hour usage limit resets', false,
+    ['Integrations', 'resumeCodex', 'Resume Codex after reset', 'Automatically continue open Codex chats in VS Code when their five-hour limit resets.', false,
         [[true, 'On'], [false, 'Off']]],
-    ['Integrations', 'costs', 'Cost at API prices', 'What the use Claude Code and Codex record here would cost at API prices, from their '
-        + 'local token counts: in Quota and on each chat. Subscription plans are billed differently', true,
+    ['Integrations', 'costs', 'Cost at API prices', 'Estimate Claude and Codex costs from local token counts. Subscription billing is separate.', true,
         [[true, 'On'], [false, 'Off']]],
-    ['Integrations', 'claudeUsage', 'Read Claude limits', 'Every 10 minutes, ask Claude for your usage limits with Claude Code\'s sign-in, '
-        + 'as /usage does (an undocumented endpoint); otherwise they update only when Claude Code fetches them', false,
+    ['Integrations', 'claudeUsage', 'Read Claude limits', 'Check limits every 10 minutes using your Claude Code sign-in. When off, use Claude Code’s own readings.', false,
         [[true, 'On'], [false, 'Off']]],
-    ['Integrations', 'midturn', 'Messages to a busy Claude chat', 'With waking on, whether a message can arrive during its turn instead of right after it', 'after',
-        [['after', 'After its turn'], ['urgent', 'Urgent mid-turn'], ['always', 'Mid-turn']]],
-    ['Appearance', 'palette', 'State colors', 'Colors for review, working, waiting, failed and finished', 'default',
+    ['Integrations', 'midturn', 'Delivery to busy Claude chats', 'When Wake idle chats is on, choose which messages can interrupt a turn.', 'after',
+        [['after', 'After its turn'], ['urgent', 'Urgent only'], ['always', 'All messages']]],
+    ['Appearance', 'palette', 'State colors', 'Choose the colors used for chat and queue status.', 'default',
         [['default', 'Default'], ['colorblind', 'Color-blind safe']]],
 ];
 const QUEUE_BAR = 180;
@@ -116,7 +112,7 @@ const PROVIDERS = {claude: ['✳', 'Claude'], codex: ['⌘', 'Codex'], copilot: 
 const PINNED = ['claude', 'codex'];
 const FILTERS = [['all', 'All'], ...Object.entries(PROVIDERS).map(([key, [symbol, name]]) => [key, `${symbol} ${name}`]),
     ['review', 'Needs review'], ['active', 'Working or waiting']];
-// 'counted' lists exactly the queues in each project's Q finished / outstanding badge.
+// 'counted' lists exactly the queues in each project's Q finished / total badge.
 const QUEUE_FILTERS = [['counted', 'Since last turn'], ['active', 'Running or queued'], ['finished', 'Finished'],
     ['all', 'All seen']];
 const GIT_FILTERS = [['all', 'All'], ['changes', 'Uncommitted'], ['unpushed', 'Unpushed']];
@@ -413,8 +409,8 @@ function refusalNotice(refusal, titles, limits) {
     const clock = at => new Date(at * 1000).toLocaleTimeString('en-US', {hour: 'numeric', minute: '2-digit'});
     // The title carries when sending resumes, since a banner shows one line of each.
     if (refusal.kind === 'peer')
-        return {title: 'Message held · until you write to it',
-            body: `${name(refusal.sender)} has sent ${name(refusal.recipient)} ${limits.per_chat} messages since you last wrote to it.`,
+        return {title: 'Message held · prompt the sender',
+            body: `${name(refusal.sender)} has sent ${name(refusal.recipient)} ${limits.per_chat} messages since your last prompt to the sender.`,
             action: 'Allow another round'};
     return {title: refusal.resumes_at ? `Message held · can send again at ${clock(refusal.resumes_at)}` : 'Message held',
         body: `${name(refusal.sender)} reached its limit of ${limits.hourly} messages an hour.`,
@@ -1927,57 +1923,43 @@ class Tracker {
         top.actor.add_child(figure);
         this._helpDiagram(figure);
         row(top, [text('2 / 14', 'tracker-help-bright'), text('0 / 3', 'tracker-quiet')],
-            `Bright and bold when something needs you: a reply to review${scheduler ? ', or a queue that finished' : ''}. Gray when nothing has.`);
+            `Bright counts mean a chat needs review${scheduler ? ' or a queue has finished' : ''}. Gray counts need no action.`);
         row(top, [text(scheduler ? 'Q 3 / 9 ?' : '? / ?', 'tracker-help-bright')], scheduler
-            ? 'A ? means its source stopped updating: the ROTA queue snapshot (start its monitor), or the agent-bar service when every count shows ?.'
-            : 'A ? means the agent-bar service stopped updating.');
+            ? 'A question mark after Q means queue data is stale. Start the ROTA monitor. If all counts show ?, check the Agent Bar service.'
+            : 'A question mark in every count means the Agent Bar service stopped updating.');
         row(top, [text('✳', 'tracker-claude'), text('12%', 'tracker-quota-attention'), text('⌘', 'tracker-codex'), text('64%', 'tracker-quota-muted')],
-            'What is left of each provider\'s weekly usage limit: amber under 25%, red under 10%, dimmed when the reading is over '
-            + '6 h old (Claude Code refreshes its figures only when it fetches them, as /usage does). Hover for every limit; '
-            + 'clicking opens Quota, with the 5-hour and model limits, the pace, when it would run out, and use by day.');
+            'Weekly quota remaining. Amber means under 25%, red means under 10%, and dim means the reading is over six hours old. Hover for all limits or click for reset times and forecasts.');
         row(top, [text('Click a part', 'tracker-help-bright')],
-            'Each part lights on its own and opens the dropdown on its tab: the chat counts on Chats, Q on Queues, the envelope on Messages, '
-            + 'the limits on Quota, the cluster indicator on Cluster. With the dropdown open, clicking another part switches tabs; '
-            + 'clicking the open tab\'s part, or anywhere else, closes it. ? opens this guide at the part about the tab you were on.');
+            'Click a count or icon to open its tab. Click another to switch tabs, or click the same one again to close. The ? button opens this guide.');
         row(top, [text('✳ project…', 'tracker-quick-button tracker-claude')], limit
-            ? `Up to ${limit} projects with chats needing review get a shortcut, as many as fit, the longest waiting first; clicking one brings that `
-                + 'chat forward and clears it. Several chats in one project share one, with a numbered bubble per chat in its provider\'s color.  They continue right of the middle when the left half is full; +2 more lists the rest. '
-                + 'Settings › Top bar › Review buttons for picks the reasons; by default a chat stopped only by a usage limit gets none, and the Chats tab shows it.'
-            : 'Review shortcuts are off (Settings › Top bar).');
+            ? `Show up to ${limit} project buttons, oldest review first. Click a project for its longest-waiting review or a numbered badge for a specific chat. `
+                + 'Open +N more for the rest. Choose triggers under Top bar › Review events.'
+            : 'Review buttons are off. Turn them on in Settings › Top bar.');
         row(top, [text('Notifications', 'tracker-help-bright')], this._setting('notify')
-            ? 'A desktop notification also announces each chat as it comes to need review, for the same reasons, unless its window has focus; '
-                + `clicking it brings the chat forward.${this._setting('notifySound') ? ' A sound plays with it, except in Do Not Disturb.' : ''} Settings › Notifications turns them off.`
-            : 'Desktop notifications are off (Settings › Notifications).');
+            ? 'Click a review alert to open its chat. A focused chat window suppresses its review alerts. '
+                + `Message limits can also trigger alerts.${this._setting('notifySound') ? ' Review alerts play a sound unless Do Not Disturb is on.' : ''}`
+            : 'Desktop notifications are off. Turn them on in Settings › Notifications.');
         if (scheduler) row(top, [text('23%', 'tracker-muted'), text('64%', 'tracker-working'), text('94%', 'tracker-attention')],
-            'Cluster CPU: busy cores over the cores allotted to jobs (each host\'s job slots). A host\'s other cores are '
-            + 'reserved and take its load first; only load beyond them counts, up to full. '
-            + 'Gray under 50%, blue from 50%, amber from 90%. Settings › Cluster adds memory and the fullest disk.'
-            + (this._cluster ? '' : ' Shown once the ROTA collector runs.'));
+            'Estimated use of CPU slots reserved for jobs. Each host’s other cores absorb load first. Gray is below 50%, blue is 50–89%, and amber is 90% or higher.'
+            + (this._cluster ? '' : ' Waiting for the ROTA collector.'));
         if (scheduler) row(top, [this._glyph('disk', 0.92), this._glyph('memory'), this._glyph('down', null, 'failed'),
             this._glyph('unmounted', null, 'failed'), text('+1', 'tracker-failed')],
-            'A cluster warning, by kind: a drive nearly full (filled as far as it is), memory pressure, a host unreachable, '
-            + 'or the shared drive unmounted. Red when critical; +1 counts the others. Clicking it opens the Cluster tab, which names the hosts.');
+            'Warnings cover disk space, memory pressure, unreachable hosts and disconnected shared drives. Red means critical. +N counts other warnings. Click to see affected hosts.');
         if (this._setting('messages')) row(top, [this._glyph('mail', null, 'attention'), text('2', 'tracker-attention')],
-            'Messages from other agents wait in 2 chats until you start a turn there, with no wake-up coming: waking off, '
-            + 'a Claude chat idle over a week, or a Codex chat not open in VS Code. Clicking it opens Messages.');
+            'Two chats have unread messages that need a prompt from you. Click to see them in Messages.');
         row(top, [text('▾', 'tracker-nav-arrow'), ...dots(['attention', 'working', 'waiting', 'failed', 'finished'])],
-            'Every VS Code window, terminal session, Codex app and Antigravity window, with a dot for its most urgent chat: '
-            + 'needs review, working, waiting, failed, finished. Below them, a new VS Code window on the main display, and '
-            + 'Saved chats, which opens History.');
+            'Choose a window or terminal session. Its dot shows the most urgent chat status. Saved chats opens History.');
 
         const chats = card('Chats');
         row(chats, Object.entries(PROVIDERS).map(([key, [symbol]]) => text(symbol, `tracker-${key}`)),
             `The provider, in the same color everywhere: ${Object.values(PROVIDERS).map(([symbol, name]) => `${symbol} ${name}`).join(', ')}. `
             + 'Claude and Codex always have a top-bar count; the others appear while one of their chats is open.');
         row(chats, [text('· terminal', 'tracker-detail'), text('· Codex app', 'tracker-detail')],
-            'Chats in VS Code tabs, plus Claude Code, Codex or Copilot in a terminal, the Codex app, and Antigravity\'s IDE, App or CLI. '
-            + 'Clicking those brings their window '
-            + 'forward; among terminal windows that share one terminal program, the one titled after the chat.');
+            'The label shows where a chat is open. Click to focus its window. Agent Bar uses the chat title to distinguish windows in the same terminal app.');
         row(chats, [chip('Needs review', 'attention')],
             'A reply finished, a turn failed, or it needs your input. Its row gets an amber edge; opening the chat or sending it a message clears it.');
         if (scheduler) row(chats, [text('Queues finished', 'tracker-reason tracker-attention')],
-            'Every queue its project launched since the last turn there has finished, with no turn since. It goes to the project\'s '
-            + 'most recently active chat; any reason other than a finished reply is named like this under the chat\'s title.');
+            'All tracked queues in the project have finished. Its most recently active chat gets the review button.');
         row(chats, [chip('Working', 'working')], 'Replying or running tools. Counted by ● in the top bar.');
         row(chats, [chip('Waiting', 'waiting')], `${quiet ? `Open but quiet for ${quiet} min, or ended` : 'Ended'} with `
             + 'background commands, subagents, monitors or a wake-up still pending. Replies to those wake-ups need no review. Counted by ◌.');
@@ -1985,9 +1967,7 @@ class Tracker {
         row(chats, [chip('Finished', 'finished')], 'The turn ended and you have seen the reply.');
         row(chats, [chip('Failed', 'failed')], 'The turn ended in an error.');
         row(chats, [text('Continue', 'tracker-filter')],
-            'Above the chats when a usage limit stopped some open in VS Code. Codex ones get "Please continue where you left off." '
-            + 'queued and start it on their own; each Claude one comes forward with it at the end of its input box, for you to send. '
-            + 'When the cursor cannot surely be put in that box, the text is left on the clipboard to paste.');
+            'Continue resumes open VS Code chats stopped by a usage limit. Codex queues the prompt. In Claude Code, press Send. If the input box is unavailable, paste the prompt from the clipboard.');
         row(chats, [chip('Interrupted', 'muted'), chip('Unknown', 'muted')],
             'You stopped the turn, or no status has arrived yet (an older Claude chat may need /hooks).');
 
@@ -1995,7 +1975,7 @@ class Tracker {
         row(controls, [icon('window-maximize-symbolic')], 'Show the window maximized and in front on the main display, without changing chats.');
         row(controls, [icon('window-restore-symbolic')], 'Return the window to its previous place, size, display and workspace.');
         row(controls, [icon('view-fullscreen-symbolic'), icon('view-restore-symbolic'), text('⌄ ›', 'tracker-muted')],
-            'Expand or collapse every group; ⌄ and › show one group\'s state, and clicking its header toggles it.');
+            'Expand or collapse all groups. Click a group heading to toggle just that group.');
         const picker = new St.BoxLayout({style_class: 'tracker-picker tracker-picker-active tracker-picker-content', y_align: Clutter.ActorAlign.CENTER});
         for (const [value, style] of [['Filter:', 'tracker-picker-caption'], ['Review', 'tracker-picker-value'], ['▾', 'tracker-picker-caption']])
             picker.add_child(text(value, style));
@@ -2004,13 +1984,12 @@ class Tracker {
             ? 'Clicking a chat selects it and maximizes its window on the main display; clicking it again while focused sends the window back.'
             : 'Clicking a chat selects it and maximizes its window on the main display.');
         row(controls, [chip('Open', 'open'), chip('Resume', 'muted')],
-            'History: Open brings an open chat forward; Resume reopens a closed one in VS Code on its folder.');
+            'Open focuses an existing chat. Resume reopens a saved chat in its project folder in VS Code.');
         row(controls, [icon('view-refresh-symbolic')], 'Rescan saved conversations now. History also rescans nightly.');
 
         if (this._setting('git')) {
             const git = card('Git');
-            row(git, [chip('3 changed', 'working')], 'Each repository holding an open project, with its uncommitted files: '
-                + 'staged, modified, untracked or conflicted.');
+            row(git, [chip('3 changed', 'working')], 'Counts staged, modified, untracked and conflicted files in each open project.');
             row(git, [chip('Unpushed', 'waiting'), chip('Clean', 'finished')], 'Commits not yet pushed, or nothing to commit or push. '
                 + '↑↓ count commits ahead of and behind its upstream as of the last fetch; Agent Bar never fetches.');
             row(git, [chip('Conflicts', 'failed'), chip('Rebasing', 'attention')], 'A merge conflict, or a rebase, merge or cherry-pick left unfinished.');
@@ -2019,56 +1998,36 @@ class Tracker {
 
         if (this._setting('messages')) {
             const letters = card('Messages');
-            row(letters, [text('✉ 2 unread', 'tracker-detail')], 'Messages from other chats wait for this one. It sees their count when '
-                + 'its next turn starts, from you or an automatic wake-up, and reads them with `agent-bar inbox`.');
+            row(letters, [text('✉ 2 unread', 'tracker-detail')], 'The receiving chat sees its unread count at the start of its next turn. It reads the messages with agent-bar inbox.');
             row(letters, [this._glyph('mail', null, 'attention'), this._glyph('mail', null, 'help-bright'), this._glyph('mail-open', null, 'muted')],
-                'On a thread\'s chats: messages to it unread, waiting for you to start a turn there (amber) or for a wake-up; '
-                + 'opened once it has read them all.');
-            row(letters, [chip('Unread', 'attention'), chip('Read', 'muted')], 'In Messages, by pair of chats. A chat can send at most 10 '
-                + 'to another between your prompts to it, and 10 an hour; agents are told to treat them as information, not instructions.');
+                'Amber mail needs a prompt from you. A closed envelope means messages are unread. An open envelope means the chat has read them all.');
+            row(letters, [chip('Unread', 'attention'), chip('Read', 'muted')], 'Messages are grouped by sender and recipient. Each sender has an hourly limit and a separate limit for each recipient.');
             const reset = new St.Label({text: 'Reset limit', style_class: 'tracker-filter tracker-reset-limit', y_align: Clutter.ActorAlign.CENTER});
-            row(letters, [reset], 'When a pair reaches that limit, its header says so and how many sends were held back; the sending agent is told '
-                + 'to ask you. Reset limit allows another round without writing to either chat.');
-            row(letters, [text(this._setting('wake') ? 'Wake: on' : 'Wake: off', 'tracker-detail')], 'With Settings › Integrations › Wake idle '
-                + 'chats on, a message starts a turn in an idle Claude Code chat (up to a week after its last turn), once per message, and in a Codex '
-                + 'chat open in VS Code, after any turn in progress ends, if the message is still unread then.');
+            row(letters, [reset], 'Allow the sender another round of messages to this recipient. A new prompt to the sender also resets its limit.');
+            row(letters, [text(this._setting('wake') ? 'Wake: on' : 'Wake: off', 'tracker-detail')], 'Enable Wake idle chats to let a message start a turn in Claude Code or in Codex in VS Code. Claude can wake up to a week after its last turn.');
         }
 
         const tickets = card('Tickets');
-        row(tickets, [this._glyph('ticket', null, 'help-bright'), text('2', 'tracker-help-bright')], 'In the top bar: tickets that waited for something '
-            + 'that has now passed (Settings › Top bar › Ticket count can count every ready one). A ticket is a task you or an agent wants done '
-            + 'later, in one project; write one with New ticket, or an agent runs `agent-bar ticket add`.');
-        row(tickets, [text('waits until', 'tracker-detail')], 'A ticket can wait for a usage limit to reset, the project\'s queues to finish, a time, '
-            + 'or another ticket to close; each is fixed when it is written (that reset, the queues outstanding then), and it is ready once all have passed.');
-        row(tickets, [new St.Icon({icon_name: 'alarm-symbolic', icon_size: 14, style_class: 'tracker-help-icon'})], 'On a chat in Chats: '
-            + 'schedule a message to it, once or repeating, in a second dropdown beside this one. It is a ticket sent to that chat when its time '
-            + 'comes, listed under Scheduled in Tickets; it arrives as your request, and waits for your next prompt there if Wake idle '
-            + 'chats is off. The number beside the clock counts what is scheduled for that chat.');
-        row(tickets, [new St.Icon({icon_name: 'view-list-symbolic', icon_size: 14, style_class: 'tracker-help-icon'})], 'On a chat in Chats: '
-            + 'the task checklists (tmp/agent/checklists) of its project, in a second dropdown beside this one: the ones it edited first, then recent ones, then older '
-            + 'ones with open items. Each shows its progress (dropped items left out), a suggested next item, what needs you, and who last edited '
-            + 'it; Open shows it in VS Code. An amber number counts items that need you.');
-        row(tickets, [text('Start', 'tracker-filter')], 'Opens a new Claude Code chat in the ticket\'s folder, in VS Code (opening a window there if '
-            + 'none is), with the ticket as its prompt in the input box, unsent. The prompt asks the chat to run `agent-bar ticket take` before starting '
-            + 'and `agent-bar ticket done` after, which move it to Started and Closed.');
-        row(tickets, [this._copyButton(() => '', 'Copy', true)], 'Copies the same prompt, to paste into any chat, such as a Codex one. Done and Drop '
-            + 'close a ticket here; Reopen undoes either.');
+        row(tickets, [this._glyph('ticket', null, 'help-bright'), text('2', 'tracker-help-bright')], 'The ticket count shows ready tasks. By default, it counts tasks that had to wait. Choose All ready to include tasks you can start immediately.');
+        row(tickets, [text('waits until', 'tracker-detail')], 'A ticket becomes ready when all its conditions are met. It can wait for a time, a usage reset, the queues active when you created it, or another ticket to close.');
+        row(tickets, [new St.Icon({icon_name: 'alarm-symbolic', icon_size: 14, style_class: 'tracker-help-icon'})], 'Schedule a one-time or repeating message for this chat. The clock shows how many are scheduled. Manage them in Tickets. With waking off, delivery waits for your next prompt.');
+        row(tickets, [new St.Icon({icon_name: 'view-list-symbolic', icon_size: 14, style_class: 'tracker-help-icon'})], 'Open this project’s task checklists. The amber number counts items needing your input. Open takes you to the file in VS Code.');
+        row(tickets, [text('Start', 'tracker-filter')], 'Start opens a new Claude Code chat in the ticket’s folder. Review and send the prefilled prompt to begin.');
+        row(tickets, [this._copyButton(() => '', 'Copy', true)], 'Copy the ticket prompt for another chat. Done marks a task complete. Drop cancels it. Reopen restores either.');
 
         const quota = card('Quota');
         const bar = new St.Widget({style_class: 'tracker-progress tracker-help-progress', y_align: Clutter.ActorAlign.CENTER});
         const used = new St.Widget({style_class: 'tracker-progress-fill tracker-progress-attention'});
         used.set_width(px(64));
         bar.add_child(used);
-        row(quota, [bar], 'How much of a limit is used, amber once under 25% is left and red under 10%, with when it resets.');
-        row(quota, [chip('Limiting now', 'failed')], 'A limit that is holding you back now, such as a model\'s own weekly limit once it is used up.');
-        row(quota, [text('0.54%/h', 'tracker-detail')], 'The pace since the reading a day earlier, or this window\'s average when there is none, '
-            + 'and when that pace would use the rest: before the reset, by how much, or what will be used by then.');
+        row(quota, [bar], 'The bar shows quota used. Amber means less than 25% remains. Red means less than 10% remains.');
+        row(quota, [chip('Limiting now', 'failed')], 'This limit is exhausted. Check the reset time to see when you can use it again.');
+        row(quota, [text('0.54%/h', 'tracker-detail')], 'The forecast uses the past day’s usage, or the current quota period if there is less history. It estimates whether you will reach the limit before it resets.');
         row(quota, [this._drawing((cr, width, height) => paintDays(cr, width, height, [[30, 8], [12, 4], [0, 0], [20, 10]]
             .map(([total, model]) => ({used: total, parts: [['Model', model], ['Other', total - model]]}))), {width: 72, height: 24})],
-            'Points of a weekly limit used each day, a scoped model\'s share (such as Fable) in violet; hover for the figures.');
+            'Each bar shows percentage points of weekly quota used that day. Violet shows the named model’s share. Hover for exact values.');
         row(quota, [text(this._setting('claudeUsage') ? 'Reads: on' : 'Reads: off', 'tracker-detail')],
-            'Claude Code refreshes its limits only when it fetches them, as /usage does. Settings › Integrations › Read Claude limits '
-            + 'has Agent Bar read them every 10 minutes with Claude Code\'s sign-in. Codex records its own as it works.');
+            'Claude Code records limits when it checks them, including with /usage. Enable Read Claude limits for checks every 10 minutes. Codex records limits during turns.');
 
         // The rest describes the job scheduler integration.
         if (!scheduler) return;
@@ -2078,34 +2037,28 @@ class Tracker {
         const fill = new St.Widget({style_class: 'tracker-progress-fill tracker-progress-working'});
         fill.set_width(px(72));
         track.add_child(fill);
-        row(queues, [track], 'Jobs done of the total, colored by state; the line beside it adds workers, run time and ETA while active.');
+        row(queues, [track], 'The bar shows jobs finished out of all jobs in the queue. Hover over a queue number for progress and ETA.');
         row(queues, [chip('RUNNING', 'working')], 'Workers are running its jobs.');
         row(queues, [chip('PENDING', 'muted')], 'Unfinished with no running workers: paused, blocked or waiting for capacity.');
         row(queues, [chip('DRAINING', 'muted')], 'Winding down: waiting on running jobs or reservations, or held during pool maintenance.');
         row(queues, [chip('COMPLETED', 'finished')], 'Every job succeeded.');
-        row(queues, [chip('FINISHED_INCOMPLETE', 'failed')], 'Nothing left running, but some jobs have no success marker. FAILED is red too.');
+        row(queues, [chip('FINISHED_INCOMPLETE', 'failed')], 'The queue stopped with some jobs unfinished. Check failed jobs in Cluster.');
         row(queues, [chip('KILLED', 'muted'), chip('UNLISTED', 'muted')],
             'Stopped, or an active queue the monitor no longer lists (outcome unknown). Both count as finished.');
         row(queues, [text('3 failed, last 12:19', 'tracker-detail')],
-            'Jobs that ended without a done marker and are not yet rerun, with the time of the newest.');
+            'Failed jobs awaiting a rerun, with the time of the latest failure.');
         row(queues, [text('Q 2 / 5', 'tracker-attention tracker-project-total')],
-            'A project\'s queues finished / outstanding since its last turn. A new turn there, from either provider, drops queues that already finished; other filters show those dimmed.');
+            '2 of 5 tracked queues have finished. Starting a turn in that project clears finished queues from the count. Unfinished queues still count.');
         row(queues, [text('Clear', 'tracker-filter')],
-            'Beside a project with finished queues: drops them as a new turn there would; running ones stay.');
+            'Clear removes finished queues from this project’s count.');
         row(queues, [text('Adjust', 'tracker-filter')],
-            'On a queue, the pool or a host the scheduler can still change: what `rota control` offers there, '
-            + 'such as pausing, priority, worker cap, memory, host budgets and drain. Hover a name\'s ⓘ or a button for what it does, '
-            + 'or why it is unavailable now. Edited settings turn blue and go together with Apply, each with the value shown, '
-            + 'so one changed meanwhile is refused; irreversible actions ask first. Applied changes show within about 30 s.');
+            'Change queue, pool or host settings. Hover over a control for details. Apply submits your edits together. If a value changed elsewhere, refresh before retrying. Updates can take about 30 seconds.');
 
         const cluster = card('Cluster');
         row(cluster, dots(['finished', 'attention', 'failed']),
-            'A host is fine, has a warning, or is unreachable. Warnings are listed first, each with its sign from the top bar; '
-            + 'a clock marks a host that stopped updating. Snooze keeps one off the top bar until it clears, or for at most '
-            + 'a time you type (90m, 120h, 5d, 2w; a bare number is hours); snoozed ones follow, gray.');
+            'Host colors mean healthy, warning or unreachable. A clock means the reading is stale. Snooze hides a warning until it clears or the time expires. Use 90m, 5d or 2w. A number alone means hours.');
         row(cluster, [text('node-1', 'tracker-cluster-host')],
-            'A node\'s name: hover it a second for the projects using its job slots; click it for the queues running there, '
-            + 'its state, and its last day\'s failed jobs, holds, outages and memory pressure.');
+            'Hover over a host for its projects. Click for running queues, host status and the past day’s failures, holds, outages and memory warnings.');
         row(cluster, [this._drawing((cr, width, height) => paintCores(cr, width, height, [18, 42, 63, 78, 91, 97, 55, 30]),
             {width: 120, height: 24})], 'One bar per core, as tall as the core is busy, colored like the CPU percentage: gray under '
             + '50%, blue from 50%, amber from 90%.');
@@ -2114,11 +2067,9 @@ class Tracker {
         const sample = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(i => ({at: i * SHARED_WINDOW / 9, rx: [2, 3, 9, 14, 8, 5, 6, 12, 7, 4][i],
             tx: [1, 1, 2, 3, 2, 1, 1, 2, 2, 1][i]}));
         row(cluster, [this._drawing((cr, width, height) => paintSlots(cr, width, height, 9, 8), {width: 120, height: 10})],
-            'Shared drive: the adaptive pool\'s job slots, running (blue) of those it allows now. It lowers that while '
-            + 'it holds back for resources or I/O, so running jobs can pass it (amber).');
+            'Running job slots compared with the pool’s current allowance. Amber means the pool lowered its allowance below the number already running.');
         row(cluster, [this._drawing((cr, width, height) => paintSpark(cr, width, height, sample, ['rx', 'tx']), {width: 120, height: 20})],
-            'The drive\'s throughput and its host\'s network over the last 10 minutes, each scaled to its peak: '
-            + 'network in filled, out as a line. Kept while the panel runs.');
+            'Drive and network activity over the past 10 minutes. Each graph uses its own peak. Filled network area shows incoming traffic. The line shows outgoing traffic.');
         row(cluster, [text('12 failed', 'tracker-failed'), icon('edit-copy-symbolic')],
             'Failed jobs not yet rerun, by project. Copy puts a note for that project\'s agent on the clipboard: queues, batches, paths, and hosts down. '
             + 'The window buttons bring the project\'s VS Code window forward or send it back.');
@@ -2158,7 +2109,7 @@ class Tracker {
             [text('◌ 1', 'tracker-waiting'), '◌ Waiting', 'tracker-waiting', 'quiet, or background work pending'],
             ...this._setting('messages') ? [[mail, 'Mail', 'tracker-attention', 'waits for you to start a turn']] : [],
             ...this._setting('scheduler') ? [
-                [text('Q 4 / 9', 'tracker-help-bright'), 'Q Queues', 'tracker-help-bright', 'finished / outstanding since last turn'],
+                [text('Q 4 / 9', 'tracker-help-bright'), 'Q Queues', 'tracker-help-bright', 'finished / total tracked'],
                 [cluster, 'Cluster', 'tracker-working', 'with a sign when a host needs a look']] : [],
             [text('▾', 'tracker-nav-arrow'), '▾ Windows', 'tracker-help-bright', 'every chat window'],
             [text('✳ my-project…', 'tracker-quick-button tracker-claude'), 'Review shortcut', 'tracker-claude', 'jumps to a chat with a new reply'],
@@ -3017,7 +2968,7 @@ class Tracker {
             }
             // What was typed survives the list rebuilding under it as the warning's text changes.
             const choices = new St.BoxLayout({style_class: 'tracker-cluster-snooze', x_align: Clutter.ActorAlign.END});
-            choices.add_child(new St.Label({text: 'Off the top bar until it clears, or at most', style_class: 'tracker-detail',
+            choices.add_child(new St.Label({text: 'Hide until the warning clears or for up to', style_class: 'tracker-detail',
                 y_align: Clutter.ActorAlign.CENTER}));
             const limit = new St.Entry({hint_text: 'e.g. 5d or 120h', text: view.typed || '', can_focus: true,
                 style_class: 'tracker-search tracker-cluster-snooze-entry', y_align: Clutter.ActorAlign.CENTER});
@@ -3475,7 +3426,7 @@ class Tracker {
             for (const [child, target, name] of [[mark, 'help', 'What the symbols and colors mean'], [gear, 'settings', 'Settings']]) {
                 const back = page === target;
                 const button = new St.Button({can_focus: true, style_class: back ? 'tracker-gear tracker-back' : 'tracker-gear',
-                    accessible_name: back ? 'Back to conversations' : name, ...back ? {label: '◀'} : {child: child()}});
+                    accessible_name: back ? 'Back to the current tab' : name, ...back ? {label: '◀'} : {child: child()}});
                 button.connect('clicked', () => {
                     if (!back && target === 'help') this._helpFrom = this._view;
                     this._page = back ? null : target;
@@ -3494,7 +3445,10 @@ class Tracker {
             this._button.menu.addMenuItem(item);
             return item;
         };
-        this._search = new St.Entry({hint_text: this._isChatList() ? 'Search messages and titles · repo:name to narrow' : this._view === 'info' ? 'Search hooks and skills…' : 'Search conversations, projects, or queues…',
+        /** @type {Record<string,string>} */
+        const searchHints = {info: 'Search hooks and skills…', tickets: 'Search tickets…', queues: 'Search projects and queues…',
+            git: 'Search repositories and branches…', messages: 'Search messages and chats…'};
+        this._search = new St.Entry({hint_text: this._isChatList() ? 'Search titles and messages · filter with repo:name' : searchHints[this._view] || 'Search…',
             can_focus: true, x_expand: true, style_class: 'tracker-search'});
         if (this._isChatList()) this._search.set_text(this._chatQuery);
         const tabs = new St.BoxLayout({style_class: 'tracker-filters tracker-tabs'});
@@ -3757,16 +3711,15 @@ class Tracker {
         if (!snapshot) return;
         const query = this._search.text.toLowerCase();
         this._footer.label.text = {
-            queues: `From ROTA · updated ${age(snapshot.queue_updated)} · counts reset at each turn in the project`,
-            history: 'Saved conversations, rescanned daily · click one to resume it in its folder',
-            messages: 'A chat sees its unread count at its next turn start · at most 10 to one chat between your prompts',
-            tickets: 'Agents write them with `agent-bar ticket add` · ready once what each waits for has passed',
-            info: 'Read from local files when this tab opens, and again after 30 s · nothing polls in the background',
-            cluster: '',
+            queues: `ROTA updated ${age(snapshot.queue_updated)} · a new turn clears that project’s finished queues`,
+            history: 'Saved chats · scanned daily · click to open or resume',
+            messages: 'Chats receive unread counts when their next turn starts.',
+            tickets: 'A ticket is ready when all its conditions are met.',
+            info: 'Project hooks, skills and instructions · refreshed when viewed',
             cluster: 'From the ROTA collector',
-            quota: `As Claude Code and Codex record them here, read each minute${this._setting('claudeUsage') ? ', and from Claude every 10 min' : ''} · Copilot and Antigravity record none here`,
-            git: `Read-only git status of open projects${snapshot.git ? `, ${age(snapshot.git.updated)}` : ''} · ↑↓ as of the last fetch · click for Source Control`,
-        }[this._view] || `Top bar: needs review / open chats${this._queuesShown(snapshot) ? '   ·   Q finished / outstanding since last turn' : ''}`;
+            quota: `Local Claude and Codex usage · checked every minute${this._setting('claudeUsage') ? ' · Claude limits fetched every 10 minutes' : ''}`,
+            git: `Open repositories${snapshot.git ? `, ${age(snapshot.git.updated)}` : ''} · ↑ ahead / ↓ behind at last fetch · click for Source Control`,
+        }[this._view] || `Top bar: needs review / open chats${this._queuesShown(snapshot) ? '   ·   Q finished / total tracked' : ''}`;
         if (this._view === 'queues') {
             this._renderQueues(snapshot, query);
             return;
@@ -3837,7 +3790,7 @@ class Tracker {
         for (const warning of snapshot.warnings)
             this._section.addMenuItem(this._item(warning, 'tracker-warning'));
         if (rows.some(row => row.provider === 'claude' && row.state === 'unknown'))
-            this._section.addMenuItem(this._item('Claude status awaits its first lifecycle event; existing chats may need /hooks to load the observer.', 'tracker-warning'));
+            this._section.addMenuItem(this._item('Waiting for Claude Code to report chat activity. Run /hooks in an existing chat to load the status hook.', 'tracker-warning'));
     }
 
     // Above the chats: how many a usage limit stopped, and a button to have them go on.
@@ -4095,7 +4048,7 @@ class Tracker {
             `${q.project} ${q.label}`.toLowerCase().includes(query));
         const groups = queueGroups(queues, snapshot.queue_counts, this._setting('queueOrder'), this._queueFilter);
         if (Date.now() / 1000 - snapshot.queue_updated > 120)
-            this._section.addMenuItem(this._item('Snapshot stale · start the ROTA monitor to refresh queue progress', 'tracker-warning'));
+            this._section.addMenuItem(this._item('Queue data is out of date. Check that the ROTA monitor is running.', 'tracker-warning'));
         if (Date.now() - this._controlsAt > 10000) this._loadControls();
         /** @type {string[]} */
         this._dependencyIds = groups.flatMap(([, items]) => items.map(/** @param {{id:string}} q */ q => q.id));
@@ -4174,7 +4127,7 @@ class Tracker {
                     const text = resources.facts.join(' · ');
                     const label = new St.Label({text, style_class: 'tracker-detail', x_align: Clutter.ActorAlign.START});
                     label.clutter_text.ellipsize = Pango.EllipsizeMode.END;
-                    box.add_child(this._tooltip(label, `${text}\nAs the scheduler reports them: GPU slots are reservations, not measured GPU use.`));
+                    box.add_child(this._tooltip(label, `${text}\nGPU slots show reserved capacity.`));
                 }
                 if (resources.hold) box.add_child(new St.Label({text: resources.hold, style_class: 'tracker-detail tracker-attention'}));
                 item.add_child(box);
@@ -4183,7 +4136,7 @@ class Tracker {
             }
         }
         this._updateQueueGates();
-        if (!groups.length) this._section.addMenuItem(this._item('No matching watched queues', 'tracker-empty'));
+        if (!groups.length) this._section.addMenuItem(this._item('No matching queues', 'tracker-empty'));
         const pool = described?.pool;
         const hosts = (described?.hosts || []).filter(host => !query || `pool ${host.label}`.toLowerCase().includes(query));
         if (pool && (!query || hosts.length)) {
@@ -4739,8 +4692,8 @@ class Tracker {
                 const item = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
                 item._ornamentLabel?.hide();
                 const text = new St.Label({x_expand: true, y_align: Clutter.ActorAlign.CENTER, style_class: 'tracker-reason tracker-attention',
-                    text: held.map(h => `${symbol(h.sender)} ${titles[h.sender] || h.sender} reached its limit to ${titles[h.recipient] || h.recipient}`
-                        + (h.refused ? ` (${h.refused} held back)` : '')).join(' · ') + '; it was told to ask you.'});
+                    text: held.map(h => `${symbol(h.sender)} ${titles[h.sender] || h.sender} reached its sending limit for ${titles[h.recipient] || h.recipient}`
+                        + (h.refused ? ` (${h.refused} held back)` : '')).join(' · ')});
                 text.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
                 text.clutter_text.line_wrap = true;
                 item.add_child(text);
@@ -4757,7 +4710,7 @@ class Tracker {
                 item.add_style_class_name('tracker-conversation');
                 if (!message.read_at) item.add_style_class_name('tracker-unread');
                 const button = new St.Button({x_expand: true, can_focus: true, style_class: 'tracker-message-button',
-                    accessible_name: `Message from ${titles[message.sender] || message.sender}, click to fold or unfold`});
+                    accessible_name: `Expand or collapse message from ${titles[message.sender] || message.sender}`});
                 const box = new St.BoxLayout({vertical: true, style_class: 'tracker-row', x_expand: true});
                 const heading = new St.Label({style_class: 'tracker-detail', text: `${symbol(message.sender)} ${titles[message.sender] || message.sender}`
                     + ` → ${symbol(message.recipient)} ${titles[message.recipient] || message.recipient} · ${age(message.at)}${message.urgent ? ' · urgent' : ''}`});
@@ -4796,11 +4749,11 @@ class Tracker {
         const clock = at => new Date(at * 1000).toLocaleTimeString('en-US', {hour: 'numeric', minute: '2-digit'});
         const busiest = senders[0];
         const body = this._projectSection('messages:limits', 'Sending limits', 'per chat',
-            `${busiest.hourly} of ${busiest.limit} this hour, the most`, senders.some(/** @param {any} e */ e => e.hourly >= e.limit));
+            `${busiest.hourly} of ${busiest.limit} this hour from the busiest sender`, senders.some(/** @param {any} e */ e => e.hourly >= e.limit));
         const note = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
         note._ornamentLabel?.hide();
         const text = new St.Label({x_expand: true, style_class: 'tracker-detail', text: `Each chat can send ${limits.hourly} messages an hour, `
-            + `and ${limits.per_chat} to the same chat until you write to it. These limits count each sending chat on its own.`});
+            + `and up to ${limits.per_chat} to one recipient between your prompts to the sender.`});
         text.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
         text.clutter_text.line_wrap = true;
         // The note and every sender in one item, a line each, instead of a menu row's padding apiece.
@@ -4890,7 +4843,7 @@ class Tracker {
         item._ornamentLabel?.hide();
         const card = new St.BoxLayout({vertical: true, x_expand: true, style_class: 'tracker-ticket-card'});
         card.add_child(new St.Label({text: 'New ticket', style_class: 'tracker-ticket-heading'}));
-        const entry = new St.Entry({text: draft.text, hint_text: 'What should be done later, and anything a chat needs to know to do it',
+        const entry = new St.Entry({text: draft.text, hint_text: 'Describe the task and what the agent needs to know.',
             can_focus: true, x_expand: true, accessible_name: 'New ticket', style_class: 'tracker-search tracker-ticket-entry'});
         entry.clutter_text.single_line_mode = false;
         entry.clutter_text.activatable = false;
@@ -4934,11 +4887,11 @@ class Tracker {
                 this._renderRows();
             }));
         field('Project', chips.length ? chipRows(chips, 62)
-            : [new St.Label({text: 'No open folders; agent-bar ticket add --project DIR writes one anywhere', style_class: 'tracker-detail'})]);
+            : [new St.Label({text: 'Open a project folder or use agent-bar ticket add --project DIR.', style_class: 'tracker-detail'})]);
         // What it waits for: any limit recorded here with a reset, the project's queues, a time.
         const waits = [...Object.keys(snapshot.usage || {}).filter(provider => snapshot.usage[provider]?.limits?.some(limit => limit.resets_at))
             .map(provider => [`reset:${provider}`, `${PROVIDERS[provider]?.[1] || provider} limit resets`,
-                'The limit binding now, or else the weekly one: its reset as it stands now']),
+                'Use the current reset time for the exhausted limit, or the weekly limit if none is exhausted.']),
             ...this._setting('scheduler') ? [['queues', 'Its queues finish', 'The project\'s queues outstanding now']] : []]
             .map(([value, label, tip]) => {
                 const button = chip(label, draft.waits.includes(value), tip, () => {
@@ -5129,7 +5082,7 @@ class Tracker {
         every.visible = draft.repeat === 'every';
         this._side.add_child(every);
         const note = new St.Label({style_class: draft.error ? 'tracker-warning' : 'tracker-detail',
-            text: draft.error || (this._setting('wake') ? 'At that time, an idle chat is woken to read it; a busy one reads it when its turn ends.'
+            text: draft.error || (this._setting('wake') ? 'At the scheduled time, an idle chat can wake to read the message.'
                 : 'Wake idle chats is off (Settings › Integrations), so it waits for your next prompt in that chat.')});
         note.clutter_text.line_wrap = true;
         note.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
@@ -5230,7 +5183,7 @@ class Tracker {
         const files = entries.flatMap(([folder, entry]) => entry.files.map(file => ({...file, folder})));
         const byPath = new Map(files.map(file => [file.path, file]));
         const titles = new Map((this._menuSnapshot?.rows || []).map(row => [row.key, `${PROVIDERS[row.provider]?.[0] || '•'} ${row.title}`]));
-        if (!files.length) add('No checklists with open items or recent changes in tmp/agent/checklists here.', 'tracker-detail');
+        if (!files.length) add('No recent or unfinished checklists in this project.', 'tracker-detail');
         for (const [name, list] of checklistSections(files, view.key)) {
             const older = name.startsWith('Older');
             add(older ? `${name} (${list.length})` : name, 'tracker-ticket-caption');
@@ -5420,16 +5373,15 @@ class Tracker {
             const value = usage[provider];
             const weekly = quotaLeft(usage, provider, now);
             const body = this._projectSection(`quota:${provider}`, PROVIDERS[provider][1], `reading ${age(value.as_of)}`,
-                weekly ? `${Math.floor(weekly.left)}% of the week left` : '', !!weekly && weekly.left < 25);
+                weekly ? `${Math.floor(weekly.left)}% of weekly quota left` : '', !!weekly && weekly.left < 25);
             if (value.fetch?.error) {
                 const next = value.fetch.next ? `; trying again in ${duration(Math.max(60, Math.round(value.fetch.next - now)))}` : '';
                 body.addMenuItem(this._quotaNote(`Agent Bar's last read of Claude's limits failed: ${value.fetch.error}${next}.`,
                     'tracker-detail tracker-attention'));
             } else if (now - value.as_of > QUOTA_STALE) {
                 body.addMenuItem(this._quotaNote(provider === 'claude'
-                    ? 'Claude Code updates these figures only when it fetches them, as /usage does. Settings › Integrations › '
-                        + 'Read Claude limits has Agent Bar read them every 10 minutes.'
-                    : 'Codex records these as it works; they update with its next turn.', 'tracker-detail tracker-attention'));
+                    ? 'Run /usage in Claude Code for a fresh reading, or enable Read Claude limits in Settings › Integrations.'
+                    : 'Codex updates its limits during the next turn.', 'tracker-detail tracker-attention'));
             }
             for (const limit of [...value.limits].sort((a, b) => order(a) - order(b))) body.addMenuItem(this._quotaLimit(limit, value.as_of, now));
         }
@@ -5440,13 +5392,12 @@ class Tracker {
     // share, and tokens from models without a price.
     _renderCosts(snapshot) {
         if (!this._setting('costs')) return;
-        if (snapshot.costs_error) this._section.addMenuItem(this._item(`Costs uncounted: ${snapshot.costs_error}`, 'tracker-warning'));
+        if (snapshot.costs_error) this._section.addMenuItem(this._item(`Could not calculate costs: ${snapshot.costs_error}`, 'tracker-warning'));
         const costs = snapshot.costs;
         if (!costs) return;
-        const body = this._projectSection('quota:cost', 'Cost at API prices', `prices of ${costs.checked}`,
+        const body = this._projectSection('quota:cost', 'Cost at API prices', `prices as of ${costs.checked}`,
             `${dollars(costs.today)} today · ${dollars(costs.week)} in 7 days`, false);
-        body.addMenuItem(this._quotaNote('What the use Claude Code and Codex recorded on this computer would cost at API prices, from '
-            + 'their token counts, including cache reads and writes. Subscription plans are billed differently.'));
+        body.addMenuItem(this._quotaNote('Estimated API cost of local Claude and Codex usage, including cached tokens. Subscription billing is separate.'));
         const item = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
         item._ornamentLabel?.hide();
         item.add_style_class_name('tracker-queue-row');
@@ -5546,7 +5497,7 @@ class Tracker {
         }
         if (limit.days?.length) {
             if (limit.readings < 3) {
-                box.add_child(label(`Use by day shows once there are more readings this week (${limit.readings} so far).`, 'tracker-muted tracker-quota-small', true));
+                box.add_child(label(`Daily usage needs at least three readings this week (${limit.readings} so far).`, 'tracker-muted tracker-quota-small', true));
             } else {
                 this._dayChart(box, limit.days, 20, limit.days.map(day => `${day.day}: ${day.used.toFixed(1)} points`
                     + (day.parts.length > 1 ? ` (${day.parts.map(([name, v]) => `${name} ${v.toFixed(1)}`).join(', ')})` : '')).join('\n'));
@@ -5708,9 +5659,9 @@ class Tracker {
         const health = card('Agent Bar health');
         const mark = ok => label(ok ? '✓' : '✗', ok ? 'tracker-finished' : 'tracker-failed');
         const hooks = info.health.hooks, last = info.health.last_event;
-        line(health, [this._providerLabel('claude'), label('lifecycle hook'), mark(hooks.claude.observer), label('message waiter'),
+        line(health, [this._providerLabel('claude'), label('chat status hook'), mark(hooks.claude.observer), label('message wake-up hook'),
             mark(hooks.claude.waiter), label(last.claude ? `last event ${age(last.claude)}` : 'no events yet', 'tracker-detail', true)]);
-        line(health, [this._providerLabel('codex'), label('lifecycle hook'), mark(hooks.codex.observer),
+        line(health, [this._providerLabel('codex'), label('chat status hook'), mark(hooks.codex.observer),
             label(last.codex ? `last event ${age(last.codex)}` : 'no events yet', 'tracker-detail', true)]);
         if (!hooks.claude.observer || !hooks.claude.waiter || !hooks.codex.observer)
             line(health, [label('Install missing hooks with agent-bar install', 'tracker-warning', true)]);
@@ -5722,7 +5673,7 @@ class Tracker {
         bridges.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
         bridges.clutter_text.line_wrap = true;
         line(health, [bridges]);
-        line(health, [label(`The agent-bar service updated ${age(snapshot.updated)}`, 'tracker-detail', true)]);
+        line(health, [label(`Last service update: ${age(snapshot.updated)}`, 'tracker-detail', true)]);
         for (const error of info.health.errors) line(health, [label(`Hook error: ${error}`, 'tracker-failed', true)]);
         for (const warning of snapshot.warnings) line(health, [label(warning, 'tracker-warning', true)]);
 
@@ -5845,7 +5796,7 @@ class Tracker {
                     this._button.menu.close();
                     Gio.AppInfo.launch_default_for_uri(repo.pull.url, null);
                 });
-                box.add_child(this._tooltip(pull, `${repo.pull.url}\nAs of GitHub's answer within the last 5 minutes`));
+                box.add_child(this._tooltip(pull, `${repo.pull.url}\nGitHub status is checked at most every 5 minutes.`));
             } else if (this._setting('pullRequests') && repo.pull_error) {
                 const label = new St.Label({text: `Pull request unknown: ${repo.pull_error}`, style_class: 'tracker-detail tracker-muted'});
                 label.clutter_text.ellipsize = Pango.EllipsizeMode.END;

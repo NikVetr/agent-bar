@@ -2,47 +2,19 @@
 
 # Agent Bar
 
-Agent Bar puts your open AI coding agent chats in your desktop's menu bar. You can see at a glance which ones have
-finished and need your review, which are still working, and which are waiting on you, and one click brings a chat's
-window forward. It also shows your projects' git status and usage limits, lets agents in different chats leave each
-other notes and tickets for later, and can follow job queues from the optional ROTA job scheduler.
-
-It reads only local files that the agent tools already write, plus small hooks that record when a turn starts and
-ends. Nothing leaves your computer unless you turn on reading Claude's usage limits (see [Privacy](#privacy)).
+Agent Bar shows which coding agents are working, waiting or ready for review in the GNOME top bar. Click a chat to
+bring its window, editor tab or sidebar forward. It tracks the chats you already use in VS Code, terminals and
+desktop apps. Optional integrations add GitHub pull requests, Claude quota checks and ROTA job queues.
 
 <p align="center"><img src="docs/images/click-to-chat.gif" alt="Clicking a chat's review button brings its VS Code window forward, maximized, with that chat showing; clicking again sends it back" width="820"></p>
-
-## Highlights
-
-- **Works with the agents where you already run them.** Claude Code, Codex, GitHub Copilot CLI and Antigravity, in
-  VS Code, the terminal and their desktop apps. Agent Bar watches the chats you open; it does not start, wrap or
-  host agents, so you keep each tool's own interface, settings and sign-in.
-- **One glance, one click.** Counts per provider of chats needing review, working and waiting, a button for each chat
-  that needs you, and a desktop notification as each one comes to need you. A click brings the exact VS Code tab or
-  sidebar chat forward, maximized, and a second click sends it back.
-- **Usage limits and cost.** Claude and Codex 5-hour, weekly and per-model limits, the pace of use, and when that
-  pace would run out compared with the reset. What your use would cost at API prices, per day, per model and per
-  chat, counted from the agents' own token records. A setting lets Codex chats in VS Code that a five-hour limit
-  stopped continue on their own when it resets.
-- **Agents that coordinate.** Agents in different chats, projects and providers can message each other, and idle
-  chats can be woken to read them. Tickets hold work for later, until a usage limit resets, job queues finish, a time
-  comes, or another ticket closes. Messages can be scheduled to a chat, once or on repeat.
-- **Your history, searchable.** Full-text search over saved Claude and Codex conversations, by project or across all
-  of them, with context around each hit, one-click resume, and export to HTML or Markdown.
-- **Local and inspectable.** Everything runs on your computer from files the agent tools already write. Every view is
-  also available as JSON from the `agent-bar` command line.
-
-Most multi-agent tools launch agents inside their own terminal or app, or cover one provider. Agent Bar observes the
-chats you already have open, across providers. [How Agent Bar compares](docs/comparison.md) surveys related projects,
-what each offers, and where Agent Bar fits.
 
 ## A tour
 
 The screenshots show made-up projects.
 
-**The top bar.** Chats needing review / open per provider, weekly limit left, working and waiting counts, agent mail,
-tickets that came due, queue progress, and a button for each chat that needs you. A notification announces each chat
-as it comes to need you.
+**The top bar.** See how many chats need review, how many are open, and how much weekly quota remains for each provider.
+Project buttons take you to chats needing attention. Other indicators show working and waiting chats, unread messages,
+ready tickets and queue progress.
 
 <p><img src="docs/images/topbar.webp" alt="The top bar: counts per provider, limits left, working and waiting, mail, tickets, queues, and review buttons" width="100%"></p>
 <p><img src="docs/images/notification.webp" alt="A desktop notification: Codex · sampler-study, Reply finished" width="420"></p>
@@ -54,8 +26,8 @@ export.
 <p><img src="docs/images/chats.webp" alt="The Chats tab" width="49%"> <img src="docs/images/history.webp" alt="History search with context" width="49%"></p>
 <p><img src="docs/images/history-search.gif" alt="Searching History for words in saved conversations, then showing a hit's context" width="820"></p>
 
-**Messages and tickets.** Agents in different chats leave each other notes, or tickets for work to do later, waiting
-for a usage limit to reset, queues to finish, or a time. Messages can also be scheduled to a chat.
+**Messages and tickets.** Send notes between chats or schedule a message for later. Create a project ticket for work that
+can start at a given time, after a usage limit resets or when the project’s queues finish.
 
 <p><img src="docs/images/agent-messages.gif" alt="A Codex chat sends a Claude Code chat a message with agent-bar send; the Claude chat sees it at its next turn" width="820"></p>
 <p><img src="docs/images/messages.webp" alt="The Messages tab" width="49%"> <img src="docs/images/tickets.webp" alt="The Tickets tab" width="49%"></p>
@@ -93,9 +65,6 @@ The [user guide](docs/guide.md) describes every part in detail.
 | macOS | the menu bar | planned |
 | Windows | the system tray | planned |
 
-The service, command line, hooks and VS Code bridge are shared by every platform; each platform has its own small
-menu-bar front end.
-
 ## Install
 
 You need Python 3.10 or later and [pipx](https://pipx.pypa.io) or [uv](https://docs.astral.sh/uv/). VS Code is needed
@@ -132,14 +101,16 @@ again, leaving your history and settings (`--purge` deletes those too).
 
 ## Privacy
 
-On Linux, Agent Bar keeps its state in `~/.local/state/agent-bar` and its settings in `~/.config/agent-bar`, readable
-only by you. The History scan stores searchable message text in a local SQLite index. It skips tool calls, tool
-results, reasoning, and client-supplied context. Its hooks record when turns start and end, never prompt or reply
-text. It contacts no server, unless you turn on **Read Claude limits**: then every 10 minutes it asks Anthropic's
-usage endpoint (`api.anthropic.com`, the one Claude Code's `/usage` reads, which is undocumented) for your limits,
-sending Claude Code's sign-in token from `~/.claude/.credentials.json`. It never renews or changes that sign-in; when
-it has expired, Agent Bar waits for Claude Code to renew it. With **Pull requests** on, the Git tab asks GitHub about
-each open branch's pull request through the `gh` command, at most every 5 minutes per branch.
+Agent Bar stores state in `~/.local/state/agent-bar` and settings in `~/.config/agent-bar`. The local History index
+contains user and agent messages. It excludes tool calls, tool results, reasoning and client context. Hooks record
+turn events without message text.
+
+Two settings enable network requests:
+
+- **Read Claude limits** checks the usage endpoint on `api.anthropic.com` every 10 minutes using Claude Code’s token from
+  `~/.claude/.credentials.json`. Claude Code handles token renewal.
+- **Pull requests** uses your signed-in `gh` command to read GitHub reviews and checks at most once every five
+  minutes per branch.
 
 ## Development
 
@@ -149,8 +120,6 @@ pipx install --editable .
 python3 -m unittest discover tests
 node --test tests/panel.test.js
 ```
-
-[docs/architecture.md](docs/architecture.md) describes how the parts fit together.
 
 ## License
 

@@ -973,8 +973,8 @@ test('a refused send tells the user which chat, which limit, when it resumes, an
     assert.equal(hourly.body, '⌘ Migrate the pool reached its limit of 10 messages an hour.');
     assert.equal(hourly.action, 'Allow 30 an hour, for an hour');
     const peer = f.context.refusalNotice({kind: 'peer', sender: 'codex:a', recipient: 'claude:b'}, titles, limits);
-    assert.equal(peer.title, 'Message held · until you write to it');
-    assert.equal(peer.body, '⌘ Migrate the pool has sent ✳ Update the panel 10 messages since you last wrote to it.');
+    assert.equal(peer.title, 'Message held · prompt the sender');
+    assert.equal(peer.body, '⌘ Migrate the pool has sent ✳ Update the panel 10 messages since your last prompt to the sender.');
     assert.equal(peer.action, 'Allow another round');
 });
 
@@ -986,7 +986,7 @@ test('refusals notify once each, and none from before the panel started', () => 
     f.tracker._notifyRefusals(snap([{id: 1, kind: 'hourly', sender: 'codex:a', recipient: 'claude:b'}]));
     assert.equal(shown.length, 0);
     f.tracker._notifyRefusals(snap([{id: 2, kind: 'peer', sender: 'codex:a', recipient: 'claude:b'}, {id: 1, kind: 'hourly', sender: 'codex:a', recipient: 'claude:b'}]));
-    assert.deepEqual(shown.map(n => [n.body, [...n.actions]]), [['⌘ codex:a has sent ✳ claude:b 10 messages since you last wrote to it.', ['Allow another round']]]);
+    assert.deepEqual(shown.map(n => [n.body, [...n.actions]]), [['⌘ codex:a has sent ✳ claude:b 10 messages since your last prompt to the sender.', ['Allow another round']]]);
 });
 
 test("a node's tooltip lists its job slots by project, and its dropdown its queues, state and events", () => {

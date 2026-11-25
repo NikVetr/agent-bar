@@ -1,9 +1,7 @@
 # Architecture
 
-Agent Bar has four parts: a Python service and CLI (`agent_bar/`), provider hooks, a VS Code bridge and a menu-bar
-front end for each platform (today, a GNOME Shell extension on Linux). They share state through owner-only files in
-`~/.local/state/agent-bar`. The service, CLI, hooks and bridge are meant to be shared by every platform; the parts that
-read Linux's process tables and X11 windows are the ones a macOS or Windows edition replaces.
+The Python service and CLI, provider hooks, VS Code bridge and GNOME Shell panel share owner-only state in
+`~/.local/state/agent-bar`. Linux process discovery and X11 window lookup are platform-specific.
 
 ```mermaid
 flowchart LR
@@ -47,7 +45,7 @@ state and unread reasons stay separate in the data.
   background work, a scheduled wake-up, and whether the latest prompt came from a person, so a reply to an automatic
   wake-up with work still pending holds as waiting instead of needing review, unless its turn read agent messages.
 - **Ledger** (`state.py`): per chat, its state, unread reasons and the acknowledgment cutoff; per folder name, the
-  latest turn start; per queue, when it was first seen finished. A project's queue count includes running queues and
+  latest turn start; per queue, when it was first seen finished. A project's queue count includes all unfinished queues and
   those that ended after its last turn (the monitor's end time, or when the tracker saw the end if sooner); when all
   of them have finished, its most recently active open chat gets a "Queues finished" reason. A finished queue the
   monitor reports active again with no new jobs done stays finished. Each hour the service forgets finished queues
@@ -69,7 +67,7 @@ state and unread reasons stay separate in the data.
   its continuation files, oldest first) with the same message filter as the History index, keeping each message's
   time, and writes Markdown or self-contained HTML. Output goes to the XDG Downloads folder unless `--output` names a
   file or folder, and never replaces an existing file.
-- **Git** (`git.py`): every 20 s, off the collection loop, the `git status` of each repository holding an open folder,
+- **Git** (`git.py`): reads `git status` for each open repository off the collection loop, every 20 s while the Git tab is active and every five minutes otherwise,
   with `GIT_OPTIONAL_LOCKS=0` so it never takes the index lock an agent's own git command needs. It never fetches.
   A repository with staged or modified files also gets `git diff HEAD --numstat`. With the panel's Pull requests
   setting on, each GitHub branch's pull request comes from `gh pr view <branch> --json …`, cached per repository and
@@ -104,14 +102,10 @@ state and unread reasons stay separate in the data.
   each handler’s declared action and its event, matcher, and condition together for each trigger. Reading Info never
   executes a registered handler.
 
-The Queues tab reads prerequisite outcomes through `agent-bar queue-dependencies`. The service uses the collector’s
-adaptive registrations and the scheduler’s retained registration index to find immutable batch declarations. It indexes the dependencies of all tracked queues by pool, queue ID,
-and batch directory so a filtered queue can still show which other queues depend on it. For
-queues in the selected list, it reads each prerequisite’s status and verification markers on the mounted share.
-Reads run outside the collection loop, only on request, with a 30-second result cache.
-The ledger retains declarations for tracked queues after scheduler retirement. Each snapshot numbers active queues
-by launch time within their project. Dependency lookup and caching use monitor IDs so a change in display number
-preserves the link to the original queue.
+`agent-bar queue-dependencies` identifies a queue by pool, queue ID and batch directory. The service indexes
+immutable declarations for all tracked queues, including retired queues, so filtering a project preserves links
+to hidden dependents. It reads mutable prerequisite outcomes and verification markers only for requested rows, off
+the collection loop, with a 30-second cache. Display numbers follow launch order within each project.
 
 ## Hooks
 
@@ -119,8 +113,7 @@ preserves the link to the original queue.
 event kind, session, time and folder, never prompt or tool text, and never blocks a turn. Its only output is a note
 about unread agent messages (`additionalContext` on `UserPromptSubmit`). For Claude, a second Stop hook,
 `python -m agent_bar.hook wait`, runs in the background (`asyncRewake`, one-week timeout); with waking on, it exits 2
-once per new message, which Claude Code turns into a wake. `agent-bar install` adds both and removes hooks left by an
-earlier installation's interpreter. It also copies the skill in `agent_bar/data/skills` (how agents use
+once per new message, which Claude Code turns into a wake. `agent-bar install` installs both hooks. It also copies the skill in `agent_bar/data/skills` (how agents use
 messages and tickets) into `~/.claude/skills` and `~/.agents/skills`, only where no skill of that name exists; a
 copy it made holds a `.installed-by-agent-bar` file, and only such copies are updated or removed.
 
@@ -166,8 +159,7 @@ user, resetting the loop guard) also refuse when a `claude` or `codex` process i
 `ticket start` and `resume` share `bridge.in_folder`: it leaves a request under `resume/` and runs `code <folder>`,
 which focuses the window open there or opens one; the first bridge on that folder takes the request and either
 reopens a chat or runs `claude-vscode.editor.open` with no session and the prompt, which Claude Code puts in a new
-chat's input box without sending it. A window whose bridge predates the feature (`resume`, `start` in its published
-window file) must be reloaded first.
+chat's input box without sending it.
 
 ## GNOME Shell extension
 
@@ -184,16 +176,11 @@ records in ROTA's `events.jsonl` that name it (failed jobs, holds, outages) and 
 `agent_bar/data/gnome-extension` renders the snapshot in GNOME Shell 42 and runs the `agent-bar` CLI for actions.
 Bringing a chat forward saves the window's place, maximizes it on the primary display and asks its VS Code bridge to
 reveal the exact tab or sidebar; only a confirmed navigation acknowledges the chat. A second click while it has focus
-returns the window. Menus are rebuilt after the click that asked for it finishes, and keyboard focus moves off any
-widget before it is destroyed: GNOME Shell 42 crashed in `Main.pushModal` reading a freed key-focus actor.
+returns the window. The panel defers menu rebuilds until the click handler returns and transfers keyboard focus before destroying a widget.
 
-The top bar is one panel button holding parts (chat counts, limits, working and waiting, mail, queues), each with its
-own hover highlight, beside a separate cluster indicator without a menu of its own; each opens the one dropdown on
-its tab. While the dropdown is open, GNOME 42 routes every event through the menu's actor, where the panel's menu
-manager closes the menu on any press outside it; the extension moves that handler behind its own, which turns a
-press on another part into a tab switch and lets any other press close the menu as before. The side dropdown (scheduling, checklists, or projects on a node) is a child of the same menu, in a zero-size holder
-with a fixed layout, positioned just past the menu's right edge: as a descendant of the grabbed actor it receives
-input, and the manager does not count a press on it as outside the menu.
+Each top-bar indicator opens a tab in the same dropdown. GNOME grabs input while the menu is open. The extension
+handles tab switches before the menu manager handles outside clicks. Side panels for checklists, scheduling and
+cluster nodes sit inside the same menu actor so they receive input without closing the dropdown.
 
 Continue, for chats a usage limit stopped, runs `agent-bar continue <key>`: the service queues the note for a Codex chat
 with `codex queue`, or returns it for a Claude chat. The panel then brings the Claude chat forward with
@@ -228,6 +215,5 @@ the running code if the new one fails to load or start.
 `agent_bar/data/vscode-bridge` is a dependency-free extension running once per window. It publishes the window's
 state, answers navigation and Source Control requests through per-window request and response files (a navigation
 with `input` also runs Claude's Focus Input, but only when no other Claude chat is on show, since that command focuses
-every one on show), and claims
-`agent-bar resume` requests for its folder, opening the session through Claude's `claude-vscode.editor.open` command or
+every one on show), and claims `agent-bar resume` requests for its folder, opening the session through Claude's `claude-vscode.editor.open` command or
 Codex's `openai-codex://route/local/<id>` editor.

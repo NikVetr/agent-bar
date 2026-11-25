@@ -1,10 +1,9 @@
 # User guide
 
-This guide covers everything Agent Bar shows and does. For installation, see the [README](../README.md#install). For
-how the parts work internally, see [architecture.md](architecture.md).
+For setup, see [Install](../README.md#install). For implementation details, see [Architecture](architecture.md).
 
 - [The top bar](#the-top-bar)
-- [The dropdown](#the-dropdown): [Chats](#chats), [Queues](#queues), [Git](#git), [Messages](#messages),
+- [The dropdown](#the-dropdown): [Chats](#chats), [Queues](#queues), [Cluster](#cluster), [Git](#git), [Messages](#messages),
   [Tickets](#tickets), [History](#history), [Quota](#quota), [Info](#info)
 - [Messages between agents](#messages-between-agents)
 - [Tickets and scheduled messages](#tickets-and-scheduled-messages)
@@ -22,47 +21,37 @@ how the parts work internally, see [architecture.md](architecture.md).
 - **✳ 12%  ⌘ 64%**: what is left of each provider's weekly usage limit, amber under 25% and red under 10%, dimmed when
   the reading is over 6 hours old. Hovering lists every limit; clicking opens the Quota tab.
 - **● 3** working, **◌ 1** waiting: a turn that has gone quiet, or ended with background work still pending.
-- **✉ 2**: chats where messages from other agents wait for you to start a turn, with no wake-up coming: waking off,
-  a Claude chat idle over a week, or a Codex chat not open in VS Code. Clicking it opens the Messages tab.
-- **🎫 2**: tickets that came due, having waited for something that has now passed, while there are any (**Settings ›
-  Top bar › Ticket count** can count every ticket ready to start instead). Clicking it opens the Tickets tab.
-- **Q 2 / 5**: queues finished / outstanding since each project's last turn, with the scheduler integration.
-- **▾**: every window with a chat, with a dot for its most urgent state; click one to bring it forward. Below
-  them, **New VS Code window** opens one maximized on your main display, and **Saved chats** opens History.
+- **✉ 2** means two chats have unread agent messages and need a prompt from you to read them.
+- **🎫 2** opens Tickets. By default it counts ready tickets that had a wait condition. **All ready** includes
+  tickets ready from the start. Both include failed scheduled deliveries.
+- **Q 2 / 5** means two of five tracked queues have finished. A new turn clears finished queues from that project’s count.
+- **▾** opens the window list. Each dot shows the most urgent chat status in that window. **Saved chats** opens History.
 
-Each part lights on its own and opens the dropdown on its tab: the chat counts on Chats, Q on Queues, ✉ on Messages,
-the ticket count on Tickets, the limits on Quota, the cluster indicator on Cluster. With the dropdown open, clicking
-another part switches tabs; clicking the open tab's part, or anywhere else, closes it.
+Click a top-bar indicator to open its tab. Click another indicator to switch tabs or the same one to close.
 
 ### Review shortcut buttons
 
-Chats needing review get a button that brings them forward, the longest waiting first, as many as fit, continuing
-right of the middle when the left half is full; **+2 more** lists the rest. Spare room shows more of each name.
+Each project gets one review button, with the longest-waiting review first. Click the project name for that chat
+or a numbered badge for a specific chat. **+N more** lists chats that do not fit.
 
-Several chats in one project share a button: the project's name, then a numbered bubble per chat in its provider's
-color. A bubble brings that chat forward, the name the longest-waiting one, and the others renumber from 1.
-
-**Settings › Top bar** sets the most buttons and, with checkboxes, which reasons give one: a finished reply, a failed
-turn, a question, an approval, finished queues (all on by default), and a stop at a 5-hour or weekly usage limit (off
-by default; the Chats tab shows those chats). Codex permission requests must stay pending for 10 seconds to raise a
-review button. Finished replies and questions appear on the next refresh.
+**Settings › Top bar › Review events** controls which events trigger buttons and desktop alerts. Replies, failures,
+questions, approvals and finished queues are selected by default. Usage-limit stops are optional. A Codex approval
+request must remain pending for 10 seconds before it appears.
 
 ### Notifications
 
-A desktop notification announces each chat as it comes to need review, for the reasons **Settings › Top bar › Review
-buttons for** picks, unless that chat's window has focus. Clicking it brings the chat forward. **Settings ›
-Notifications** turns notifications off, or adds a short sound (off by default; silent in Do Not Disturb).
+Click a review notification to open its chat. Agent Bar skips review alerts for the focused window. Sending-limit
+alerts identify the sender and how to resume sending. **Settings › Notifications** controls both kinds of alert.
+The optional review sound respects Do Not Disturb.
 
 ## The dropdown
 
-Clicking the counts opens the dropdown. **?** opens a guide to every symbol and color, at the part about the tab you
-were on; the gear opens settings, including a color-blind-safe palette.
+Select **?** for help with the current tab or the gear for settings, including the color-blind-safe palette.
 
 ### Chats
 
-Open chats grouped by project and window, with sort and filter. Each row shows the chat's whole name and a copy button
-for its name, id, folder and resume command. A list button, when the project has
-[task checklists](#task-checklists), shows them. On Claude and Codex rows, a clock button schedules a message to that
+Sort and filter open chats by project and window. **Copy** copies the chat’s name, ID, folder and resume command.
+The list button opens the project’s [task checklists](#task-checklists). On Claude and Codex rows, a clock button schedules a message to that
 chat (see [Scheduled messages](#scheduled-messages)), and an export button writes the chat's messages to your
 Downloads folder and opens the file (see [History](#history)).
 
@@ -72,11 +61,9 @@ Downloads folder and opens the file (see [History](#history)).
 - **Search.** Chats and History share a search box, including `repo:` scopes, highlighted message excerpts and
   **Show context** (see [History](#history)). Switching tabs keeps your search. Chats shows open conversations and
   History includes closed ones. Message text comes from the saved History index.
-- **Usage-limit stops.** When a usage limit stops chats open in VS Code, a line above them names them and when
-  Claude's limit resets. **Continue** queues "Please continue where you left off." in the Codex ones, which start it on
-  their own, and brings each Claude one forward with that text at the end of its input box, after any draft, for you to
-  send. If Agent Bar cannot be sure the cursor is in that box (several Claude chats on show in the window, or a window
-  whose bridge needs a reload), it leaves the text on the clipboard instead.
+- **Usage-limit stops.** Select **Continue** to resume affected VS Code chats. Codex queues the prompt. Claude Code
+  opens with the prompt after your draft, ready for you to send. If Agent Bar cannot focus the input box, it copies
+  the prompt for you to paste.
 - **Automatic continuation.** With **Settings › Integrations › Resume Codex after reset** on, an open VS Code Codex
   thread continues automatically when its recorded five-hour limit resets. Starting another turn clears the pending
   continuation. Weekly limits, depleted workspace credits, and stops with an unknown reset still use the manual
@@ -157,23 +144,17 @@ existing file is never replaced; `agent-bar export` does the same from the comma
 
 ### Quota
 
-Each provider's usage limits as Claude Code and Codex record them on this computer: the weekly limit, the 5-hour one,
-and a weekly limit for one model such as Fable, with that model's share. Each shows what is left, when it resets, its
-pace over the last day (or this window's average), when that pace would use the rest and how that compares with the
-reset, and, for the weekly limit, the points used each day, split by model where Claude Code reports a share.
+Claude and Codex show their five-hour, weekly and model-specific limits when available. Each entry shows quota
+remaining, the reset time and whether recent usage would exhaust it before the reset. The forecast uses the past
+day’s rate, or the current quota window when less history is available. Weekly charts show daily usage by model.
 
-Claude Code refreshes its figures only when it fetches them, as `/usage` does, so they can be hours old. With
-**Settings › Integrations › Read Claude limits** on, Agent Bar reads them itself every 10 minutes (see
-[Privacy](../README.md#privacy)). Codex records its own as it works. Copilot and Antigravity record none on this
-computer.
+Run `/usage` in Claude Code for a fresh reading, or enable **Settings › Integrations › Read Claude limits** for
+automatic checks every 10 minutes. Codex records limits during turns. See [Privacy](../README.md#privacy).
 
-**Cost at API prices** shows what the use Claude Code and Codex recorded on this computer would cost through the API:
-today, the last 7 days, each day's cost by provider, and each model's share. Each chat row also shows its own total.
-Agent Bar counts the token figures the agents already write, including cache reads and writes, with the dated price
-table in `agent_bar/data/prices.json`. Subscription plans are billed differently, so for them the figures are a
-reference, not a bill. Tokens from a model without a price are listed as such; add or correct a price in
-`~/.config/agent-bar/prices.json` with the same shape as the bundled table, and Agent Bar counts again with it.
-**Settings › Integrations › Cost at API prices** turns this off.
+**Cost at API prices** estimates the cost of local token usage, including cache reads and writes. Quota shows daily,
+weekly and per-model totals. Each chat shows its own estimate. Subscription billing is separate. For an unpriced
+model or a price correction, use `~/.config/agent-bar/prices.json` with the format of `agent_bar/data/prices.json`.
+Agent Bar recalculates estimates when prices change.
 
 ### Info
 
@@ -203,25 +184,20 @@ messages, because they have no hook to show the note.
 
 If you already have prompts queued in a Codex chat, Agent Bar moves its inbox notification to the front. Your current
 turn finishes normally and your prompts keep their order. With an empty queue, a busy chat gets a wake-up after its
-turn if messages are still unread. Priority requires a local `codex` with the app-server queue API. Older versions
-with `codex queue` support ordinary wake-ups.
+turn if messages are still unread. Priority requires a local `codex` with the app-server queue API.
 
 In the Messages tab, each chat's badge shows a sealed envelope while it has unread messages, amber when they wait for
 you to start a turn there, and an open one once it has read them.
 
-Each message goes to one chat; there is no broadcast. A loop guard counts each sending chat on its own: it refuses
-an eleventh message to the same chat until you write to the sender again, and more than 10 messages an hour from one
-chat. The sender is told which limit it reached and, for the hourly one, when it can send again. You get a desktop
-notification too, saying when the chat can send again, with the action that lifts the limit: **Allow another round**
-for a pair, or **Allow 30 an hour, for an hour** for the hourly limit.
+Each chat can send up to 10 messages per hour and up to 10 to the same recipient between your prompts to the
+**sender**. In Messages, **Reset limit** allows another round for that pair. **Allow more for an hour** raises the
+sender’s hourly limit to 30 for one hour. It appears once the sender has used half its hourly allowance.
 
-The Messages tab's **Sending limits** lists each chat that sent in the last hour with its count against its own limit.
-A chat that has used half its limit gets **Allow more for an hour**, and a held pair's thread has **Reset limit**.
-Agents are told to treat messages as information, not as your instructions. You can turn messages off in settings.
+Agents treat messages from other agents as information. Your scheduled messages arrive as requests.
 
 ## Tickets and scheduled messages
 
-A ticket is a task you or an agent wants done later, in one project, for work that cannot or need not happen now:
+Create a project ticket for work you want to start later:
 
 ```
 agent-bar ticket add "Fable audit of this repo" --after reset:claude   # wait for Claude's limit to reset
@@ -237,10 +213,9 @@ several. A wait is fixed when the ticket is written: the reset then due (by defa
 weekly one; `reset:claude:session` picks the 5-hour one), or the queues outstanding then. A ticket is ready once all
 its waits have passed.
 
-An agent's ticket goes in its own folder unless `--project` names another, and is marked as coming from that chat;
-agents cannot write tickets as you. A ticket's prompt asks the chat to run `take` and `done`. Codex's VS Code
-extension offers no way to open a new chat with a prompt, so Start makes Claude chats only. Closed tickets are kept 30
-days.
+Tickets use the agent’s current folder unless you pass `--project`. **Start** prepares the prompt in a new Claude
+Code chat. Use **Copy** to paste it into another chat. Agents use `take` to claim work and `done` to close it.
+Closed tickets remain visible for 30 days.
 
 ### Scheduled messages
 
@@ -257,29 +232,24 @@ sends missed while the computer was off are skipped, not sent late. A one-off ti
 stays under **Scheduled** in Tickets until you drop it. If the chat has closed, the ticket shows the reason and tries
 again every 10 minutes.
 
-The **Schedule** button (a clock) on each Claude or Codex chat in the Chats tab opens a second dropdown beside the main
-one: the message, when to send it (in an hour, tomorrow at 9, next Monday at 9, or a typed time), how often to repeat
-it, and what is already scheduled for that chat.
+Click the clock beside a Claude or Codex chat to set the message, delivery time and optional repeat interval, or to
+inspect its schedule. With **Wake idle chats** off, the chat reads it on your next prompt.
 
-Your scheduled messages arrive as your own requests: the chat's note says so, unlike messages from other agents, which
-are information only. So only you can schedule them. A ticket an agent writes with `--to` arrives from that agent,
-under the loop guard, and Agent Bar refuses a ticket from a command an agent started without its session id. With
-**Wake idle chats** off, a scheduled message waits for your next prompt in that chat.
+A message you schedule arrives as your request. A ticket scheduled by an agent with `--to` identifies that agent as
+the sender and counts toward its sending limits.
 
 ## Task checklists
 
-Agents can keep task checklists in each project's `tmp/agent/checklists/`, as Markdown checkbox lists. The **list**
-button on a chat in the Chats tab shows its project's checklists in a second dropdown beside the main one: those the
-chat was seen editing, then others updated in the last 14 days, then older ones that still have open items (folded,
-with any items that need you kept in view). For each: a progress bar, a suggested next item, what needs you, what
-waits or was deferred, the checklists it links to, and which open chats last edited it. **Open** shows it in VS Code.
+Open the list beside a chat to see its project’s checklists in `tmp/agent/checklists/`. Files that chat edited
+appear first, followed by files updated in the past 14 days, then older files with open items. Expand a file to see
+progress, suggested next work and linked checklists. **Open** shows the file in VS Code.
 
-What Agent Bar reads, and how:
+Checklist format
 
 - Only checkbox lines count, outside fenced code: `[ ]` open, `[x]` or `[X]` done, `[-]` dropped (left out of the
   total). Any other marker counts as unrecognized, never as done. Indentation and numbered items are fine.
 - An open item starting `User:` needs you, `Waiting:` waits on something else, `Deferred:` was postponed. The first
-  open item without one is the **suggested next**, an ordering guess, not a priority.
+  open item without a prefix is the suggested next task.
 - A file with nothing open says "no open items recorded", not "done".
 - Links to other checklists are listed with their own counts; counts are never added up from links.
 - **Last edited by** names the open chats whose transcripts (the last 2 MB, then what they append) show them writing
@@ -297,15 +267,12 @@ entirely.
 
 ### Cluster
 
-The cluster indicator shows any of the cluster's CPU, memory and fullest disk. CPU counts the cores each host allots
-to jobs (its job slots); its other cores are reserved and take its load first. When a host is under memory pressure,
-has a drive nearly full, or is unreachable or without the shared mount, it adds a small sign for that kind of warning,
-amber or red when critical, with a count of any others. **Settings › Cluster** picks what it shows and the warning
-thresholds; with only warnings picked, it appears just when one fires.
+Choose CPU, memory, fullest disk or warnings in **Settings › Cluster**. CPU estimates the share of job slots in
+use after reserved cores absorb load. Warnings identify high memory pressure, low disk space, unreachable hosts
+and missing shared mounts. Select only **Warnings** to show the indicator only while a warning is active.
 
-Clicking it opens the **Cluster** tab, headed by the cluster's CPU, busy cores and memory, which names each warning's
-host. **Snooze** keeps a warning off the top bar until it clears, or for at most a time you type (such as 5d or 120h);
-ROTA keeps checking the host meanwhile. The tab also lists:
+Open **Cluster** to see the affected host. **Snooze** hides its top-bar warning until it clears or the duration
+expires (for example, `5d` or `120h`). Monitoring continues. The tab also shows:
 
 - each host's cores, memory and disks. Hover a node name for a second to list the projects using its job slots.
   Click it to open a side dropdown for the node:
@@ -328,17 +295,14 @@ ROTA keeps checking the host meanwhile. The tab also lists:
 
 ### Scheduler controls
 
-When ROTA's `rota` command is installed (on `PATH` or in `~/.local/bin`), the Queues tab also changes
-the scheduler. **Adjust** opens what `rota control describe` offers for a queue, the pool or a host: actions such as
-pausing a queue or draining the pool as buttons, and settings such as priority, worker cap, memory and a host's budget
-one to a row. Hovering a setting's ⓘ or a button says what it does, or why it is unavailable now. Edited settings go
-together with **Apply**, each through `rota control apply` with the value shown, so one changed meanwhile is refused.
-Irreversible actions, such as Drain, ask first. A change shows once the collector next reads the scheduler, within
-about 30 s.
+**Adjust** opens the controls ROTA offers for a queue, host or pool. Hover over a control for its effect or
+the reason it is unavailable. **Apply** submits edited values together. If another operator changed a value, ROTA
+rejects the outdated edit. Actions such as draining the pool require confirmation. Changes usually appear within
+30 seconds. The `rota` command must be on `PATH` or in `~/.local/bin`.
 
 ## Command line
 
-Everything the top bar shows is available as JSON:
+Common commands for inspecting state and acting on chats:
 
 ```
 agent-bar status        # open chats, their states and counts
@@ -363,10 +327,8 @@ agent-bar doctor        # check each part and say how to fix anything missing
 
 ## Troubleshooting
 
-Start with `agent-bar doctor`. It checks the service, the Claude Code and Codex hooks, the agent skill, the VS Code
-bridge, the GNOME Shell version and extension, that `agent-bar` is on your `PATH`, and that this command runs the same
-copy of Agent Bar as the service (`agent-bar --version` names the folder a copy runs from), with a fix for anything
-missing.
+Run `agent-bar doctor` first. It checks the installed components, hooks, service and executable paths and suggests
+fixes. Use `agent-bar --version` to locate the copy your shell runs.
 
 - **The extension does not appear after the first install.** GNOME Shell finds new extensions at login. Log out and
   back in (or on X11 press Alt+F2, type `r`, press Enter), then run `agent-bar install` again to enable it.
