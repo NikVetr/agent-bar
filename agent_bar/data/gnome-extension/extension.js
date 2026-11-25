@@ -4,6 +4,7 @@ const Main = imports.ui.main;
 const PanelMenu = imports.ui.panelMenu;
 const PopupMenu = imports.ui.popupMenu;
 const CheckBox = imports.ui.checkBox;
+const MessageTray = imports.ui.messageTray;
 const ByteArray = imports.byteArray;
 const ROOT = GLib.build_filenamev([GLib.get_home_dir(), '.local/state/agent-bar']);
 // The agent-bar command; pipx and uv install it in ~/.local/bin, which a GNOME session's PATH may lack.
@@ -41,6 +42,11 @@ const SETTINGS = [
         [['due', 'Came due'], ['ready', 'All ready'], ['off', 'Hide']]],
     ['Top bar', 'queueBar', 'Queue count', 'Q finished / outstanding since each project\'s last turn', true,
         [[true, 'Show'], [false, 'Hide']]],
+    ['Notifications', 'notify', 'Desktop notifications', 'A notification when a chat needs review, for the reasons Top bar › Review buttons for picks; '
+        + 'clicking it brings the chat forward. None while that chat\'s window has focus', true,
+        [[true, 'On'], [false, 'Off']]],
+    ['Notifications', 'notifySound', 'Sound', 'A short sound with each notification, except in Do Not Disturb', false,
+        [[true, 'On'], [false, 'Off']]],
     ['Cluster', 'clusterBar', 'Top-bar indicator', 'What it shows; with only Warnings it appears just when one fires', ['cpu', 'warnings'],
         [['cpu', 'CPU'], ['memory', 'Memory'], ['disk', 'Disk'], ['warnings', 'Warnings']]],
     ['Cluster', 'clusterMemoryWarn', 'Memory warning', 'The memory pressure a host must reach', 'warn',
@@ -232,6 +238,17 @@ function readyConversations(rows, reasons = null) {
         return times.length ? Math.min(...times) : completionTime(row);
     };
     return [...unique.values()].sort((a, b) => since(a) - since(b));
+}
+
+// Each review reason that open chats have now, for `reasons`, keyed `chat|reason|arrival` so that a reason arriving
+// again is a new key: the keys a snapshot has and the one before lacked are new arrivals.
+function reviewMarks(rows, reasons) {
+    const marks = new Map();
+    for (const row of readyConversations(rows, reasons))
+        for (const reason of row.unread)
+            if (reasons.includes(row.limited && reason === 'Turn failed' ? 'Usage limit' : reason))
+                marks.set(`${row.key}|${reason}|${row.unread_at?.[reason] ?? completionTime(row)}`, [row, reason]);
+    return marks;
 }
 
 // Chats needing review by project, one shortcut each, in the order of each project's longest-waiting chat.
@@ -1704,6 +1721,10 @@ class Tracker {
                 + 'chat forward and clears it. Several chats in one project share one, with a numbered bubble per chat in its provider\'s color.  They continue right of the middle when the left half is full; +2 more lists the rest. '
                 + 'Settings › Top bar › Review buttons for picks the reasons; by default a chat stopped only by a usage limit gets none, and the Chats tab shows it.'
             : 'Review shortcuts are off (Settings › Top bar).');
+        row(top, [text('Notifications', 'tracker-help-bright')], this._setting('notify')
+            ? 'A desktop notification also announces each chat as it comes to need review, for the same reasons, unless its window has focus; '
+                + `clicking it brings the chat forward.${this._setting('notifySound') ? ' A sound plays with it, except in Do Not Disturb.' : ''} Settings › Notifications turns them off.`
+            : 'Desktop notifications are off (Settings › Notifications).');
         if (scheduler) row(top, [text('23%', 'tracker-muted'), text('64%', 'tracker-working'), text('94%', 'tracker-attention')],
             'Cluster CPU: busy cores over the cores allotted to jobs (each host\'s job slots). A host\'s other cores are '
             + 'reserved and take its load first; only load beyond them counts, up to full. '
@@ -2911,6 +2932,44 @@ class Tracker {
         this._quickMenu.open();
     }
 
+    // A notification for each chat whose review reasons arrived since the last snapshot. Reasons already there when the
+    // panel started (or reloaded) notify nothing, nor does a chat whose window has focus.
+    _notifyReviews(rows) {
+        const marks = reviewMarks(rows, this._setting('quickReasons'));
+        const before = this._notified;
+        this._notified = new Set(marks.keys());
+        if (!before || !this._setting('notify')) return;
+        /** @type {Map<string, [any, string[]]>} */
+        const arrived = new Map();
+        for (const [mark, [row, reason]] of marks)
+            if (!before.has(mark)) arrived.set(row.key, [row, [...arrived.get(row.key)?.[1] || [], reason]]);
+        for (const [row, reasons] of arrived.values()) {
+            try {
+                const native = this._findWindow(this._snapshot?.windows.find(w => w.id === row.window), false);
+                if (native && native === global.display.focus_window) continue;
+                this._notify(row, reasons);
+            } catch (error) { logError(error, 'Agent Bar notification'); }
+        }
+    }
+
+    _notify(row, reasons) {
+        if (!this._source) {
+            this._source = new MessageTray.Source('Agent Bar', 'dialog-information-symbolic');
+            this._source.connect('destroy', () => { this._source = null; });
+            Main.messageTray.add(this._source);
+        }
+        const notification = new MessageTray.Notification(this._source, `${PROVIDERS[row.provider]?.[1] || row.provider} · ${row.project}`,
+            `${reasons.join(' · ')}: ${row.title}`);
+        notification.connect('activated', () => {
+            const live = this._snapshot?.rows.find(r => r.key === row.key && r.target);
+            if (live && this._enabled) this._openShortcut(live);
+        });
+        this._source.showNotification(notification);
+        this._notifications ??= new Gio.Settings({schema_id: 'org.gnome.desktop.notifications'});
+        if (this._setting('notifySound') && this._notifications.get_boolean('show-banners'))
+            global.display.get_sound_player().play_from_theme('complete', 'Agent Bar', null);
+    }
+
     // Brings a shortcut's chat forward. A snapshot from before its acknowledgment still lists it, so its shortcut
     // stays away until a later one, or returns on the next read if bringing it forward failed.
     _openShortcut(row) {
@@ -2983,6 +3042,7 @@ class Tracker {
                 this._renderQuotaBar(snapshot.usage);
                 restyle(this._labels.queues, c.done ? 'color: #f1f3f5; font-weight: bold;' : 'color: #9ca3ad;');
                 for (const label of [...Object.values(this._labels), this._mailCount, this._ticketCount]) if (label.visible) holdWidth(label);
+                this._notifyReviews(snapshot.rows);
                 this._renderQuick(snapshot.rows);
                 this._button.accessible_name = `${Object.entries(PROVIDERS).filter(([key]) => c[key])
                     .map(([key, [, name]]) => `${name} ${c[key]}`).join(', ') || 'No chats'}, ${c.working} working, ${c.waiting} waiting, ${c.review} need review, ${c.done} of ${c.queues} queues finished since the last turn`
@@ -5924,6 +5984,7 @@ class Tracker {
         this._dbus?.unexport();
         this._stopWatchingNew();
         this._releaseAppMenu();
+        this._source?.destroy();
         this._quickMenu.destroy();
         this._quickRight.destroy();
         this._quick.destroy();

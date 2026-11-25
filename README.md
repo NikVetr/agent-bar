@@ -18,9 +18,9 @@ ends. Nothing leaves your computer unless you turn on reading Claude's usage lim
 - **Works with the agents where you already run them.** Claude Code, Codex, GitHub Copilot CLI and Antigravity, in
   VS Code, the terminal and their desktop apps. Agent Bar watches the chats you open; it does not start, wrap or
   host agents, so you keep each tool's own interface, settings and sign-in.
-- **One glance, one click.** Counts per provider of chats needing review, working and waiting, and a button for each
-  chat that needs you. A click brings the exact VS Code tab or sidebar chat forward, maximized, and a second click
-  sends it back.
+- **One glance, one click.** Counts per provider of chats needing review, working and waiting, a button for each chat
+  that needs you, and a desktop notification as each one comes to need you. A click brings the exact VS Code tab or
+  sidebar chat forward, maximized, and a second click sends it back.
 - **Usage limits with a forecast.** Claude and Codex 5-hour, weekly and per-model limits, the pace of use, and when
   that pace would run out compared with the reset. A setting lets Codex chats in VS Code that a five-hour limit
   stopped continue on their own when it resets.

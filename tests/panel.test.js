@@ -872,3 +872,36 @@ test('Chats needs the saved inventory only for a query or total activity order',
     tracker._view = 'history';
     assert.equal(tracker._needsInventory(), true);
 });
+
+test('review notifications announce only reasons that arrive after the first snapshot, once each', () => {
+    const f = fixture();
+    const shown = [];
+    Object.assign(f.tracker, {_notify: (row, reasons) => shown.push([row.key, [...reasons]]), _findWindow: () => null,
+        _settings: {quickReasons: ['Reply finished', 'Input needed']}});
+    const row = (key, unread, at = {}) => ({key, target: true, window: 'w', provider: 'claude', project: 'p', title: key,
+        unread, unread_at: at, state: 'finished', state_at: 1});
+    f.tracker._notifyReviews([row('claude:a', ['Reply finished'], {'Reply finished': 10})]);
+    assert.deepEqual(shown, []);
+    f.tracker._notifyReviews([row('claude:a', ['Reply finished'], {'Reply finished': 10}),
+        row('claude:b', ['Reply finished', 'Input needed', 'Turn failed'], {'Reply finished': 11, 'Input needed': 12, 'Turn failed': 12})]);
+    assert.deepEqual(shown, [['claude:b', ['Reply finished', 'Input needed']]]);
+    f.tracker._notifyReviews([row('claude:a', ['Reply finished'], {'Reply finished': 20})]);
+    assert.deepEqual(shown.at(-1), ['claude:a', ['Reply finished']]);
+    assert.equal(shown.length, 2);
+    f.tracker._settings.notify = false;
+    f.tracker._notifyReviews([row('claude:a', ['Reply finished'], {'Reply finished': 30})]);
+    assert.equal(shown.length, 2);
+});
+
+test('a chat whose window has focus is not announced', () => {
+    const f = fixture();
+    const shown = [];
+    const focused = {};
+    f.context.global.display.focus_window = focused;
+    Object.assign(f.tracker, {_notify: row => shown.push(row.key), _findWindow: () => focused});
+    const row = at => ({key: 'claude:a', target: true, window: 'w', provider: 'claude', project: 'p', title: 't',
+        unread: ['Reply finished'], unread_at: {'Reply finished': at}, state: 'finished', state_at: 1});
+    f.tracker._notifyReviews([]);
+    f.tracker._notifyReviews([row(5)]);
+    assert.deepEqual(shown, []);
+});

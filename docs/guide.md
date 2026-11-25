@@ -47,6 +47,12 @@ turn, a question, an approval, finished queues (all on by default), and a stop a
 by default; the Chats tab shows those chats). Codex permission requests must stay pending for 10 seconds to raise a
 review button. Finished replies and questions appear on the next refresh.
 
+### Notifications
+
+A desktop notification announces each chat as it comes to need review, for the reasons **Settings › Top bar › Review
+buttons for** picks, unless that chat's window has focus. Clicking it brings the chat forward. **Settings ›
+Notifications** turns notifications off, or adds a short sound (off by default; silent in Do Not Disturb).
+
 ## The dropdown
 
 Clicking the counts opens the dropdown. **?** opens a guide to every symbol and color, at the part about the tab you
