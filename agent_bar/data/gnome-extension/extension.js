@@ -756,6 +756,17 @@ function px(value) {
     return Math.round(value * scaleFactor());
 }
 
+// A progress bar as wide as its line gives it, `fraction` filled to the nearest percent: the fill spans that many
+// of the track's hundred equal grid columns, so it needs no measuring.
+function stretchBar(trackStyle, fillStyle, fraction) {
+    const filled = Math.round(100 * Math.min(1, Math.max(0, fraction || 0)));
+    const grid = new Clutter.GridLayout({column_homogeneous: true});
+    const track = new St.Widget({layout_manager: grid, style_class: trackStyle, x_expand: true, y_align: Clutter.ActorAlign.CENTER});
+    if (filled) grid.attach(new St.Widget({style_class: fillStyle, x_expand: true}), 0, 0, filled, 1);
+    if (filled < 100) grid.attach(new St.Widget({x_expand: true}), filled, 0, 100 - filled, 1);
+    return track;
+}
+
 // Keeps a label at least as wide as it has been (in logical pixels, the unit of its min-width), so changing
 // figures don't shift what follows it.
 function holdWidth(actor, most = Infinity) {
@@ -1204,7 +1215,7 @@ function quotaProjection(limit, asOf, now = Date.now() / 1000) {
 function paintDays(cr, width, height, days, floor = 20) {
     if (!days.length) return;
     const most = Math.max(floor, ...days.map(day => day.used));
-    const slot = width / days.length, bar = Math.min(28, slot * 0.6);
+    const slot = width / days.length, bar = Math.min(40, slot * 0.6);
     days.forEach((day, index) => {
         let top = height;
         day.parts.forEach(([, value], part) => {
@@ -2027,9 +2038,10 @@ class Tracker {
     }
 
     // The top bar built from its own styles, with a leader line from each part to a label alternately
-    // above and below it. Measured as it is built, so `parent` must already be on the stage.
+    // above and below it. Measured as it is built, so `parent` must already be on the stage. Measured sizes and
+    // positions are physical pixels, so the layout's own lengths are too.
     _helpDiagram(parent) {
-        const width = 616, rise = 26, callout = 128, pad = 14;
+        const [width, rise, callout, pad, gap] = [616, 26, 128, 14, 10].map(px);
         const diagram = new St.Widget({layout_manager: new Clutter.FixedLayout(), x_expand: true, x_align: Clutter.ActorAlign.CENTER});
         parent.add_child(diagram);
         const lines = new St.DrawingArea();
@@ -2066,7 +2078,7 @@ class Tracker {
         ];
         // Callouts alternate above and below the bar; each row's narrow to sit side by side in the width.
         const across = Math.ceil(parts.filter(([, title]) => title).length / 2);
-        const labelWidth = Math.min(callout, Math.floor((width - 10 * (across - 1)) / across));
+        const labelWidth = Math.min(callout, Math.floor((width - gap * (across - 1)) / across));
         const sizes = parts.map(([actor]) => {
             actor.add_style_class_name('tracker-help-part');
             diagram.add_child(actor);
@@ -2074,9 +2086,9 @@ class Tracker {
         });
         const used = sizes.reduce((n, [w]) => n + w, 0);
         // Spreading the parts across the width leaves their labels less to fan out.
-        const spacing = Math.min(26, Math.max(12, (width - 2 * pad - used) / (parts.length - 1)));
+        const spacing = Math.min(px(26), Math.max(px(12), (width - 2 * pad - used) / (parts.length - 1)));
         const barWidth = Math.round(used + spacing * (parts.length - 1) + 2 * pad);
-        const barHeight = Math.max(...sizes.map(([, h]) => h)) + 14;
+        const barHeight = Math.max(...sizes.map(([, h]) => h)) + px(14);
         const labels = [];
         parts.forEach(([, title, style, detail], index) => {
             if (!title) return;
@@ -2106,7 +2118,7 @@ class Tracker {
         });
         for (const above of [true, false]) {
             const row = tier(above);
-            spread(row.map(label => anchors[label.index]), row.map(() => labelWidth), width, 10).forEach((left, i) => {
+            spread(row.map(label => anchors[label.index]), row.map(() => labelWidth), width, gap).forEach((left, i) => {
                 row[i].box.set_position(Math.round(left), above ? barY - rise - row[i].height : belowY);
                 Object.assign(row[i], {from: anchors[row[i].index], to: left + labelWidth / 2});
             });
@@ -2117,15 +2129,15 @@ class Tracker {
         // Every curve has the same vertical profile and the labels keep the parts' order, so none cross.
         lines.connect('repaint', area => {
             const cr = area.get_context();
-            cr.setLineWidth(1);
+            cr.setLineWidth(px(1));
             cr.setSourceRGBA(0.62, 0.67, 0.74, 0.6);
             for (const label of labels) {
-                const [start, end] = label.above ? [barY, barY - rise + 3] : [barY + barHeight, belowY - 3];
+                const [start, end] = label.above ? [barY, barY - rise + px(3)] : [barY + barHeight, belowY - px(3)];
                 const middle = (start + end) / 2;
                 cr.moveTo(label.from, start);
                 cr.curveTo(label.from, middle, label.to, middle, label.to, end);
                 cr.stroke();
-                cr.arc(label.from, start, 2.2, 0, 2 * Math.PI);
+                cr.arc(label.from, start, px(2.2), 0, 2 * Math.PI);
                 cr.fill();
             }
             cr.$dispose();
@@ -2440,8 +2452,9 @@ class Tracker {
             const name = label('tracker-detail tracker-cluster-stat-name');
             name.text = caption;
             const value = label('tracker-cluster-stat tracker-cluster-figure', !graphs[key]);
-            const note = label('tracker-detail', true);
-            const graph = graphs[key] && this._drawing(graphs[key][0], {style_class: graphs[key][1]});
+            const note = label('tracker-detail');
+            // The graphs take the card's spare width.
+            const graph = graphs[key] && this._drawing(graphs[key][0], {style_class: graphs[key][1], x_expand: true});
             sharedGrid.attach(name, 0, line, 1, 1);
             if (graph) {
                 sharedGrid.attach(graph, 1, line, 1, 1);
@@ -2501,9 +2514,11 @@ class Tracker {
     }
 
     // A drawn bar or strip; paint(cr, width, height) reads its values whenever it repaints.
-    // A drawing area `props.width` by `props.height` logical pixels; `paint` draws in logical pixels too.
+    // A drawing area `props.width` by `props.height` logical pixels, each left to the style or layout when not given;
+    // `paint` draws in logical pixels too.
     _drawing(paint, props) {
-        const area = new St.DrawingArea({y_align: Clutter.ActorAlign.CENTER, ...props, width: px(props.width), height: px(props.height)});
+        const size = Object.fromEntries(['width', 'height'].filter(key => props[key] !== undefined).map(key => [key, px(props[key])]));
+        const area = new St.DrawingArea({y_align: Clutter.ActorAlign.CENTER, ...props, ...size});
         area.connect('repaint', () => {
             const cr = area.get_context();
             const scale = scaleFactor();
@@ -4660,11 +4675,13 @@ class Tracker {
             + `and ${limits.per_chat} to the same chat until you write to it. These limits count each sending chat on its own.`});
         text.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
         text.clutter_text.line_wrap = true;
-        note.add_child(text);
+        // The note and every sender in one item, a line each, instead of a menu row's padding apiece.
+        const list = new St.BoxLayout({vertical: true, x_expand: true, style_class: 'tracker-sending-list'});
+        list.add_child(text);
+        note.add_child(list);
         body.addMenuItem(note);
         for (const entry of senders) {
-            const item = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
-            item._ornamentLabel?.hide();
+            const item = new St.BoxLayout({style_class: 'tracker-sending-row'});
             const symbol = PROVIDERS[entry.sender.split(':')[0]]?.[0] || '•';
             const full = entry.hourly >= entry.limit;
             const state = full && entry.resumes_at ? ` · can send again at ${clock(entry.resumes_at)}`
@@ -4682,7 +4699,7 @@ class Tracker {
                 raise.connect('clicked', () => this._raiseLimit(entry.sender));
                 item.add_child(raise);
             }
-            body.addMenuItem(item);
+            list.add_child(item);
         }
     }
 
@@ -5117,11 +5134,8 @@ class Tracker {
                 card.add_child(top);
                 add(`${file.name} · updated ${age(file.modified)}`, 'tracker-detail', card);
                 const progress = checklistProgress(file);
-                const bar = new St.Widget({style_class: 'tracker-progress tracker-checklist-progress'});
-                const fill = new St.Widget({style_class: `tracker-progress-fill tracker-progress-${file.open ? 'working' : 'finished'}`});
-                fill.set_width(px(280 * progress.fraction));
-                bar.add_child(fill);
-                card.add_child(bar);
+                card.add_child(stretchBar('tracker-progress tracker-checklist-progress',
+                    `tracker-progress-fill tracker-progress-${file.open ? 'working' : 'finished'}`, progress.fraction));
                 add(progress.text, 'tracker-detail', card);
                 if (file.next) add(`Suggested next: ${file.next}`, 'tracker-checklist-next', card);
                 for (const item of file.user) add(`Needs you: ${item}`, 'tracker-checklist-user', card);
@@ -5322,15 +5336,7 @@ class Tracker {
             return {day: name, used: parts[0][1] + parts[1][1], parts};
         });
         if (recent.length) {
-            const width = 420, height = 64;
-            const chart = this._drawing((cr, w, h) => paintDays(cr, w, h, recent, 1),
-                {width, height, style_class: 'tracker-quota-chart', x_align: Clutter.ActorAlign.START});
-            this._tooltip(chart, recent.map(day => `${day.day}: ${dollars(day.used)} (Claude ${dollars(day.parts[0][1])}, Codex ${dollars(day.parts[1][1])})`).join('\n'));
-            box.add_child(chart);
-            const names = new St.BoxLayout({style_class: 'tracker-quota-days', x_align: Clutter.ActorAlign.START});
-            for (const day of recent) names.add_child(new St.Label({text: day.day, style_class: 'tracker-quota-day',
-                style: `width: ${Math.floor(width / recent.length)}px;`}));
-            box.add_child(names);
+            this._dayChart(box, recent, 1, recent.map(day => `${day.day}: ${dollars(day.used)} (Claude ${dollars(day.parts[0][1])}, Codex ${dollars(day.parts[1][1])})`).join('\n'));
             const legend = new St.BoxLayout({style_class: 'tracker-quota-legend'});
             legend.add_child(small('Each day\'s cost', 'tracker-muted tracker-quota-small'));
             ['Claude', 'Codex'].forEach((name, index) => {
@@ -5347,6 +5353,19 @@ class Tracker {
             box.add_child(small(`Without a price: ${unpriced.map(([name, tokens]) => `${name.split(':').pop()} (${tokenCount(tokens)} tokens)`).join(', ')}. `
                 + 'Add one in ~/.config/agent-bar/prices.json.', 'tracker-detail tracker-attention', true));
         body.addMenuItem(item);
+    }
+
+    // One stacked bar per day across the card's width, each day's name centred under its bar; `tip` lists the values.
+    _dayChart(box, days, floor, tip) {
+        const chart = this._drawing((cr, w, h) => paintDays(cr, w, h, days, floor),
+            {height: 64, style_class: 'tracker-quota-chart', x_expand: true});
+        this._tooltip(chart, tip);
+        box.add_child(chart);
+        // Equal columns, as paintDays gives each day an equal slot.
+        const names = new St.BoxLayout({style_class: 'tracker-quota-days', x_expand: true});
+        names.layout_manager.homogeneous = true;
+        for (const day of days) names.add_child(new St.Label({text: day.day, style_class: 'tracker-quota-day', x_expand: true}));
+        box.add_child(names);
     }
 
     _quotaNote(text, style = 'tracker-detail') {
@@ -5383,11 +5402,9 @@ class Tracker {
             `tracker-quota-figure tracker-quota-${style}`));
         box.add_child(head);
         const line = new St.BoxLayout({style_class: 'tracker-progress-line'});
-        const track = new St.Widget({style_class: 'tracker-progress tracker-quota-track', y_align: Clutter.ActorAlign.CENTER});
-        const fill = new St.Widget({style_class: `tracker-progress-fill tracker-progress-${{failed: 'failed', attention: 'attention'}[style] || 'working'}`});
-        fill.set_width(px(300 * Math.min(100, Math.max(0, limit.expired ? 0 : limit.percent)) / 100));
-        track.add_child(fill);
-        line.add_child(track);
+        line.add_child(stretchBar('tracker-progress tracker-quota-track',
+            `tracker-progress-fill tracker-progress-${{failed: 'failed', attention: 'attention'}[style] || 'working'}`,
+            limit.expired ? 0 : limit.percent / 100));
         const resets = limit.resets_at;
         line.add_child(label(!resets ? '' : limit.expired ? `reset ${new Date(resets * 1000).toLocaleTimeString('en-US', {hour: 'numeric', minute: '2-digit'})}; no reading since`
             : `${resetTime(resets)}, in ${duration(Math.round(resets - now))}`, 'tracker-detail'));
@@ -5403,16 +5420,8 @@ class Tracker {
             if (limit.readings < 3) {
                 box.add_child(label(`Use by day shows once there are more readings this week (${limit.readings} so far).`, 'tracker-muted tracker-quota-small', true));
             } else {
-                const width = 420, height = 64;
-                const chart = this._drawing((cr, w, h) => paintDays(cr, w, h, limit.days),
-                    {width, height, style_class: 'tracker-quota-chart', x_align: Clutter.ActorAlign.START});
-                this._tooltip(chart, limit.days.map(day => `${day.day}: ${day.used.toFixed(1)} points`
+                this._dayChart(box, limit.days, 20, limit.days.map(day => `${day.day}: ${day.used.toFixed(1)} points`
                     + (day.parts.length > 1 ? ` (${day.parts.map(([name, v]) => `${name} ${v.toFixed(1)}`).join(', ')})` : '')).join('\n'));
-                box.add_child(chart);
-                const names = new St.BoxLayout({style_class: 'tracker-quota-days', x_align: Clutter.ActorAlign.START});
-                for (const day of limit.days) names.add_child(new St.Label({text: day.day, style_class: 'tracker-quota-day',
-                    style: `width: ${Math.floor(width / limit.days.length)}px;`}));
-                box.add_child(names);
                 const parts = limit.days[0].parts.map(([name]) => name);
                 const legend = new St.BoxLayout({style_class: 'tracker-quota-legend'});
                 legend.add_child(label('Points of the weekly limit used each day', 'tracker-muted tracker-quota-small'));

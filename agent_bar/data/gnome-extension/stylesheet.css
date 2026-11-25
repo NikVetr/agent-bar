@@ -249,14 +249,14 @@
 .tracker-cluster-memory { height: 6px; }
 .tracker-cluster-section { font-size: 12px; font-weight: bold; color: #a3acb9; padding: 4px 0 0 4px; }
 .tracker-cluster-measure-row { spacing: 10px; }
-.tracker-cluster-measure-host { width: 74px; }
+.tracker-cluster-measure-host { min-width: 74px; max-width: 120px; }
 .tracker-cluster-snooze { spacing: 6px; }
 .tracker-cluster-snooze-entry { margin: 0; padding: 3px 8px; width: 120px; font-size: 12px; }
 .tracker-entry-invalid { border-color: #f28b82; }
 .tracker-cluster-strip { height: 18px; }
 .tracker-cluster-line { height: 8px; }
-.tracker-cluster-slots { width: 180px; height: 10px; }
-.tracker-cluster-spark { width: 180px; height: 20px; }
+.tracker-cluster-slots { min-width: 160px; height: 10px; }
+.tracker-cluster-spark { min-width: 160px; height: 20px; }
 .tracker-cluster-value { min-width: 46px; font-weight: bold; text-align: right; }
 .tracker-cluster-queue { font-size: 13px; color: #edf0f5; }
 .tracker-copy { padding: 3px 9px; border-radius: 6px; font-size: 12px; color: #c3cad4; background-color: #2c3139; }
@@ -272,7 +272,7 @@
 .tracker-quota-stale { color: #7d8693; }
 .tracker-quota-limit { spacing: 6px; }
 .tracker-quota-figure { font-size: 12px; }
-.tracker-quota-track { width: 300px; }
+.tracker-quota-track { width: auto; min-width: 160px; }
 .tracker-quota-wrap { width: 600px; }
 .tracker-quota-note { padding: 8px 12px 0; }
 .tracker-quota-small { font-size: 11px; }
@@ -288,6 +288,9 @@
 .tracker-chat-state { width: 8.5em; text-align: center; }
 .tracker-title-full { max-width: 470px; }
 .tracker-copy-compact { padding: 3px 5px; }
+
+.tracker-sending-list { spacing: 6px; }
+.tracker-sending-row { spacing: 8px; min-height: 22px; }
 
 /* Tickets */
 .tracker-ticket-bar { padding: 4px 14px 10px; spacing: 12px; }
@@ -321,7 +324,7 @@
 .tracker-side-ticket-body { font-size: 13px; color: #edf0f5; }
 .tracker-schedule-button:checked { background-color: #3a6aa8; color: #ffffff; }
 .tracker-checklist { spacing: 4px; padding: 10px 0 8px; border-top: 1px solid #3b414a; }
-.tracker-checklist-progress { width: 280px; margin: 2px 0; }
+.tracker-checklist-progress { width: auto; margin: 2px 0; }
 .tracker-checklist-next { font-size: 12px; color: #dfe4ea; }
 .tracker-checklist-user { font-size: 12px; font-weight: bold; color: #f4c36a; }
 .tracker-checklist-link { font-size: 12px; color: #9fb4ff; padding: 1px 0; }
