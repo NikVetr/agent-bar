@@ -240,6 +240,12 @@ test('queue details show workers and timing from the monitor, or when a queue fi
     assert.equal(f.context.queueDetail({state: 'RUNNING', done: 397, total: 693, pct: 57.3,
         workers: '1-1-0-1-0-0 P50 WAIT', elapsed: 16000, eta: 90000}),
     '397 / 693 jobs · 57.3% · 3 workers · running 4h 26m · ETA 1d 1h');
+    assert.match(f.context.queueDetail({state: 'RUNNING', done: 1, total: 3, pct: 33.3,
+        workers: '1', eta: 3600, eta_warning: 'recent_slower'}), /ETA 1h 0m \(recent jobs slower\)/);
+    assert.match(f.context.queueDetail({state: 'PENDING', done: 12, total: 20, pct: 60,
+        workers: '0', elapsed: 1000, eta: 900}), /queued 16m · ETA 15m/);
+    assert.doesNotMatch(f.context.queueDetail({state: 'PENDING', done: 0, total: 20, pct: 0,
+        workers: '0', elapsed: 1000, eta: -1}), /ETA/);
     assert.equal(f.context.queueDetail({state: 'DRAINING', done: 490, total: 693, pct: 70.7,
         workers: '0-0 P50 DRAIN', failed: 3, failed_at: '12:19'}),
     '490 / 693 jobs · 70.7% · 3 failed, last 12:19');

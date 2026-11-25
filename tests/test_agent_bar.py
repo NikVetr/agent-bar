@@ -1324,9 +1324,13 @@ class TrackerTests(unittest.TestCase):
             self.assertEqual((row['project'], row['done'], row['total']), ('project', 4, 8))
             self.assertEqual((row['elapsed'], row['ended']), (10, None))
             self.assertEqual((row['failed'], row['failed_at'], row['rerun']), (3, '12:19', 1))
+            details = Path(str(path) + '.details')
+            details.write_text('\t'.join(cells + ['recent_slower']) + '\n')
+            self.assertEqual(queue_snapshot(path)[0]['eta_warning'], 'recent_slower')
             finished = cells[:4] + ['COMPLETED'] + cells[5:13] + ['160', 'end'] + cells[15:]
             path.write_text('\t'.join(finished) + '\n')
             self.assertEqual(queue_snapshot(path)[0]['ended'], 160)
+            self.assertIsNone(queue_snapshot(path)[0]['eta_warning'])
             path.write_text('\t'.join(cells[:-1]) + '\n')
             with self.assertRaises(ValueError): queue_snapshot(path)
 

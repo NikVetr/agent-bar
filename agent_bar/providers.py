@@ -672,15 +672,25 @@ class Providers:
 
 
 def queue_snapshot(path):
-    """Read the parallel-workers monitor's 21-column queue TSV. No cluster queries."""
+    """Read the parallel-workers monitor's queue TSV (21 columns plus an optional ETA warning). No cluster queries."""
+    lines = Path(path).read_text().splitlines()
+    try:
+        details = Path(str(path) + '.details').read_text().splitlines()
+    except FileNotFoundError:
+        details = []
+    # A crashed or older producer may leave a stale companion. Only attach
+    # warnings from the exact rows the caller is reading.
+    if details and ['\t'.join(line.split('\t')[:21]) for line in details] == lines:
+        lines = details
     result = []
-    for line in Path(path).read_text().splitlines():
+    for line in lines:
         cells = line.split('\t')
-        if len(cells) != 21:
+        if len(cells) not in (21, 22):
             raise ValueError(f'Unexpected queue snapshot schema ({len(cells)} columns)')
         result.append({'id': cells[16], 'project': cells[17], 'label': cells[5],
                        'state': cells[4], 'done': int(cells[7]), 'total': int(cells[8]),
                        'pct': float(cells[11]), 'eta': int(cells[10]), 'workers': cells[6],
+                       'eta_warning': cells[21] if len(cells) == 22 and cells[21] != '-' else None,
                        'queue_file': cells[15], 'started': int(cells[3]), 'elapsed': int(cells[9]),
                        # The monitor reuses the end column as the start time while a queue is active.
                        'ended': int(cells[13]) if cells[14] else None,

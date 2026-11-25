@@ -106,6 +106,10 @@ const FILTERS = [['all', 'All'], ...Object.entries(PROVIDERS).map(([key, [symbol
 const QUEUE_FILTERS = [['counted', 'Since last turn'], ['active', 'Running or queued'], ['finished', 'Finished'],
     ['all', 'All seen']];
 const GIT_FILTERS = [['all', 'All'], ['changes', 'Uncommitted'], ['unpushed', 'Unpushed']];
+const ETA_WARNINGS = new Map([
+    ['recent_slower', 'recent jobs slower'], ['recent_faster', 'recent jobs faster'],
+    ['long_running', 'job exceeding sampled runtimes'],
+]);
 const TERMINAL = new Set(['COMPLETED', 'FINISHED_INCOMPLETE', 'FAILED', 'KILLED', 'UNLISTED']);
 
 function age(at) {
@@ -182,7 +186,10 @@ function queueDetail(queue) {
         const workers = ((queue.workers || '').split(' ')[0] || '').split('-').reduce((n, v) => n + (Number(v) || 0), 0);
         if (workers) parts.push(`${workers} worker${workers === 1 ? '' : 's'}`);
         if (known) parts.push(`${queue.state === 'PENDING' ? 'queued' : 'running'} ${duration(queue.elapsed)}`);
-        if (Number.isFinite(queue.eta) && queue.eta >= 0 && ['RUNNING', 'DRAINING'].includes(queue.state)) parts.push(`ETA ${duration(queue.eta)}`);
+        if (Number.isFinite(queue.eta) && queue.eta >= 0 && ['RUNNING', 'DRAINING', 'PENDING'].includes(queue.state)) {
+            const note = ETA_WARNINGS.get(queue.eta_warning);
+            parts.push(`ETA ${duration(queue.eta)}${note ? ' (' + note + ')' : ''}`);
+        }
     }
     return parts.join(' · ');
 }
