@@ -20,8 +20,8 @@ class TrackerTests(unittest.TestCase):
     def setUp(self):
         self.ledger = Ledger({'since': 100, 'conversations': {}, 'queues': {}, 'project_turns': {}})
 
-    def test_host_projects_uses_reservations_and_sampled_memory(self):
-        from agent_bar.cluster import host_projects
+    def test_node_uses_reservations_and_sampled_memory(self):
+        from agent_bar.cluster import node
         with tempfile.TemporaryDirectory() as root:
             report = Path(root) / '.rota/adaptive/last-known/node.tsv'
             report.parent.mkdir(parents=True)
@@ -34,34 +34,73 @@ class TrackerTests(unittest.TestCase):
             snapshot = {'updated': updated, 'collector': {'local_host': 'node'},
                         'hosts': [{'id': 'node', 'ok': True, 'mount': {'ok': True, 'root': root},
                                    'slots': None, 'memory': {'total_bytes': 2**30}}],
+                        'queues': [{'id': 'tag-a', 'group': 'active', 'label': 'fits', 'state': 'RUNNING', 'started': updated - 7200, 'done': 5, 'total': 10}],
                         'scheduler': {'ok': True, 'pool': {'id': 'pool'}, 'hosts': [{'id': 'node', 'cpu_units': 8}], 'queues': [
-                            {'queue_id': 'a', 'project': 'one'}, {'queue_id': 'b', 'project': 'one'},
+                            {'queue_id': 'a', 'tag': 'tag-a', 'project': 'one', 'running_workers': 6}, {'queue_id': 'b', 'project': 'one'},
                             {'queue_id': 'c', 'project': 'two'}]}}
-            result = host_projects('node', snapshot)
+            result = node('node', snapshot, rota=root)
             self.assertEqual(result['cpu_slots'], 8)
             self.assertEqual(result['projects'], [
                 {'project': 'one', 'jobs': 2, 'cpu_slots': 4, 'memory_mib': 200},
                 {'project': 'two', 'jobs': 1, 'cpu_slots': 2, 'memory_mib': None}])
-            with unittest.mock.patch('time.time', return_value=updated + 300), self.assertRaisesRegex(ValueError, 'node report is stale'):
-                host_projects('node', {**snapshot, 'updated': updated + 300})
+            # Each queue's share of the node, joined to its progress by its tag.
+            first = result['queues'][0]
+            self.assertEqual({key: first[key] for key in ['id', 'label', 'jobs', 'cpu_slots', 'memory_mib', 'started', 'done', 'workers']},
+                             {'id': 'tag-a', 'label': 'fits', 'jobs': 1, 'cpu_slots': 3, 'memory_mib': 150, 'started': updated - 7200,
+                              'done': 5, 'workers': 6})
+            self.assertEqual(result['state']['admission'], None)
+            with unittest.mock.patch('time.time', return_value=updated + 300), self.assertRaisesRegex(ValueError, 'cluster snapshot is stale'):
+                node('node', {**snapshot, 'updated': updated}, rota=root)
+            # A stale node report leaves the node's state and events, without its allocations.
+            result = node('node', {**snapshot, 'updated': updated + 300}, rota=root, now=updated + 300)
+            self.assertEqual(result['allocations_error'], 'The node report is stale')
+            self.assertEqual(result['projects'], [])
             # The per-host process is the host daemon; a report naming it otherwise is not this pool's.
             report.write_text('\n'.join(line.replace(' ', '\t') for line in [header, f'agent pool node {updated} ok - - - -']))
-            with self.assertRaisesRegex(ValueError, 'current pool'):
-                host_projects('node', snapshot)
+            self.assertIn('current pool', node('node', snapshot, rota=root)['allocations_error'])
             snapshot['scheduler']['pool']['id'] = 'new'
-            with self.assertRaisesRegex(ValueError, 'current pool'):
-                host_projects('node', snapshot)
+            self.assertIn('current pool', node('node', snapshot, rota=root)['allocations_error'])
 
-    def test_host_projects_fixed_slots_follow_host_order(self):
-        from agent_bar.cluster import host_projects
+    def test_node_events_are_its_failures_holds_outages_and_latest_memory_pressure(self):
+        from agent_bar.cluster import node
+        now = time.time()
+        with tempfile.TemporaryDirectory() as root:
+            records = [
+                {'at': now - 2 * 86400, 'kind': 'job_failures', 'run_name': 'old', 'jobs': [{'host_id': 'a', 'kind': 'unknown'}]},
+                {'at': now - 600, 'kind': 'job_failures', 'run_name': 'fits', 'project': 'p', 'holds': [],
+                 'jobs': [{'host_id': 'a', 'kind': 'outage', 'log': None}, {'host_id': 'a', 'kind': 'unknown', 'log': '/l'},
+                          {'host_id': 'b', 'kind': 'unknown'}],
+                 'outages': [{'host_id': 'a', 'started': now - 1200, 'ended': now - 600}]},
+                {'at': now - 300, 'kind': 'hold', 'run_name': 'scans', 'jobs': [], 'outages': [{'host_id': 'a', 'started': now - 1200, 'ended': now - 600}],
+                 'holds': [{'host_id': 'a', 'reason': 'rapid_job_failures', 'reset_command': 'reset'}]}]
+            (Path(root) / 'events.jsonl').write_text('\n'.join(json.dumps(r) for r in records))
+            samples = [{'time': now - 4000, 'host': 'a', 'swap_used_bytes': 1, 'processes': []},
+                       {'time': now - 60, 'host': 'b', 'swap_used_bytes': 2, 'processes': []},
+                       {'time': now - 120, 'host': 'a', 'swap_used_bytes': 5 * 2**30, 'used_pct': 91,
+                        'processes': [{'pid': 1, 'command': 'big', 'bytes': 2**32}]}]
+            (Path(root) / 'memory-events.jsonl').write_text('\n'.join(json.dumps(r) for r in samples))
+            snapshot = {'updated': now, 'hosts': [{'id': 'a', 'ok': False, 'error': 'timed out'}, {'id': 'b', 'ok': True}],
+                        'scheduler': {'ok': True, 'pool': {'id': 'pool', 'unavailable_hosts': {'a': 'unreachable'}}, 'hosts': []}}
+            result = node('a', snapshot, rota=root, now=now)
+        self.assertEqual(result['allocations_error'], 'The scheduler has no current report from this node')
+        self.assertEqual((result['state']['unavailable'], result['state']['error']), ('unreachable', 'timed out'))
+        self.assertEqual([event['kind'] for event in result['events']], ['memory', 'hold', 'failures', 'outage'])
+        memory, hold, failures, outage = result['events']
+        self.assertEqual((memory['swap_bytes'], memory['processes']), (5 * 2**30, [{'command': 'big', 'bytes': 2**32}]))
+        self.assertEqual((hold['queue'], hold['reason'], hold['reset_command']), ('scans', 'jobs failed in quick succession', 'reset'))
+        self.assertEqual((failures['queue'], failures['jobs'], failures['outage'], failures['logs']), ('fits', 2, 1, ['/l']))
+        self.assertEqual((outage['started'], outage['ended']), (now - 1200, now - 600))
+
+    def test_node_fixed_slots_follow_host_order(self):
+        from agent_bar.cluster import node
         now = time.time()
         snapshot = {'updated': now, 'scheduler': {'ok': True, 'pool': {'state': 'INACTIVE'}},
                     'hosts': [{'id': name, 'ok': True, 'slots': 8} for name in ['b', 'a']],
                     'queue_refresh': {'ok': True, 'updated': now}, 'queues': [
-                        {'group': 'active', 'workers': '2-3', 'project': 'test'},
-                        {'group': 'active', 'workers': '0-?', 'project': 'missing'},
-                        {'group': 'finished', 'workers': '3-3', 'project': 'old'}]}
-        result = host_projects('a', snapshot)
+                        {'id': 'q1', 'group': 'active', 'workers': '2-3', 'project': 'test'},
+                        {'id': 'q2', 'group': 'active', 'workers': '0-?', 'project': 'missing'},
+                        {'id': 'q3', 'group': 'finished', 'workers': '3-3', 'project': 'old'}]}
+        result = node('a', snapshot, rota='/nonexistent-rota-state')
         self.assertEqual(result['projects'], [{'project': 'test', 'jobs': 0, 'fixed_slots': 3,
                                               'cpu_slots': 3, 'memory_mib': None}])
         self.assertTrue(result['incomplete_fixed_slots'])

@@ -24,7 +24,7 @@ def main():
     workflows.add_argument('numbers', type=int, nargs='*', help='active queue numbers within each selected project')
     workflows.add_argument('--project', help='limit to one queue project')
     workflows.add_argument('--ids', nargs='+', help='limit to these monitor queue IDs')
-    hosts = subs.add_parser('host-projects', help='jobs, reserved CPU slots and sampled memory by project on a node')
+    hosts = subs.add_parser('node', help="a cluster node's job slots by project and queue, its state and recent events")
     hosts.add_argument('host')
     nav = subs.add_parser('navigate')
     nav.add_argument('key'); nav.add_argument('window')
@@ -97,9 +97,9 @@ def main():
         one.add_argument('--as', dest='sender')
     args = vars(parser.parse_args())
     name = args.pop('command')
-    if name == 'host-projects':
-        from .cluster import host_projects
-        try: result = host_projects(args['host'])
+    if name == 'node':
+        from .cluster import node
+        try: result = node(args['host'])
         except (OSError, ValueError, KeyError, TypeError) as error: result = {'ok': False, 'error': str(error)}
         print(json.dumps(result, ensure_ascii=False))
         sys.exit(0 if result['ok'] else 1)

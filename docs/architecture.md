@@ -171,10 +171,15 @@ window file) must be reloaded first.
 
 ## GNOME Shell extension
 
-The Cluster tab requests `agent-bar host-projects HOST` while a node's side dropdown is open.
-The command reads the scheduler's last-known reservation table for that node on the locally mounted share,
-matches queue IDs to projects in the collector snapshot and sums reserved CPU units and current sampled memory.
-The report must match the current pool and host and have a recent sample.
+The Cluster tab requests `agent-bar node HOST` when a node's name has been hovered for most of a second and while
+its side dropdown is open; both share one reading for 15 s. The command reads the scheduler's last-known reservation
+table for that node on the locally mounted share, which must match the current pool and host and have a recent
+sample, and sums reserved CPU units and current sampled memory by queue. Queue IDs join the collector snapshot's
+`scheduler.queues` for the project and batch tag, and the tag joins its `queues` for name, start, progress and ETA.
+When the node has no current report, the reply says why in `allocations_error` and keeps the rest. The node's state
+comes from the snapshot's host and scheduler host rows and the report's daemon row. Its events are the last day's
+records in Rota's `events.jsonl` that name it (failed jobs, holds, outages) and its latest entry of the last hour in
+`memory-events.jsonl`; only the end of each append-only log is read.
 
 `agent_bar/data/gnome-extension` renders the snapshot in GNOME Shell 42 and runs the `agent-bar` CLI for actions.
 Bringing a chat forward saves the window's place, maximizes it on the primary display and asks its VS Code bridge to

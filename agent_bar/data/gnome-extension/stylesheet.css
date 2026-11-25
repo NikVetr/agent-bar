@@ -244,6 +244,8 @@
 .tracker-host-button:hover, .tracker-host-button:focus { background-color: #414a56; color: white; }
 .tracker-host-projects { spacing: 5px; }
 .tracker-host-project { font-weight: bold; padding-top: 6px; }
+.tracker-host-queue { font-weight: bold; padding-top: 4px; }
+.tracker-host-event { spacing: 6px; }
 .tracker-cluster-cpu { font-size: 15px; font-weight: bold; }
 .tracker-cluster-cores { height: 26px; }
 .tracker-cluster-memory { height: 6px; }

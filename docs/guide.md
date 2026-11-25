@@ -307,10 +307,20 @@ Clicking it opens the **Cluster** tab, headed by the cluster's CPU, busy cores a
 host. **Snooze** keeps a warning off the top bar until it clears, or for at most a time you type (such as 5d or 120h);
 Rota keeps checking the host meanwhile. The tab also lists:
 
-- each host's cores, memory and disks. Click a node name to open a side dropdown with one pair of bars per project
-  using job slots there. CPU shows reserved slots as a share of the node's job-slot budget. Memory shows the sampled
-  footprint of the project's jobs as a share of the node's physical RAM. Fixed-worker queues report slots only. The
-  dropdown refreshes about every 15 seconds while open.
+- each host's cores, memory and disks. Hover a node name for a second to list the projects using its job slots.
+  Click it to open a side dropdown for the node:
+  - one pair of bars per project. CPU shows reserved slots as a share of the node's job-slot budget. Memory shows the
+    sampled footprint of the project's jobs as a share of the node's physical RAM. Fixed-worker queues report slots
+    only.
+  - each queue running there: its jobs, CPU slots and memory on the node, how long it has run, its progress, its
+    workers across the pool and its ETA.
+  - the node's state: why it is unavailable, its owner's activity, its budget (against its base when lowered), load,
+    swap and the shared-drive mount.
+  - its last day: job failures, holds (with a button that copies the command that lifts one, to run once the cause
+    is fixed) and times out of reach, from Rota's `events.jsonl`, and the latest memory-pressure sample of the last
+    hour with the processes holding the most memory, from `memory-events.jsonl`.
+
+  The dropdown refreshes about every 15 seconds while open.
 - failed jobs by project, with a note to copy for that project's agent and buttons that bring its VS Code window
   forward.
 - the shared drive, naming the host serving it, with the scheduler's job slots in use, the drive's throughput and
@@ -335,7 +345,7 @@ agent-bar status        # open chats, their states and counts
 agent-bar queues        # numbered queues and their progress
 agent-bar queue-dependencies  # prerequisite numbers and outcomes
 agent-bar queue-dependencies --project example 1 2  # two active queues in one project
-agent-bar host-projects HOST  # projects, jobs, reserved CPU slots and sampled memory on one node
+agent-bar node HOST     # one node's job slots by project and queue, its state and its last day's events
 agent-bar git           # git status of repositories holding open projects
 agent-bar info --project .  # project hooks, skills, tracker health, instruction files
 agent-bar usage         # usage limits, with pace, run-out time and use by day

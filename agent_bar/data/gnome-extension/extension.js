@@ -247,6 +247,90 @@ function schedulerExtras(cluster, kind, id, now = Date.now() / 1000) {
     return result;
 }
 
+const OWNER_STATES = {active: 'Its owner is active: no new jobs start here', idle: 'Its owner is idle',
+    unknown: "Its owner's activity is unknown: no new jobs start here", suspended: 'Jobs here are suspended while its owner is active'};
+
+function gibText(bytes) {
+    return `${Number((bytes / 1024 ** 3).toFixed(1))} GiB`;
+}
+
+// A time today as 3:12 PM, an earlier one with its weekday.
+function clockText(at, now = Date.now() / 1000) {
+    const date = new Date(at * 1000);
+    const time = date.toLocaleTimeString('en-US', {hour: 'numeric', minute: '2-digit'});
+    return date.toDateString() === new Date(now * 1000).toDateString() ? time
+        : `${date.toLocaleDateString('en-US', {weekday: 'short'})} ${time}`;
+}
+
+function jobCount(n) {
+    return `${n} ${n === 1 ? 'job' : 'jobs'}`;
+}
+
+// A node's job slots by project, for its tooltip, from `agent-bar node`.
+function nodeSummary(data) {
+    const lines = [];
+    if (data.allocations_error) lines.push(`${data.host}: ${data.allocations_error}`);
+    else if (!data.projects.length) lines.push(data.incomplete_fixed_slots ? `${data.host}: some fixed-worker slot counts are unavailable`
+        : `No job slots in use on ${data.host}`);
+    else {
+        lines.push(`${data.host} · ${data.cpu_slots} CPU slots` + (data.memory_bytes ? ` · ${gibText(data.memory_bytes)}` : ''));
+        for (const project of data.projects)
+            lines.push([project.project, project.jobs && jobCount(project.jobs),
+                project.fixed_slots && `${project.fixed_slots} fixed ${project.fixed_slots === 1 ? 'slot' : 'slots'}`,
+                `CPU ${project.cpu_slots} of ${data.cpu_slots}`,
+                project.memory_mib !== null && `memory ${gibText(project.memory_mib * 1024 ** 2)}`].filter(Boolean).join(' · '));
+    }
+    lines.push('Click for its queues, state and recent events');
+    return lines.join('\n');
+}
+
+// A queue holding job slots on the node: its use there, then its project, how long it has run, and its progress.
+function nodeQueueLines(queue, now = Date.now() / 1000) {
+    const here = [queue.jobs && `${jobCount(queue.jobs)} here`, queue.fixed_slots && `${queue.fixed_slots} fixed slots here`,
+        `CPU ${queue.cpu_slots}`, queue.memory_mib !== null && `memory ${gibText(queue.memory_mib * 1024 ** 2)}`];
+    const progress = [queue.project, queue.started && `running ${duration(Math.max(0, Math.round(now - queue.started)))}`,
+        Number.isFinite(queue.total) && `${queue.done} / ${queue.total} done`, queue.failed > 0 && `${queue.failed} failed`,
+        Number.isFinite(queue.workers) && `${queue.workers} ${queue.workers === 1 ? 'worker' : 'workers'} in the pool`,
+        queue.eta && `ETA ${clockText(queue.eta, now)}`];
+    return [here, progress].map(parts => parts.filter(Boolean).join(' · '));
+}
+
+// What the scheduler and the collector say of the node now, each with whether it needs a look.
+function nodeStateLines(state, now = Date.now() / 1000) {
+    /** @type {[string, boolean][]} */
+    const lines = [];
+    if (!state.reachable) lines.push([`Unreachable${state.error ? `: ${state.error}` : ''}`, true]);
+    if (state.unavailable) lines.push([`Unavailable: ${UNAVAILABLE[state.unavailable] || state.unavailable}`, true]);
+    if (state.enabled === false) lines.push(['Turned off in the pool', true]);
+    if (state.admission && state.admission !== 'enabled') lines.push([`Admission ${state.admission}`, true]);
+    if (state.owner && state.owner !== 'off') lines.push([OWNER_STATES[state.owner] || `Owner ${state.owner}`, state.owner !== 'idle']);
+    if (state.away) lines.push([`Away${state.away_window ? ` ${state.away_window}` : ''}`, false]);
+    if (Number.isFinite(state.cpu_units)) {
+        // Each against its base when the scheduler has lowered it.
+        lines.push([`Budget ${state.cpu_units}${state.cpu_units < state.base_cpu_units ? ` of ${state.base_cpu_units}` : ''} CPU slots · `
+            + `${mibText(state.memory_mib)}${state.memory_mib < state.base_memory_mib ? ` of ${mibText(state.base_memory_mib)}` : ''}`
+            + (state.gpu_units > 0 ? ` · ${state.gpu_units} GPU slots` : ''), false]);
+    }
+    if (state.load?.length) lines.push([`Load ${state.load.map(/** @param {number} n */ n => n.toFixed(1)).join(' / ')} over 1, 5 and 15 min`, false]);
+    if (state.swap_bytes >= 1024 ** 3) lines.push([`Swap ${gibText(state.swap_bytes)} in use`, state.swap_bytes >= 4 * 1024 ** 3]);
+    const mount = state.mount;
+    if (mount) lines.push(mount.state === 'mounted' ? [`Shared drive mounted${mount.since ? ` since ${clockText(mount.since, now)}` : ''}`, false]
+        : [`Shared drive ${mount.state || 'unknown'}${mount.error ? `: ${mount.error}` : ''}`, true]);
+    return lines;
+}
+
+// One recent event on the node as a line: when, then what happened.
+function nodeEventLine(event, now = Date.now() / 1000) {
+    if (event.kind === 'failures')
+        return `${clockText(event.at, now)} · ${jobCount(event.jobs)} of ${event.queue} failed here`
+            + (event.outage ? ` (${event.outage === event.jobs ? 'all' : event.outage} while it was out of reach)` : '');
+    if (event.kind === 'hold') return `${clockText(event.at, now)} · ${event.queue} held here: ${event.reason}`;
+    if (event.kind === 'outage') return `${clockText(event.started, now)}–${clockText(event.ended || event.at, event.started)} · out of reach for `
+        + duration(Math.max(0, Math.round((event.ended || event.at) - event.started)));
+    return `${clockText(event.at, now)} · swap ${gibText(event.swap_bytes)}${Number.isFinite(event.used_pct) ? `, memory ${event.used_pct}% used` : ''}`
+        + (event.processes.length ? `; most memory: ${event.processes.slice(0, 3).map(/** @param {any} p */ p => `${p.command} ${gibText(p.bytes)}`).join(', ')}` : '');
+}
+
 function queueDetail(queue) {
     const parts = [`${queue.done} / ${queue.total} jobs · ${queue.pct.toFixed(1)}%`];
     // Records from before the monitor reported failures have no count.
@@ -2019,6 +2103,9 @@ class Tracker {
             'A host is fine, has a warning, or is unreachable. Warnings are listed first, each with its sign from the top bar; '
             + 'a clock marks a host that stopped updating. Snooze keeps one off the top bar until it clears, or for at most '
             + 'a time you type (90m, 120h, 5d, 2w; a bare number is hours); snoozed ones follow, gray.');
+        row(cluster, [text('node-1', 'tracker-cluster-host')],
+            'A node\'s name: hover it a second for the projects using its job slots; click it for the queues running there, '
+            + 'its state, and its last day\'s failed jobs, holds, outages and memory pressure.');
         row(cluster, [this._drawing((cr, width, height) => paintCores(cr, width, height, [18, 42, 63, 78, 91, 97, 55, 30]),
             {width: 120, height: 24})], 'One bar per core, as tall as the core is busy, colored like the CPU percentage: gray under '
             + '50%, blue from 50%, amber from 90%.');
@@ -2308,7 +2395,7 @@ class Tracker {
                 if (this._hostView && !this._cluster?.hosts.some(host => host.id === this._hostView.id))
                     this._toggleHost(this._hostView.id);
                 this._updateCluster();
-                this._loadHostProjects();
+                this._loadNodeView();
             }
         });
     }
@@ -2597,11 +2684,13 @@ class Tracker {
         return button;
     }
 
+    // A node's name: hovering it a second lists its job slots by project; clicking it opens its side dropdown.
     _hostButton(id) {
         const button = new St.Button({label: id, can_focus: true, x_align: Clutter.ActorAlign.START,
             y_align: Clutter.ActorAlign.CENTER, style_class: 'tracker-cluster-host tracker-host-button',
-            accessible_name: `Show projects using job slots on ${id}`});
-        this._tooltip(button, button.accessible_name);
+            accessible_name: `Show the queues, state and recent events of ${id}`});
+        // Read once the pointer has stayed most of the second, so passing over names reads nothing.
+        this._tooltip(button, () => this._readNode(id).then(entry => entry.data ? nodeSummary(entry.data) : entry.error), 800);
         button.connect('clicked', () => this._toggleHost(id));
         return button;
     }
@@ -2611,43 +2700,55 @@ class Tracker {
         this._renderSide();
     }
 
-    async _loadHostProjects() {
-        const host = this._hostView;
-        if (!host || host.loading || Date.now() < (host.nextRead || 0)) return;
-        host.loading = true;
-        try {
-            host.data = await this._run(['host-projects', host.id]);
-            host.error = null;
-        } catch (error) {
-            host.data = null;
-            host.error = error.message;
-        } finally {
-            host.loading = false;
-            host.nextRead = Date.now() + 15000;
-        }
-        if (this._enabled && this._hostView === host && this._clusterShown()) this._renderHostProjects(host);
+    // `agent-bar node` for one node, read again once 15 s old; the tooltip and the side dropdown share each reading.
+    _readNode(id) {
+        this._nodes ??= new Map();
+        const entry = this._nodes.get(id) || {id, data: null, error: null, at: 0, pending: null};
+        this._nodes.set(id, entry);
+        if (entry.pending) return entry.pending;
+        if (Date.now() - entry.at < 15000) return Promise.resolve(entry);
+        entry.pending = this._run(['node', id]).then(data => Object.assign(entry, {data, error: null}),
+            error => Object.assign(entry, {data: null, error: error.message})).finally(() => {
+            entry.pending = null;
+            entry.at = Date.now();
+        });
+        return entry.pending;
     }
 
-    _renderHostProjects(host) {
+    async _loadNodeView() {
+        const host = this._hostView;
+        if (!host) return;
+        const entry = await this._readNode(host.id);
+        // Redrawn for a new reading only, while this node's dropdown is still the one open.
+        if (!this._enabled || this._hostView !== host || !this._clusterShown() || host.at === entry.at) return;
+        host.entry = entry;
+        host.at = entry.at;
+        this._renderNode(host);
+    }
+
+    // The node's side dropdown: its job slots by project, the queues holding them, its state and its last day's events.
+    _renderNode(host) {
         const box = host.body;
+        if (!box) return;
         box.destroy_all_children();
-        const label = (text, style) => {
+        const label = (text, style, parent = box) => {
             const actor = new St.Label({text, style_class: style});
             actor.clutter_text.line_wrap = true;
             actor.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
-            box.add_child(actor);
+            parent.add_child(actor);
+            return actor;
         };
-        if (!host.data) {
-            label(host.error || 'Reading job allocations…', host.error ? 'tracker-warning' : 'tracker-detail');
+        const caption = text => label(text, 'tracker-ticket-caption');
+        const data = host.entry?.data;
+        if (!data) {
+            label(host.entry?.error || 'Reading the node…', host.entry?.error ? 'tracker-warning' : 'tracker-detail');
             return;
         }
-        const {projects, cpu_slots, memory_bytes, incomplete_fixed_slots} = host.data;
-        if (incomplete_fixed_slots) label('Some fixed-worker slot counts are unavailable.', 'tracker-warning');
-        if (!projects.length) {
-            if (!incomplete_fixed_slots) label('No job slots in use on this node.', 'tracker-detail');
-            return;
-        }
-        const gib = value => `${(value / 1024 ** 3).toFixed(1)} GiB`;
+        const now = Date.now() / 1000;
+        caption('Projects');
+        if (data.allocations_error) label(data.allocations_error, 'tracker-warning');
+        else if (data.incomplete_fixed_slots) label('Some fixed-worker slot counts are unavailable.', 'tracker-warning');
+        if (!data.allocations_error && !data.projects.length && !data.incomplete_fixed_slots) label('No job slots in use on this node.', 'tracker-detail');
         const measure = (name, value, total, format) => {
             const ratio = value !== null && total > 0 ? value / total : null;
             const amount = value === null ? 'unavailable' : format(value);
@@ -2657,12 +2758,32 @@ class Tracker {
                 box.add_child(this._drawing((cr, w, h) => paintMemory(cr, w, h, Math.min(1, ratio), 0),
                     {style_class: 'tracker-cluster-line', x_expand: true}));
         };
-        for (const project of projects) {
-            const counts = [project.jobs && `${project.jobs} ${project.jobs === 1 ? 'job' : 'jobs'}`,
+        for (const project of data.projects) {
+            const counts = [project.jobs && jobCount(project.jobs),
                 project.fixed_slots && `${project.fixed_slots} fixed ${project.fixed_slots === 1 ? 'slot' : 'slots'}`];
             label([project.project, ...counts.filter(Boolean)].join(' · '), 'tracker-host-project');
-            measure('CPU slots reserved', project.cpu_slots, cpu_slots, String);
-            measure('Job memory', project.memory_mib === null ? null : project.memory_mib * 1024 ** 2, memory_bytes, gib);
+            measure('CPU slots reserved', project.cpu_slots, data.cpu_slots, String);
+            measure('Job memory', project.memory_mib === null ? null : project.memory_mib * 1024 ** 2, data.memory_bytes, gibText);
+        }
+        if (data.queues.length) {
+            caption('Queues running here');
+            for (const queue of data.queues) {
+                label(queue.label, 'tracker-host-queue');
+                for (const line of nodeQueueLines(queue, now)) if (line) label(line, 'tracker-detail');
+            }
+        }
+        caption('Node');
+        for (const [text, attention] of nodeStateLines(data.state, now)) label(text, attention ? 'tracker-detail tracker-attention' : 'tracker-detail');
+        caption('Last day');
+        if (!data.events.length) label('No failures, holds, outages or memory pressure here in the last day.', 'tracker-detail');
+        for (const event of data.events) {
+            const line = new St.BoxLayout({style_class: 'tracker-host-event'});
+            const text = label(nodeEventLine(event, now), event.kind === 'outage' ? 'tracker-detail' : 'tracker-detail tracker-attention', line);
+            text.x_expand = true;
+            // A hold lifts with the scheduler's reset command, run once the cause is fixed.
+            if (event.kind === 'hold' && event.reset_command)
+                line.add_child(this._copyButton(() => event.reset_command, 'Copy the command that lifts this hold, to run once the cause is fixed', true));
+            box.add_child(line);
         }
     }
 
@@ -4118,38 +4239,42 @@ class Tracker {
         return button;
     }
 
-    // Hovering or focusing `actor` shows `text` (or what a function `text` returns then) in a small box under it
-    // after a moment.
-    _tooltip(actor, text) {
+    // Hovering or focusing `actor` shows `text` (or what a function `text` returns then, or the text a promise it returns
+    // gives, once it does and while the pointer stays) in a small box under it after `delay` ms.
+    _tooltip(actor, text, delay = 350) {
         if (!text) return actor;
         actor.reactive = true;
         actor.track_hover = true;
-        let tip = null, timer = 0;
+        let tip = null, timer = 0, alive = true;
         const hide = () => {
             if (timer) GLib.source_remove(timer);
             timer = 0;
             tip?.destroy();
             tip = null;
         };
+        const open = content => {
+            if (!content || tip || !alive || !actor.mapped || !(actor.hover || actor.has_key_focus())) return;
+            tip = new St.Label({text: content, style_class: 'tracker-tooltip'});
+            tip.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+            tip.clutter_text.line_wrap = true;
+            Main.layoutManager.uiGroup.add_child(tip);
+            const [x, y] = actor.get_transformed_position();
+            const [, height] = actor.get_transformed_size();
+            const [, tipWidth] = tip.get_preferred_width(-1);
+            const [, tipHeight] = tip.get_preferred_height(tipWidth);
+            const monitor = Main.layoutManager.findMonitorForActor(actor) || Main.layoutManager.primaryMonitor;
+            const left = Math.min(Math.max(x, monitor.x + 8), monitor.x + monitor.width - tipWidth - 8);
+            const top = y + height + tipHeight + 6 > monitor.y + monitor.height ? y - tipHeight - 6 : y + height + 6;
+            tip.set_position(Math.round(left), Math.round(top));
+        };
         const show = () => {
             if (tip || timer) return;
-            timer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 350, () => {
+            timer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, delay, () => {
                 timer = 0;
                 if (!actor.mapped || !(actor.hover || actor.has_key_focus())) return GLib.SOURCE_REMOVE;
                 const content = typeof text === 'function' ? text() : text;
-                if (!content) return GLib.SOURCE_REMOVE;
-                tip = new St.Label({text: content, style_class: 'tracker-tooltip'});
-                tip.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
-                tip.clutter_text.line_wrap = true;
-                Main.layoutManager.uiGroup.add_child(tip);
-                const [x, y] = actor.get_transformed_position();
-                const [, height] = actor.get_transformed_size();
-                const [, tipWidth] = tip.get_preferred_width(-1);
-                const [, tipHeight] = tip.get_preferred_height(tipWidth);
-                const monitor = Main.layoutManager.findMonitorForActor(actor) || Main.layoutManager.primaryMonitor;
-                const left = Math.min(Math.max(x, monitor.x + 8), monitor.x + monitor.width - tipWidth - 8);
-                const top = y + height + tipHeight + 6 > monitor.y + monitor.height ? y - tipHeight - 6 : y + height + 6;
-                tip.set_position(Math.round(left), Math.round(top));
+                if (typeof content?.then === 'function') content.then(open, () => {});
+                else open(content);
                 return GLib.SOURCE_REMOVE;
             });
         };
@@ -4157,7 +4282,10 @@ class Tracker {
         actor.connect('key-focus-in', show);
         actor.connect('key-focus-out', hide);
         actor.connect('notify::mapped', () => actor.mapped || hide());
-        actor.connect('destroy', hide);
+        actor.connect('destroy', () => {
+            alive = false;
+            hide();
+        });
         return actor;
     }
 
@@ -4945,7 +5073,7 @@ class Tracker {
         this._sidePanel.visible = shown;
         if (!shown) return;
         this._later(() => this._placeSide());
-        const title = host ? `Jobs on ${host.id}` : this._checklistView ? 'Checklists' : 'Schedule a message';
+        const title = host ? `Node ${host.id}` : this._checklistView ? 'Checklists' : 'Schedule a message';
         this._sideHeading.add_child(new St.Label({text: title, x_expand: true, style_class: 'tracker-ticket-heading'}));
         const close = new St.Button({label: '×', can_focus: true, accessible_name: 'Close', style_class: 'tracker-side-close'});
         close.connect('clicked', () => {
@@ -4957,8 +5085,8 @@ class Tracker {
         if (host) {
             host.body = new St.BoxLayout({vertical: true, style_class: 'tracker-host-projects'});
             this._side.add_child(host.body);
-            this._renderHostProjects(host);
-            this._loadHostProjects();
+            this._renderNode(host);
+            this._loadNodeView();
             return;
         }
         if (this._checklistView) {

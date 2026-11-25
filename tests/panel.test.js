@@ -988,3 +988,45 @@ test('refusals notify once each, and none from before the panel started', () => 
     f.tracker._notifyRefusals(snap([{id: 2, kind: 'peer', sender: 'codex:a', recipient: 'claude:b'}, {id: 1, kind: 'hourly', sender: 'codex:a', recipient: 'claude:b'}]));
     assert.deepEqual(shown.map(n => [n.body, [...n.actions]]), [['⌘ codex:a has sent ✳ claude:b 10 messages since you last wrote to it.', ['Allow another round']]]);
 });
+
+test("a node's tooltip lists its job slots by project, and its dropdown its queues, state and events", () => {
+    const f = fixture();
+    const {nodeSummary, nodeQueueLines, nodeStateLines, nodeEventLine} = f.context;
+    const now = Date.parse('2026-11-25T15:00:00') / 1000;
+    const data = {host: 'mba', cpu_slots: 8, memory_bytes: 24 * 1024 ** 3, incomplete_fixed_slots: false,
+        projects: [{project: 'omics', jobs: 6, cpu_slots: 6, memory_mib: 3072}, {project: 'fits', jobs: 0, fixed_slots: 2, cpu_slots: 2, memory_mib: null}]};
+    assert.equal(nodeSummary(data), 'mba · 8 CPU slots · 24 GiB\nomics · 6 jobs · CPU 6 of 8 · memory 3 GiB\n'
+        + 'fits · 2 fixed slots · CPU 2 of 8\nClick for its queues, state and recent events');
+    assert.equal(nodeSummary({...data, allocations_error: 'The node report is stale'}).split('\n')[0], 'mba: The node report is stale');
+    assert.deepEqual([...nodeQueueLines({jobs: 6, cpu_slots: 6, memory_mib: 3072, project: 'omics', started: now - 7500,
+        done: 40, total: 120, failed: 0, workers: 18, eta: null}, now)],
+        ['6 jobs here · CPU 6 · memory 3 GiB', 'omics · running 2h 5m · 40 / 120 done · 18 workers in the pool']);
+    const state = {reachable: true, unavailable: null, enabled: true, admission: 'enabled', owner: 'active', cpu_units: 6, base_cpu_units: 8,
+        memory_mib: 14336, base_memory_mib: 14336, gpu_units: 0, away: false, load: [7.25, 6, 5.5], swap_bytes: 5 * 1024 ** 3,
+        mount: {state: 'mounted', since: now - 3600}};
+    assert.deepEqual([...nodeStateLines(state, now)].map(([text, attention]) => [text, attention]), [
+        ['Its owner is active: no new jobs start here', true], ['Budget 6 of 8 CPU slots · 14 GiB', false],
+        ['Load 7.3 / 6.0 / 5.5 over 1, 5 and 15 min', false], ['Swap 5 GiB in use', true], ['Shared drive mounted since 2:00 PM', false]]);
+    assert.equal(nodeEventLine({kind: 'failures', at: now - 600, queue: 'fits', jobs: 3, outage: 3}, now),
+        '2:50 PM · 3 jobs of fits failed here (all while it was out of reach)');
+    assert.equal(nodeEventLine({kind: 'outage', at: now - 600, started: now - 8100, ended: now - 600}, now),
+        '12:45 PM–2:50 PM · out of reach for 2h 5m');
+    assert.equal(nodeEventLine({kind: 'hold', at: now - 86400, queue: 'scans', reason: 'jobs failed in quick succession'}, now),
+        'Tue 3:00 PM · scans held here: jobs failed in quick succession');
+    assert.equal(nodeEventLine({kind: 'memory', at: now - 120, swap_bytes: 15.5 * 1024 ** 3, used_pct: 89,
+        processes: [{command: 'Excel', bytes: 5.4 * 1024 ** 3}, {command: 'Chrome', bytes: 1.5 * 1024 ** 3}]}, now),
+        '2:58 PM · swap 15.5 GiB, memory 89% used; most memory: Excel 5.4 GiB, Chrome 1.5 GiB');
+});
+
+test('the tooltip and the side dropdown share one node reading for 15 s', async () => {
+    const f = fixture();
+    const data = {host: 'mba', projects: []};
+    f.tracker._run = async args => { f.calls.push(Array.from(args)); return data; };
+    const [first, second] = await Promise.all([f.tracker._readNode('mba'), f.tracker._readNode('mba')]);
+    assert.equal(first, second);
+    assert.equal((await f.tracker._readNode('mba')).data, data);
+    assert.deepEqual(f.calls.filter(c => c[0] === 'node'), [['node', 'mba']]);
+    f.tracker._nodes.get('mba').at -= 16000;
+    await f.tracker._readNode('mba');
+    assert.equal(f.calls.filter(c => c[0] === 'node').length, 2);
+});
