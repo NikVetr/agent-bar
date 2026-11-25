@@ -3,9 +3,10 @@
 # Agent Bar
 
 If you have a Claude chat open in one VS Code window and Codex working in another, which one just finished?
-Agent Bar puts the answer in the GNOME top bar, with a macOS menu bar version planned. Click a project's button in the bar to go straight to the chat, even when it shares a
-window with several others. It also follows agents in terminals and desktop apps. You can add GitHub pull requests,
-Claude quota checks, and [ROTA](docs/guide.md#the-rota-job-scheduler-optional) job queues to the same bar.
+Agent Bar puts the answer in the GNOME top bar (a macOS menu bar version is planned). Click the project’s button
+to go straight to the chat, even if several chats share that window. Agent Bar also follows agents in terminals
+and desktop apps. You can add GitHub pull requests, Claude quota checks, and
+[ROTA](docs/guide.md#the-rota-job-scheduler-optional) job queues to the same bar.
 
 <p align="center"><picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/click-to-chat-dark.webp">
@@ -21,19 +22,18 @@ how many tickets are ready, and how many queues have finished. Project buttons t
 <p><img src="docs/images/topbar.webp" alt="The top bar: counts per provider, limits left, working and waiting, mail, tickets, queues, and review buttons" width="100%"></p>
 <p><img src="docs/images/notification.webp" alt="A desktop notification: Codex · sampler-study, Reply finished" width="420"></p>
 
-**The dropdown.** Clicking a part of the bar opens the dropdown on its tab:
+**The dropdown.** Click a top-bar indicator to open its tab. For instance, the queue count takes you straight to Queues.
 
-- **Chats** groups open conversations by project and window, with what each agent is doing, why it needs review, and
-  its estimated cost at API prices.
-- **Queues** and **Cluster**, if you run jobs with ROTA, show each project's queues, which you can adjust from the bar,
-  and how busy each host is.
+- **Chats** groups open conversations by project and window. You can see what each agent is doing, why a chat
+  needs review, and what its usage would cost at API prices when an estimate is available.
+- **Queues** lets you check and adjust each project’s ROTA queues. **Cluster** shows how busy each host is.
 - **Git** shows what you've changed locally, what you still need to push, and (if you enable it) each branch's pull
   request and checks.
-- **Messages** and **Tickets** hold the notes chats leave each other and work saved for later.
-- **History** holds every saved Claude Code and Codex chat, closed ones included. You can resume one in VS Code or export
-  its messages.
-- **Quota** shows the five-hour, weekly, and model-specific limits each provider reports, whether you're on course to
-  run out before the reset, and what your usage would cost at API prices.
+- **Messages** shows the notes chats leave each other. **Tickets** keeps track of work you’ve set aside for later.
+- **History** includes saved Claude Code and Codex chats, even after you close them. You can resume a chat in VS Code
+  or export its messages.
+- **Quota** shows the five-hour, weekly, and model-specific limits each provider reports. The forecast tells you
+  whether your quota will last until the reset at your current pace. You can also see the estimated cost at API prices.
 - **Info** lists the hooks, skills, and instruction files for each project.
 
 <p align="center"><picture>
@@ -101,8 +101,7 @@ flowchart TD
 ## Install
 
 You’ll need Python 3.10 or later and either [pipx](https://pipx.pypa.io) or [uv](https://docs.astral.sh/uv/).
-VS Code is optional: without it, the installer skips the bridge, and chats in terminals and desktop apps are still
-tracked.
+VS Code is optional. If it’s absent, the installer skips the bridge. Agent Bar still tracks terminal and desktop chats.
 
 ```
 pipx install git+https://github.com/NikVetr/agent-bar   # or: uv tool install git+https://github.com/NikVetr/agent-bar
@@ -119,8 +118,8 @@ The installer sets these up for your user account:
 
 On the first install, log out and back in so GNOME finds the extension (on X11 you can also press Alt+F2, type `r`,
 and press Enter). Run `agent-bar install` again to enable it. Open VS Code windows start the bridge on their own.
-After an update, use **Developer: Reload Window** in each one to pick up the new bridge. Codex asks you to review
-new hooks once: run `/hooks` in Codex and accept Agent Bar's.
+After an update, use **Developer: Reload Window** in each one to pick up the new bridge. When Codex asks you to
+review the new hooks, run `/hooks` and accept Agent Bar’s hooks. You only need to do this once.
 
 If something is missing, `agent-bar doctor` will tell you which part and suggest a fix. To remove Agent Bar, run
 `agent-bar uninstall`. This keeps your settings and history unless you add `--purge`.
@@ -135,9 +134,9 @@ If something is missing, `agent-bar doctor` will tell you which part and suggest
 ## Privacy
 
 The History index contains the words you and the agents wrote. It leaves out tool calls and results, reasoning,
-and client context. Hooks record turn events (starts, finishes, questions, approvals, and failures) without what
-you or the agent wrote. State lives in
-`~/.local/state/agent-bar`, settings in `~/.config/agent-bar`, and the VS Code bridge build in `~/.cache/agent-bar`.
+and client context. Hooks record turn events (starts, finishes, questions, approvals, and failures) without
+recording the message text. State lives in `~/.local/state/agent-bar`, settings in `~/.config/agent-bar`, and the
+VS Code bridge build in `~/.cache/agent-bar`.
 
 Two optional settings contact a service outside your machine:
 
