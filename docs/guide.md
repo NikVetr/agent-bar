@@ -311,6 +311,8 @@ expires (for example, `5d` or `120h`). Monitoring continues. The tab also shows:
     workers across the pool and its ETA.
   - the node's state: why it is unavailable, its owner's activity, its budget (against its base when lowered), load,
     swap and the shared-drive mount.
+  - the scheduler's controls for the node: its **Budget** (the CPU slots and memory cluster work may use) and its
+    **Availability** (present, or away for a time). They work as under [Scheduler controls](#scheduler-controls).
   - its last day: job failures, holds (with a button that copies the command that lifts one, to run once the cause
     is fixed) and times out of reach, from ROTA's `events.jsonl`, and the latest memory-pressure sample of the last
     hour with the processes holding the most memory, from `memory-events.jsonl`.
@@ -323,10 +325,11 @@ expires (for example, `5d` or `120h`). Monitoring continues. The tab also shows:
 
 ### Scheduler controls
 
-**Adjust** opens the controls ROTA offers for a queue, host or pool. Hover over a control for its effect or
-the reason it is unavailable. **Apply** submits edited values together. If another operator changed a value, ROTA
-rejects the outdated edit. Actions such as draining the pool require confirmation. Changes usually appear within
-30 seconds. The `rota` command must be on `PATH` or in `~/.local/bin`.
+**Adjust** opens the controls ROTA offers for a queue, host or pool. A node's side dropdown in **Cluster** shows
+that node's controls as well. Hover over a control for its effect or the reason it is unavailable. **Apply** submits
+edited values together. If another operator changed a value, ROTA rejects the outdated edit. Actions such as draining
+the pool require confirmation. Changes usually appear within 30 seconds. The `rota` command must be on `PATH` or in
+`~/.local/bin`.
 
 ## Command line
 

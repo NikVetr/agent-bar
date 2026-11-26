@@ -252,6 +252,13 @@
 .tracker-host-button { color: #a9cff9; border-radius: 3px; }
 .tracker-host-button:hover, .tracker-host-button:focus { background-color: #414a56; color: white; }
 .tracker-host-projects { spacing: 5px; }
+/* A node's scheduler controls, in the narrower side dropdown. */
+.tracker-node-controls .tracker-control { padding: 0; }
+.tracker-node-controls .tracker-control-panel { width: 306px; padding: 10px 12px; }
+.tracker-node-controls .tracker-control-entry { width: 54px; }
+.tracker-node-controls .tracker-control-wrap { width: 270px; }
+.tracker-node-controls .tracker-control-text { width: 170px; }
+.tracker-node-controls .tracker-control-more { padding-left: 8px; }
 .tracker-host-project { font-weight: bold; padding-top: 6px; }
 .tracker-host-queue { font-weight: bold; padding-top: 4px; }
 .tracker-host-event { spacing: 6px; }

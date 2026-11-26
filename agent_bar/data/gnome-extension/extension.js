@@ -1682,6 +1682,8 @@ class Tracker {
                 if (Date.now() - this._controlsAt > 10000) this._loadControls();
                 this._loadQueueDependencies();
             }
+            if (this._button.menu.isOpen && this._view === 'cluster' && this._hostView && !this._page
+                && Date.now() - this._controlsAt > 10000) this._loadControls();
             return GLib.SOURCE_CONTINUE;
         });
         this._read();
@@ -2697,9 +2699,10 @@ class Tracker {
 
     // The node's side dropdown: its job slots by project, the queues holding them, its state and its last day's events.
     _renderNode(host) {
-        const box = host.body;
+        let box = host.body;
         if (!box) return;
         box.destroy_all_children();
+        host.events.destroy_all_children();
         const label = (text, style, parent = box) => {
             const actor = new St.Label({text, style_class: style});
             actor.clutter_text.line_wrap = true;
@@ -2743,6 +2746,8 @@ class Tracker {
         }
         caption('Node');
         for (const [text, attention] of nodeStateLines(data.state, now)) label(text, attention ? 'tracker-detail tracker-attention' : 'tracker-detail');
+        // Under the node's scheduler controls, which _renderNodeControls keeps across readings.
+        box = host.events;
         caption('Last day');
         if (!data.events.length) label('No failures, holds, outages or memory pressure here in the last day.', 'tracker-detail');
         for (const event of data.events) {
@@ -2753,6 +2758,35 @@ class Tracker {
             if (event.kind === 'hold' && event.reset_command)
                 line.add_child(this._copyButton(() => event.reset_command, 'Copy the command that lifts this hold, to run once the cause is fixed', true));
             box.add_child(line);
+        }
+    }
+
+    // The scheduler's controls for the node (its budget of job slots and memory, and its availability), as Queues ›
+    // Pool and hosts has them. Redrawn only when they change, so the node's readings every 15 s keep what is typed.
+    _renderNodeControls(host) {
+        const box = host.controls;
+        if (!box || !controlProgram()) return;
+        const entity = this._controls?.hosts?.find(/** @param {{id: string}} h */ h => h.id === host.id);
+        const target = {kind: 'host', id: host.id};
+        const signature = JSON.stringify(entity ? [entity.controls, entity.controls.map(/** @param {{name: string}} c */ c =>
+            !!this._controlWaiting(`host:${host.id}:${c.name}`))] : this._controlsError || (this._controls ? 'absent' : 'loading'));
+        if (signature === host.controlsShown) return;
+        host.controlsShown = signature;
+        this._releaseFocus(this._button.menu, box);
+        box.destroy_all_children();
+        box.add_child(new St.Label({text: 'Scheduler', style_class: 'tracker-ticket-caption'}));
+        const note = (text, style) => {
+            const label = new St.Label({text, style_class: style});
+            label.clutter_text.line_wrap = true;
+            box.add_child(label);
+        };
+        if (this._controlsError) note(this._controlsError, 'tracker-warning');
+        else if (!this._controls) note('Reading the scheduler…', 'tracker-detail');
+        else if (!entity?.controls?.length) note('The scheduler offers no controls for this node.', 'tracker-detail');
+        else {
+            const editor = new PopupMenu.PopupMenuSection();
+            box.add_child(editor.actor);
+            this._fillControls(editor, target, entity, false, true);
         }
     }
 
@@ -4331,7 +4365,7 @@ class Tracker {
 
     // An entity's controls, opened under its row: its facts as chips, its actions as a row of buttons, and its settings
     // one to a row with their help behind ⓘ. Edited settings collect into one Apply; irreversible actions ask first.
-    _fillControls(editor, target, entity, facts) {
+    _fillControls(editor, target, entity, facts, narrow = false) {
         const item = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
         item._ornamentLabel?.hide();
         item.add_style_class_name('tracker-control');
@@ -4342,7 +4376,7 @@ class Tracker {
         const rebuild = () => {
             this._releaseFocus(this._button.menu, editor.actor);
             editor.removeAll();
-            this._fillControls(editor, target, entity, facts);
+            this._fillControls(editor, target, entity, facts, narrow);
         };
         if (facts && entity.facts?.length) {
             const chips = new St.BoxLayout({vertical: true, style_class: 'tracker-control-facts'});
@@ -4357,7 +4391,7 @@ class Tracker {
         if (actions.length) panel.add_child(this._controlActions(target, actions, rebuild));
         let update = () => {};
         const rows = entity.controls.filter(control => !controlIsAction(control))
-            .map(control => this._settingRow(target, control, () => update()));
+            .map(control => this._settingRow(target, control, () => update(), narrow));
         for (const row of rows) panel.add_child(row.actor);
         if (!rows.some(row => row.editable)) return;
         const footer = new St.BoxLayout({style_class: 'tracker-control-footer'});
@@ -4512,17 +4546,19 @@ class Tracker {
 
     // One setting: its name (help behind ⓘ), its first inputs on the row, any others folded under it. Returns its
     // actor, whether it can be edited now, its state ({changed, value} or {error}) and how to send it.
-    _settingRow(target, control, onChange) {
+    // `narrow`: the name on a line of its own, above its fields, for the side dropdown.
+    _settingRow(target, control, onChange, narrow = false) {
         const key = `${target.kind}:${target.id}:${control.name}`;
         const actor = new St.BoxLayout({vertical: true, style_class: 'tracker-control-setting'});
         const line = new St.BoxLayout({style_class: 'tracker-control-line'});
-        actor.add_child(line);
         const name = new St.BoxLayout({style_class: 'tracker-control-name', y_align: Clutter.ActorAlign.CENTER});
+        if (narrow) actor.add_child(name);
+        actor.add_child(line);
         const title = new St.Label({text: control.label, style_class: 'tracker-control-label', y_align: Clutter.ActorAlign.CENTER});
         name.add_child(title);
         const help = [control.help, control.effect === 'next-job' ? 'Applies to jobs that start afterwards.' : null].filter(Boolean).join(' ');
         if (help) name.add_child(this._helpIcon(help));
-        line.add_child(name);
+        if (!narrow) line.add_child(name);
         const label = (text, style) => {
             const result = new St.Label({text, style_class: style, y_align: Clutter.ActorAlign.CENTER});
             result.clutter_text.ellipsize = Pango.EllipsizeMode.END;
@@ -4692,6 +4728,8 @@ class Tracker {
         if (this._enabled && this._button.menu.isOpen && this._view === 'queues' && !this._page
             && (controlsSignature(this._controls) !== before[0] || this._controlsError !== before[1]))
             this._later(() => this._renderRows());
+        const host = this._hostView;
+        if (this._enabled && host && this._view === 'cluster') this._later(() => this._renderNodeControls(host));
     }
 
     // Runs the scheduler's control command with `input` on stdin, resolving with its JSON answer whatever its exit
@@ -5118,9 +5156,14 @@ class Tracker {
         this._sideHeading.add_child(close);
         if (host) {
             host.body = new St.BoxLayout({vertical: true, style_class: 'tracker-host-projects'});
-            this._side.add_child(host.body);
+            host.controls = new St.BoxLayout({vertical: true, style_class: 'tracker-host-projects tracker-node-controls'});
+            host.events = new St.BoxLayout({vertical: true, style_class: 'tracker-host-projects'});
+            host.controlsShown = null;
+            for (const box of [host.body, host.controls, host.events]) this._side.add_child(box);
             this._renderNode(host);
+            this._renderNodeControls(host);
             this._loadNodeView();
+            if (Date.now() - this._controlsAt > 10000) this._loadControls();
             return;
         }
         if (this._checklistView) {
