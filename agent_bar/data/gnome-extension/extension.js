@@ -391,6 +391,13 @@ function readyConversations(rows, reasons = null) {
     return [...unique.values()].sort((a, b) => since(a) - since(b));
 }
 
+// Whether a chat needs review for one of `reasons` (any, when null) only because its project's queues finished: no
+// reply, failure, question or approval of its own.
+function queuesOnly(row, reasons = null) {
+    const counted = row.unread.filter(reason => !reasons || reasons.includes(row.limited && reason === 'Turn failed' ? 'Usage limit' : reason));
+    return counted.length > 0 && counted.every(reason => reason === 'Queues finished');
+}
+
 // Each review reason that open chats have now, for `reasons`, keyed `chat|reason|arrival` so that a reason arriving
 // again is a new key: the keys a snapshot has and the one before lacked are new arrivals.
 function reviewMarks(rows, reasons) {
@@ -1943,7 +1950,8 @@ class Tracker {
             'Click a count or icon to open its tab. Click another to switch tabs, or click the same one again to close. The ? button opens this guide.');
         row(top, [text('✳ project…', 'tracker-quick-button tracker-claude')], limit
             ? `Show up to ${limit} project buttons, oldest review first. Click a project for its longest-waiting review or a numbered badge for a specific chat. `
-                + 'Open +N more for the rest. Choose triggers under Top bar › Review events.'
+                + 'Middle- or right-click to clear without opening (a project name clears all its chats). An outlined button or badge is there only '
+                + 'because the project\'s queues finished, with its queue count. Open +N more for the rest. Choose triggers under Top bar › Review events.'
             : 'Review buttons are off. Turn them on in Settings › Top bar.');
         row(top, [text('Notifications', 'tracker-help-bright')], this._setting('notify')
             ? 'Click a review alert to open its chat. A focused chat window suppresses its review alerts. '
@@ -3008,53 +3016,69 @@ class Tracker {
         const groups = quickGroups(ready);
         const limit = this._setting('quickLimit'), chars = this._setting('quickChars');
         const shown = groups.slice(0, limit);
-        const signature = JSON.stringify(shown.map(group => group.map(row => [row.key, row.window, row.provider])));
-        if (signature !== this._quickSignature) this._buildQuick(signature, shown, chars);
+        const reasons = this._setting('quickReasons');
+        const signature = JSON.stringify(shown.map(group => group.map(row => [row.key, row.window, row.provider,
+            queuesOnly(row, reasons) && row.queue_counts])));
+        if (signature !== this._quickSignature) this._buildQuick(signature, shown, chars, reasons);
         this._fitQuick(limit ? groups : []);
     }
 
     // One shortcut per project in `shown`, placed by _fitQuick: a chat alone is a button in its provider's color; several
     // share a neutral button with the project's name and a numbered bubble per chat, in its provider's color, the
     // longest waiting first. Each keeps its name's short (`chars`) and full forms, for _fitQuick to show as room allows.
-    _buildQuick(signature, shown, chars) {
+    // A chat there only for its project's finished queues (of `reasons`) is outlined, not filled, and its shortcut names
+    // the project's queue count. A click opens a chat; a middle or right click clears it (a project name: all of them).
+    _buildQuick(signature, shown, chars, reasons) {
         this._quickSignature = signature;
         for (const box of [this._quick, this._quickRight]) this._releaseFocus(null, box);
         for (const button of this._quickButtons) button.destroy();
+        const mask = St.ButtonMask.ONE | St.ButtonMask.TWO | St.ButtonMask.THREE;
         this._quickButtons = shown.map(group => {
             const [first] = group;
             const short = first.project.length > chars ? `${first.project.slice(0, chars - 1)}…` : first.project;
-            const open = row => {
-                // The snapshot after it drops this chat; until then its bubble goes and the rest renumber.
-                this._openShortcut(row);
+            // The snapshot after drops the chats; until then a bubble goes and the rest renumber.
+            const act = (mouse, row, rows = [row]) => {
+                if (mouse === Clutter.BUTTON_PRIMARY) this._openShortcut(row);
+                else this._clearShortcuts(rows);
                 this._later(() => this._renderQuick(this._snapshot?.rows || []));
             };
+            const queued = group.filter(row => queuesOnly(row, reasons));
+            const counts = queued[0]?.queue_counts;
+            const count = counts?.total ? ` Q ${counts.done}/${counts.total}` : '';
+            const said = counts?.total ? `, ${counts.done} of ${counts.total} queues finished` : ', queues finished';
             let item, name;
             if (group.length === 1) {
                 const symbol = PROVIDERS[first.provider]?.[0] || '•';
-                item = new St.Button({label: `${symbol} ${short}`, style_class: `tracker-quick-button tracker-${first.provider}`, can_focus: true,
-                    y_align: Clutter.ActorAlign.CENTER, accessible_name: `Show ${first.project}: ${first.title}`});
+                item = new St.Button({label: `${symbol} ${short}${count}`, can_focus: true, button_mask: mask,
+                    style_class: `tracker-quick-button tracker-${first.provider}${queued.length ? ' tracker-quick-queues' : ''}`,
+                    y_align: Clutter.ActorAlign.CENTER, accessible_name: `Show ${first.project}: ${first.title}${queued.length ? said : ''}`});
                 name = item;
-                item._names = [`${symbol} ${short}`, `${symbol} ${first.project}`];
-                item.connect('clicked', () => {
+                item._names = [`${symbol} ${short}${count}`, `${symbol} ${first.project}${count}`];
+                item.connect('clicked', (_button, mouse) => {
                     item.hide();
-                    open(first);
+                    act(mouse, first);
                 });
             } else {
                 item = new St.BoxLayout({style_class: 'tracker-quick-button tracker-quick-group', y_align: Clutter.ActorAlign.CENTER,
                     reactive: true, track_hover: true});
-                name = new St.Button({label: short, style_class: 'tracker-quick-group-name', can_focus: true, x_expand: true,
-                    y_align: Clutter.ActorAlign.CENTER, accessible_name: `Show ${first.project}'s longest-waiting chat: ${first.title}`});
-                name.connect('clicked', () => open(first));
+                name = new St.Button({label: `${short}${count}`, style_class: 'tracker-quick-group-name', can_focus: true, x_expand: true,
+                    button_mask: mask, y_align: Clutter.ActorAlign.CENTER,
+                    accessible_name: `Show ${first.project}'s longest-waiting chat: ${first.title}${queued.length ? said : ''}`});
+                name.connect('clicked', (_button, mouse) => {
+                    if (mouse !== Clutter.BUTTON_PRIMARY) item.hide();
+                    act(mouse, first, group);
+                });
                 item.add_child(name);
                 group.forEach((row, index) => {
-                    const bubble = new St.Button({label: `${index + 1}`, can_focus: true, y_align: Clutter.ActorAlign.CENTER,
-                        style_class: `tracker-quick-bubble tracker-quick-bubble-${row.provider}`,
-                        accessible_name: `Show ${PROVIDERS[row.provider]?.[1] || row.provider} chat ${row.title}`});
-                    this._tooltip(bubble, `${PROVIDERS[row.provider]?.[0] || '•'} ${row.title}`);
-                    bubble.connect('clicked', () => open(row));
+                    const outlined = queued.includes(row);
+                    const bubble = new St.Button({label: `${index + 1}`, can_focus: true, y_align: Clutter.ActorAlign.CENTER, button_mask: mask,
+                        style_class: `tracker-quick-bubble tracker-quick-bubble-${row.provider}${outlined ? ' tracker-quick-bubble-queues' : ''}`,
+                        accessible_name: `Show ${PROVIDERS[row.provider]?.[1] || row.provider} chat ${row.title}${outlined ? said : ''}`});
+                    this._tooltip(bubble, `${PROVIDERS[row.provider]?.[0] || '•'} ${row.title}${outlined ? `\nQueues finished${count && ` (${count.trim()})`}` : ''}`);
+                    bubble.connect('clicked', (_button, mouse) => act(mouse, row));
                     item.add_child(bubble);
                 });
-                item._names = [short, first.project];
+                item._names = [`${short}${count}`, `${first.project}${count}`];
             }
             item._name = name;
             // _fitQuick puts it in its place.
@@ -3266,6 +3290,25 @@ class Tracker {
         this._activate(row, this._snapshot, 'focus').then(result => {
             if (result?.ok) this._quickPending.set(row.key, Date.now() / 1000);
             else this._quickPending.delete(row.key);
+        });
+    }
+
+    // Marks shortcuts' chats reviewed without bringing any forward, up to the snapshot that showed them, as opening
+    // them would: a reply arriving after it still raises a button.
+    _clearShortcuts(rows) {
+        const cutoff = this._snapshot?.cutoff;
+        if (!cutoff) return;
+        for (const row of rows) this._quickPending.set(row.key, Infinity);
+        this._quickSignature = null;
+        Promise.all(rows.map(row => this._run(['ack', row.key, String(cutoff)]))).then(() => {
+            for (const row of rows) this._quickPending.set(row.key, Date.now() / 1000);
+            this._read();
+        }, error => {
+            for (const row of rows) this._quickPending.delete(row.key);
+            this._quickSignature = null;
+            if (!this._enabled) return;
+            Main.notifyError('Agent Bar', error.message);
+            this._renderQuick(this._snapshot?.rows || []);
         });
     }
 

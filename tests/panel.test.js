@@ -791,6 +791,17 @@ test('quick send times are an hour from now, tomorrow at 9 and the next Monday a
     assert.equal(f.context.whenChoices(new Date(2026, 10, 16, 8))[2][0], '2026-11-23 09:00');
 });
 
+test('a shortcut is outlined only when finished queues are its one counted reason', () => {
+    const f = fixture();
+    const only = (unread, reasons, limited) => f.context.queuesOnly({unread, limited}, reasons);
+    assert.equal(only(['Queues finished']), true);
+    assert.equal(only(['Queues finished', 'Reply finished']), false);
+    // A reason the settings leave out does not fill it; a limit stop counts as Usage limit.
+    assert.equal(only(['Queues finished', 'Reply finished'], ['Queues finished']), true);
+    assert.equal(only(['Queues finished', 'Turn failed'], ['Queues finished', 'Turn failed'], {at: 1}), true);
+    assert.equal(only(['Reply finished'], ['Queues finished']), false);
+});
+
 test('review shortcuts group chats by project, longest waiting first, and spare room goes to names, never past whole', () => {
     const f = fixture();
     const rows = [{key: 'a', project: 'p'}, {key: 'b', project: 'q'}, {key: 'c', project: 'p'}];

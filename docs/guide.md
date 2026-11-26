@@ -36,7 +36,15 @@ Click a top-bar indicator to open its tab. Click another indicator to switch tab
 ### Review shortcut buttons
 
 Each project gets one review button, with the longest-waiting review first. Click the project name for that chat
-or a numbered badge for a specific chat. **+N more** lists chats that do not fit.
+or a numbered badge for a specific chat. Middle- or right-click a button or badge to clear its review without opening
+the chat; on a project name, that clears all of the project's chats. **+N more** lists chats that do not fit.
+
+A button or badge that is outlined rather than filled is there only because the project's queues finished, and the
+button shows the project's queue count (for example **✳ sampler-study Q 2/2**). A reply, failure, question or
+approval in the same chat fills it as usual.
+
+A reply that the chat follows with a turn of its own, such as a wake-up for a message or a finished background task,
+does not raise a button. The button waits for that turn to end.
 
 **Settings › Top bar › Review events** controls which events trigger buttons and desktop alerts. Replies, failures,
 questions, approvals and finished queues are selected by default. Usage-limit stops are optional. A Codex approval

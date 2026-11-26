@@ -31,6 +31,15 @@
 .tracker-quick-bubble-codex { background-color: #79cfbf; }
 .tracker-quick-bubble-copilot { background-color: #e892d0; }
 .tracker-quick-bubble-antigravity { background-color: #9fb4ff; }
+/* A chat there only for its project's finished queues: outlined in its provider's color instead of filled. */
+.tracker-quick-queues { padding: 0 8px; background-color: transparent; border: 1px solid rgba(255, 255, 255, 0.5); }
+.tracker-quick-queues:hover { background-color: rgba(255, 255, 255, 0.12); }
+.tracker-quick-bubble-queues { background-color: transparent; border: 1px solid; padding: 0 3px; }
+.tracker-quick-queues.tracker-claude, .tracker-quick-bubble-queues.tracker-quick-bubble-claude { border-color: #e6a187; color: #e6a187; }
+.tracker-quick-queues.tracker-codex, .tracker-quick-bubble-queues.tracker-quick-bubble-codex { border-color: #79cfbf; color: #79cfbf; }
+.tracker-quick-queues.tracker-copilot, .tracker-quick-bubble-queues.tracker-quick-bubble-copilot { border-color: #e892d0; color: #e892d0; }
+.tracker-quick-queues.tracker-antigravity, .tracker-quick-bubble-queues.tracker-quick-bubble-antigravity { border-color: #9fb4ff; color: #9fb4ff; }
+.tracker-quick-bubble-queues:hover { color: #ffffff; }
 /* Before the tone colors, so `tracker-detail tracker-<tone>` takes the tone. */
 .tracker-detail { font-size: 12px; color: #a6afbd; }
 .tracker-claude { color: #e6a187; }
