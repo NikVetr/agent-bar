@@ -1624,6 +1624,9 @@ class Tracker {
         this._quick = new St.BoxLayout({style_class: 'tracker-quick'});
         // Shortcuts without room on the left continue at the start of the right-hand box.
         this._quickRight = new St.BoxLayout({style_class: 'tracker-quick tracker-quick-right'});
+        // The right half's box sits in the panel's right-hand box, which moves as the rest of it changes.
+        for (const box of [this._quick, this._quickRight]) box.connect('notify::allocation', () => this._closeQuickGap());
+        this._rightBoxLaidOut = Main.panel._rightBox.connect('notify::allocation', () => this._closeQuickGap());
         this._quickButtons = [];
         this._quickHidden = [];
         // Chat key -> after what snapshot time its clicked shortcut may show again (Infinity while it is brought forward).
@@ -1679,7 +1682,14 @@ class Tracker {
         this._dbus = Gio.DBusExportedObject.wrapJSObject(INTERFACE, {
             Inspect: () => JSON.stringify({busy: this._busy, error: this._error,
                 quick: {parent: !!this._quick.get_parent(), mapped: this._quick.mapped, signature: this._quickSignature,
-                    buttons: this._quick.get_children().map(b => ({label: b.label, visible: b.visible}))},
+                    buttons: this._quick.get_children().map(b => ({label: b.label, visible: b.visible})),
+                    // Where the row's two halves are on screen: each shown shortcut's left edge and width, and the
+                    // right half's slide.
+                    halves: [this._quick, this._quickRight].map(box => ({visible: box.visible, slide: box.translation_x,
+                        buttons: box.get_children().filter(b => b.visible).map(b => {
+                            const {origin, size} = b.get_transformed_extents();
+                            return [b._names?.[0] ?? b.label, Math.round(origin.x), Math.round(size.width)];
+                        })}))},
                 windows: (this._snapshot?.windows || []).map(w => {
                     const native = this._findWindow(w, false);
                     const rect = native?.get_frame_rect();
@@ -3115,7 +3125,8 @@ class Tracker {
         }
         // The right half's too, with what it has left after them and +N more.
         if (right) grow(left, left + right, rightRoom - usedRight - (moreRight && total > left + right ? more : 0));
-        // Taking all the room it has, the right half's box starts at the middle, against the left half's shortcuts.
+        // Taking all the room it has, the right half's box starts at the middle (_closeQuickGap moves its shortcuts up
+        // to the left half's when nothing sits there).
         this._quickRight.visible = right > 0;
         this._quickRight.set_width(right > 0 ? Math.max(0, rightRoom) : -1);
         const place = (box, actors) => actors.forEach((actor, index) => {
@@ -3134,6 +3145,32 @@ class Tracker {
         this._quickMore.label = `+${hidden} more`;
         this._quickMore.visible = hidden > 0;
         this._quickMore.accessible_name = `${hidden} more chat${hidden === 1 ? '' : 's'} needing review without room for a shortcut; click to list them`;
+    }
+
+    // With nothing in the top bar's centre, the right half's shortcuts slide to one spacing from the left half's, so
+    // the row runs on across the middle and the room it leaves falls after its last shortcut: left over a gap, or
+    // right (within its box's free room) off a left half squeezed up to the middle. Measured from the two boxes'
+    // allocations (which the slide leaves alone; a shortcut just moved between them has none yet), whenever either
+    // is laid out again.
+    _closeQuickGap() {
+        const box = this._quickRight, left = this._quick;
+        let shift = 0;
+        if (box.visible && Main.panel._centerBox.get_preferred_width(-1)[1] === 0) {
+            const x = actor => {
+                let sum = 0;
+                for (let node = actor; node && node !== Main.panel; node = node.get_parent()) sum += node.allocation.x1;
+                return sum;
+            };
+            const spacing = left.get_theme_node().get_length('spacing'), node = box.get_theme_node();
+            const leftEnd = x(left) + left.allocation.get_width() - left.get_theme_node().get_padding(St.Side.RIGHT);
+            const rightStart = x(box) + node.get_padding(St.Side.LEFT);
+            const shown = box.get_children().filter(child => child.visible);
+            const free = box.allocation.get_width() - node.get_horizontal_padding() - spacing * (shown.length - 1)
+                - shown.reduce((sum, child) => sum + child.get_preferred_width(-1)[1], 0);
+            const gap = rightStart - leftEnd - spacing;
+            if (Number.isFinite(gap) && Number.isFinite(free)) shift = Math.max(gap, -Math.max(0, free));
+        }
+        if (box.translation_x !== -shift) box.translation_x = -shift;
     }
 
     // The chats needing review without a shortcut, under +N more; choosing one brings it forward.
@@ -6410,6 +6447,7 @@ class Tracker {
         this._releaseAppMenu();
         this._source?.destroy();
         this._quickMenu.destroy();
+        Main.panel._rightBox.disconnect(this._rightBoxLaidOut);
         this._quickRight.destroy();
         this._quick.destroy();
         this._nav.destroy();
