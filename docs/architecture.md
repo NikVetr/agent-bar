@@ -53,8 +53,10 @@ reasons for review are separate fields, as is the state of its project’s queue
   each folder name it keeps the last turn start, and for each queue, when the tracker first saw it finish.
   A project counts every unfinished queue plus those that finished since its last turn, using the earlier of
   the monitor’s end time and the tracker’s observation. When the last queue finishes, the most recently active
-  open chat in that project gets a “Queues finished” review. If the monitor reports a finished queue as active
-  again, it stays finished unless workers are running or its job counts change.
+  open chat in that project gets a “Queues finished” review. A reply or failure followed by a turn the chat
+  started itself (a wake-up or an automatic continuation) stops needing review; that turn’s own end does. If the
+  monitor reports a finished queue as active again, it stays finished unless workers are running or its job counts
+  change.
 
   Hourly cleanup drops a finished queue after a week if it has fallen out of both the counts and the monitor.
   It also removes closed chats idle for 30 days and files left by closed windows.

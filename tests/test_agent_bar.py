@@ -312,6 +312,17 @@ class TrackerTests(unittest.TestCase):
         self.ledger.event(key, 'complete', 140, 'two')
         self.assertEqual(self.ledger.pending(key), {'Reply finished': 140})
 
+    def test_claude_review_follows_a_turn_it_started_itself(self):
+        # A message wakes the chat right after its reply: the button waits for the woken turn's end.
+        key = 'claude:a'
+        self.ledger.event(key, 'message', 100)
+        self.ledger.event(key, 'complete', 110)
+        self.assertEqual(self.ledger.unread(key), ['Reply finished'])
+        self.ledger.event(key, 'start', 113)
+        self.assertEqual((self.ledger.conversation(key)['state'], self.ledger.unread(key)), ('working', []))
+        self.ledger.event(key, 'complete', 140)
+        self.assertEqual(self.ledger.pending(key), {'Reply finished': 140})
+
     def test_codex_approval_must_still_be_pending_to_raise_the_button(self):
         from agent_bar import service
         with tempfile.TemporaryDirectory() as root:

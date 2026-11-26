@@ -146,9 +146,10 @@ class Ledger:
         queues finish."""
         row = self.conversation(key)
         reasons = {name: at for name, at in row['reasons'].items() if at > row['ack']}
-        if key.startswith('codex:'):
-            for name in ('Reply finished', 'Turn failed'):
-                if name in reasons and reasons[name] < row.get('began', 0): del reasons[name]
+        # A reply that a later turn followed (one the chat started itself: a wake-up for a message, a finished
+        # background task) is not the one to review: that turn's end is.
+        for name in ('Reply finished', 'Turn failed'):
+            if name in reasons and reasons[name] < row.get('began', 0): del reasons[name]
         if queues_at and queues_at > row['ack']: reasons['Queues finished'] = queues_at
         return reasons
 
