@@ -287,7 +287,9 @@ def send(sender, recipient, body, root=ROOT, now=None, urgent=False, scheduled=N
             raise ValueError(f'Not sent. Loop guard: {hourly} messages sent in the last hour, this conversation\'s limit. Sending '
                              f'resumes in about {-(-wait // 60)} minutes, at {time.strftime("%H:%M", time.localtime(now + wait))}, or '
                              'sooner if your user raises the limit in Agent Bar. Your user has been notified.')
-        mine = open_rows.get(sender, {}) if sender != 'user' else {'title': f'You (ticket #{scheduled})'}
+        # The user's own scheduled message belongs to the project of the chat it goes to.
+        mine = open_rows.get(sender, {}) if sender != 'user' else {'title': f'You (ticket #{scheduled})',
+                                                                   'project': open_rows[recipient]['project']}
         # The newest row stays, so ids keep rising: wake marks compare them.
         connection.execute('DELETE FROM messages WHERE read_at IS NOT NULL AND at<? AND id<(SELECT max(id) FROM messages)',
                            (now - KEEP,))

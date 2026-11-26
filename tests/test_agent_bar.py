@@ -498,6 +498,11 @@ class TrackerTests(unittest.TestCase):
                 ledger['conversations']['claude:a']['human_at'] = 230
                 (root / 'ledger.json').write_text(json.dumps(ledger))
                 self.assertTrue(messages.send('claude:a', 'codex:b', 'again', root, now=240)['ok'])
+                # The user's scheduled message is in the project of the chat it goes to.
+                messages.send('user', 'claude:a', 'Check the build', root, now=245, scheduled=7)
+                with messages.connect(root) as connection:
+                    self.assertEqual(tuple(connection.execute("SELECT sender_title, sender_project FROM messages WHERE sender='user'").fetchone()),
+                                     ('You (ticket #7)', 'p'))
                 (root / 'settings.json').write_text(json.dumps({'messages': False}))
                 self.assertIsNone(messages.notice('codex:b', root))
                 with self.assertRaisesRegex(ValueError, 'turned off'): messages.send('claude:a', 'codex:b', 'x', root, now=250)

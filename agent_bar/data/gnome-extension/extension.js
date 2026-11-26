@@ -4764,7 +4764,8 @@ class Tracker {
                 if (row) button.connect('clicked', () => this._activate(row, snapshot));
                 agents.add_child(button);
             });
-            const [from, to] = pair.map(key => projects[key] || '?');
+            // Messages the user scheduled before their project was stored take the chat's.
+            const [from, to] = pair.map((key, index) => projects[key] || (key === 'user' && projects[pair[1 - index]]) || '?');
             const body = this._projectSection(`messages:${first.sender} ${first.recipient}`, from === to ? from : `${from} ⇄ ${to}`, '',
                 `${items.length} message${items.length === 1 ? '' : 's'}${unread ? ` · ${unread} unread` : ''}${held.length ? ' · held' : ''}`,
                 unread > 0 || held.length > 0, null, null, agents);
