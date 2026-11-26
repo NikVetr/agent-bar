@@ -2,11 +2,13 @@
 
 # Agent Bar
 
+Agent Bar shows what your AI coding agents (Claude Code, Codex, GitHub Copilot CLI, and Antigravity) are doing, in
+the GNOME top bar (a macOS menu bar version is planned).
+
 If you have a Claude chat open in one VS Code window and Codex working in another, which one just finished?
-Agent Bar puts the answer in the GNOME top bar (a macOS menu bar version is planned). Click the project’s button
-to go straight to the chat, even if several chats share that window. Agent Bar also follows agents in terminals
-and desktop apps. You can add GitHub pull requests, Claude quota checks, and
-[ROTA](docs/guide.md#the-rota-job-scheduler-optional) job queues to the same bar.
+The top bar tells you. Click the project’s button to go straight to the chat, even if several chats share that
+window. Agent Bar also follows agents in terminals and desktop apps. You can add GitHub pull requests, Claude quota
+checks, and [ROTA](docs/guide.md#the-rota-job-scheduler-optional) job queues to the same bar.
 
 <p align="center"><picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/click-to-chat-dark.webp">
@@ -57,7 +59,14 @@ a message yourself, or write a ticket for work that has to wait for a quota rese
   <img src="docs/images/agent-messages-light.webp" alt="A Codex chat sends a Claude Code chat a message with agent-bar send; the Claude chat sees it at its next turn" width="820">
 </picture></p>
 
-The [user guide](docs/guide.md) describes every part in detail.
+The [user guide](docs/guide.md) describes every part in detail, and the video goes through them in order.
+
+<p align="center"><a href="https://youtu.be/BdPWFaHbW_k"><img src="docs/images/explainer-thumbnail.jpg" width="100%" alt="Agent Bar: an 8-minute narrated tour"></a></p>
+
+<p align="center"><b><a href="https://youtu.be/BdPWFaHbW_k">Watch: a tour of Agent Bar</a></b> (8 min)</p>
+
+Chapters cover the top bar, going straight to a chat, every chat in one list, limits and cost, agents that
+coordinate, your projects, how it works, and getting started.
 
 ## Supported agents
 
